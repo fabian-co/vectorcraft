@@ -145,7 +145,12 @@ fn open_exts_cover_every_readable_format() {
         assert!(format(e).is_some_and(|f| f.read), ".{e} in OPEN_EXTS is no readable format");
     }
     let filters: Vec<_> = open_filters().collect();
-    assert_eq!(filters[0], ("All readable files", OPEN_EXTS));
+    assert_eq!(filters[0], ("All readable files", OPEN_DIALOG_EXTS));
+    assert_eq!(
+        OPEN_DIALOG_EXTS,
+        [OPEN_EXTS, crate::cmd::swatchlib::LIBRARY_EXTS].concat(),
+        "documents, then swatch libraries (.acb colour books too)"
+    );
     assert_eq!(filters.len(), 6 + FORMATS.iter().filter(|f| f.read).count(), "and swatch libraries, flattener, PDF and print presets, plug-ins");
     assert_eq!(filters.last(), Some(&("Plug-ins", crate::cmd::plugin::EXTS)), "File › Open installs plug-ins");
 }

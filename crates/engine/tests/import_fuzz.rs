@@ -1,5 +1,5 @@
 //! Untrusted files never crash the app: garbage, truncated, mutated and hostile SVG, PDF and DXF input,
-//! mutated raster images placed with File → Place, and swatch (`.vcswatches`, `.gpl`), graphic style (`.vcstyles`) and flattener preset
+//! mutated raster images placed with File → Place, and swatch (`.vcswatches`, `.gpl`, `.acb` colour books), graphic style (`.vcstyles`) and flattener preset
 //! (`.vcflattener`) libraries, and native files (compressed, damaged, saved for older versions),
 //! must load as an error or as a document that then renders and exports, without a panic; nor may
 //! bitmaps, PDF and text pasted from other apps, nor EMF and WMF pictures (damaged files, records
@@ -559,6 +559,38 @@ fn flattener_presets(what: &str, data: &str) -> Result<(), TestCaseError> {
     })
 }
 
+/// A synthetic Lab colour book (`.acb`) of spot colours named `prefix` + each of `colors`.
+fn color_book(title: &str, prefix: &str, colors: &[(String, [u8; 3])]) -> Vec<u8> {
+    fn string(out: &mut Vec<u8>, s: &str) {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        out.extend((units.len() as u32).to_be_bytes());
+        out.extend(units.iter().flat_map(|u| u.to_be_bytes()));
+    }
+    let mut out = b"8BCB\0\x01\x0b\xb8".to_vec();
+    for s in [title, prefix, "", "A test book"] {
+        string(&mut out, s);
+    }
+    out.extend((colors.len() as u16).to_be_bytes());
+    out.extend([0, 7, 0, 1, 0, 7]);
+    for (i, (name, lab)) in colors.iter().enumerate() {
+        string(&mut out, name);
+        out.extend(format!("{i:06}").as_bytes());
+        out.extend(lab);
+    }
+    out.extend(b"spflspot");
+    out
+}
+
+/// A colour book's bytes loaded as a library and used, as [`swatches`] does with text ones.
+fn color_books(what: &str, bytes: &[u8]) -> Result<(), TestCaseError> {
+    survive(what, || {
+        let mut s = rich_session();
+        let r = s.execute("swatch.library.load", &json!({"dataBase64": vectorcraft_format::base64_encode(bytes), "name": "fuzz.acb"})).ok()?;
+        let _ = s.execute("swatch.library.add", &json!({"library": r["library"], "apply": "fill"}));
+        Some((*s.doc().ok()?.doc).clone())
+    })
+}
+
 /// Characters that break JSON and GPL palettes.
 fn arb_edit() -> impl Strategy<Value = (usize, char)> {
     (0usize..20_000, prop::sample::select(vec!['{', '}', '[', ']', '"', ':', ',', '-', '9', 'e', '.', ' ', '\n', '#', 'n', 'x', '\t']))
@@ -579,6 +611,25 @@ proptest! {
     fn mutated_swatch_libraries_never_panic(cut in 0usize..20_000, edits in prop::collection::vec(arb_edit(), 0..10), gpl in any::<bool>()) {
         let text = saved("swatch.library.save", json!({"format": if gpl { "gpl" } else { "vcswatches" }}));
         swatches("mutated swatch library", &mutate_text(&text, cut, &edits))?;
+    }
+
+    #[test]
+    fn mutated_colour_books_never_panic(
+        colors in prop::collection::vec((".{0,12}", any::<[u8; 3]>()), 0..12),
+        cut in 0usize..400,
+        edits in prop::collection::vec((0usize..400, any::<u8>()), 0..10),
+        tail in prop::collection::vec(any::<u8>(), 0..40),
+    ) {
+        let mut bytes = color_book("Fuzz", "F ", &colors);
+        color_books("colour book", &bytes)?;
+        for (i, b) in edits {
+            let n = bytes.len();
+            bytes[i % n] = b;
+        }
+        bytes.truncate(bytes.len().saturating_sub(cut % 64));
+        bytes.extend(&tail);
+        color_books("mutated colour book", &bytes)?;
+        color_books("colour book garbage", &[b"8BCB\0\x01".as_slice(), &tail].concat())?;
     }
 
     #[test]

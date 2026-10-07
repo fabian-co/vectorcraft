@@ -1,10 +1,11 @@
 //! Swatch library files: the native `.vcswatches` JSON (colour models, global, spot, gradients
 //! and colour groups exactly), `.gpl` palettes (8-bit RGB; colour groups as `# Group:` comment
-//! headers) and CSS custom properties (written only).
+//! headers) and CSS custom properties (written only). Colour books (`.acb`, read only) are
+//! [`acb`]'s.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Color, GradientKind, Paint, Swatch, SwatchGroup, SwatchLibrary};
+use crate::{Color, GradientKind, Paint, Swatch, SwatchGroup, SwatchLibrary, acb};
 
 /// A swatch library file format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,13 +191,26 @@ pub fn read(text: &str, name: &str) -> Result<SwatchLibrary, String> {
         }
         return Ok(lib);
     }
-    Err("not a swatch library (.vcswatches or .gpl)".into())
+    Err("not a swatch library (.vcswatches, .gpl or .acb)".into())
 }
 
 /// Is `text` a library [`read`] understands?
 pub fn sniff(text: &str) -> bool {
     let t = text.trim_start_matches('\u{feff}').trim_start();
     t.starts_with(GPL_HEADER) || (t.starts_with('{') && t.contains(NATIVE_FORMAT))
+}
+
+/// Read a library file: a colour book ([`acb`], binary) or the text ones [`read`] reads.
+pub fn read_bytes(bytes: &[u8], name: &str) -> Result<SwatchLibrary, String> {
+    if acb::sniff(bytes) {
+        return acb::read(bytes, name);
+    }
+    read(&String::from_utf8_lossy(bytes), name)
+}
+
+/// Is `bytes` a library [`read_bytes`] understands?
+pub fn sniff_bytes(bytes: &[u8]) -> bool {
+    acb::sniff(bytes) || std::str::from_utf8(bytes).is_ok_and(sniff)
 }
 
 /// `.gpl`: `Name:` names the library, `# Group: name` starts a colour group, other `#` lines and

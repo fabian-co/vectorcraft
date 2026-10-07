@@ -557,7 +557,7 @@ pub const FORMATS: &[Format] = &[
     Format { id: "psd", label: "PSD", extensions: &["psd"], mime: "image/x-psd", read: false, write: true, raster: true, options: PSD_OPTIONS },
 ];
 
-/// Every extension `document.open` reads (the "All readable files" filter of open dialogs).
+/// Every extension `document.open` reads.
 pub const OPEN_EXTS: &[&str] = &[
     "vectorcraft",
     "drawcraft",
@@ -579,6 +579,35 @@ pub const OPEN_EXTS: &[&str] = &[
     "emf",
     "wmf",
     "eps",
+];
+
+/// The "All readable files" filter of open dialogs: [`OPEN_EXTS`] and the swatch library files
+/// ([`super::swatchlib::LIBRARY_EXTS`]: they open in the library panel), so a colour book shows
+/// without picking another filter.
+pub const OPEN_DIALOG_EXTS: &[&str] = &[
+    "vectorcraft",
+    "drawcraft",
+    "svg",
+    "svgz",
+    "pdf",
+    "ai",
+    "ait",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "tif",
+    "tiff",
+    "bmp",
+    "vctemplate",
+    "dxf",
+    "emf",
+    "wmf",
+    "eps",
+    "vcswatches",
+    "gpl",
+    "acb",
 ];
 
 /// The extension that picks each writable format when exporting (the format's first; PNG-8 shares
@@ -626,10 +655,10 @@ fn format_filters() -> impl Iterator<Item = (&'static str, &'static [&'static st
     FORMATS.iter().filter(|f| f.read).map(|f| (f.label, f.extensions))
 }
 
-/// Open-dialog filters: "All readable files" first, then one per readable format, then swatch
-/// libraries (which open in the library panel), flattener, PDF and print presets (imported).
+/// Open-dialog filters: "All readable files" first (documents and swatch libraries), then one per
+/// readable format, then swatch libraries (which open in the library panel), flattener, PDF and print presets (imported).
 pub fn open_filters() -> impl Iterator<Item = (&'static str, &'static [&'static str])> {
-    std::iter::once(("All readable files", OPEN_EXTS))
+    std::iter::once(("All readable files", OPEN_DIALOG_EXTS))
         .chain(format_filters())
         .chain(std::iter::once(("Swatch libraries", super::swatchlib::LIBRARY_EXTS)))
         .chain(std::iter::once(("Flattener presets", super::flatten::PRESET_EXTS)))

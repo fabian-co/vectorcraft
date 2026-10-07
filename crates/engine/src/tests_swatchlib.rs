@@ -185,6 +185,64 @@ fn libraries_saved_in_the_user_folder_are_user_defined() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A synthetic Lab colour book (`.acb`) of spot colours named `prefix` + each of `colors`.
+fn color_book(title: &str, prefix: &str, colors: &[(&str, [u8; 3])]) -> Vec<u8> {
+    fn string(out: &mut Vec<u8>, s: &str) {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        out.extend((units.len() as u32).to_be_bytes());
+        out.extend(units.iter().flat_map(|u| u.to_be_bytes()));
+    }
+    let mut out = b"8BCB\0\x01\x0b\xb8".to_vec();
+    for s in [title, prefix, "", "A test book"] {
+        string(&mut out, s);
+    }
+    out.extend((colors.len() as u16).to_be_bytes());
+    out.extend([0, 7, 0, 1, 0, 7]);
+    for (i, (name, lab)) in colors.iter().enumerate() {
+        string(&mut out, name);
+        out.extend(format!("{i:06}").as_bytes());
+        out.extend(lab);
+    }
+    out.extend(b"spflspot");
+    out
+}
+
+#[test]
+fn colour_books_load_as_spot_libraries_and_add_to_the_document() {
+    let book =
+        color_book("$$$/colorbook/Test/title=Test Solid.acb", "TEST ", &[("Red 032", [128, 208, 178]), ("", [0, 0, 0]), ("Black 7", [60, 129, 130])]);
+    let mut s = session();
+    let b64 = vectorcraft_format::base64_encode(&book);
+    let r = run(&mut s, "swatch.library.load", json!({"dataBase64": b64, "name": "whatever.acb"}));
+    assert_eq!((r["name"].as_str(), r["count"].as_u64()), (Some("Test Solid"), Some(2)), "the padding record is skipped");
+    let id = r["library"].as_str().unwrap().to_string();
+    let g = run(&mut s, "swatch.library.get", json!({ "library": id }));
+    assert_eq!(g["swatches"][0]["name"], "TEST Red 032");
+    assert_eq!((g["swatches"][0]["spot"].as_bool(), g["swatches"][0]["global"].as_bool()), (Some(true), Some(true)));
+    // Adding one brings a Lab spot swatch and paints with it, linked.
+    let rect = run(&mut s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 5, "height": 5}))["id"].clone();
+    run(&mut s, "select.set", json!({"ids": [rect]}));
+    let r = run(&mut s, "swatch.library.add", json!({"library": id, "names": ["TEST Red 032"], "apply": "fill"}));
+    assert_eq!(r["added"], json!(["TEST Red 032"]));
+    let w = doc(&s).swatch("TEST Red 032").unwrap();
+    assert!(w.spot && w.global);
+    assert!(matches!(w.paint.color(), Some(Color::Lab { a, b, .. }) if a == 80.0 && b == 50.0));
+    assert!(matches!(&s.paint.fill, Paint::Solid { swatch: Some(n), .. } if n == "TEST Red 032"));
+    // A cut book is an error, not a document to open.
+    let cut = vectorcraft_format::base64_encode(&book[..book.len() - 20]);
+    let e = s.execute("swatch.library.load", &json!({"dataBase64": cut, "name": "cut.acb"})).unwrap_err().to_string();
+    assert!(e.contains("cut short"), "{e}");
+    // In the user library folder it is a User Defined library, and File › Open's filters list it.
+    let dir = temp_dir("acb");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Mine.acb"), &book).unwrap();
+    s.swatch_libraries.set_user_dir(Some(dir.to_string_lossy().to_string()));
+    let list = run(&mut s, "swatch.library.list", json!({}));
+    assert!(list["libraries"].as_array().unwrap().iter().any(|l| l["id"] == "user/Mine.acb" && l["name"] == "Test Solid" && l["count"] == 2));
+    assert!(cmd::fileio::open_filters().all(|(label, exts)| !matches!(label, "All readable files" | "Swatch libraries") || exts.contains(&"acb")));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn another_documents_swatches_load_as_a_library() {
     let mut s = session();
