@@ -44,7 +44,7 @@ pub static TEMPLATES: &[Template] = &[
         uri: "vectorcraft://object/{id}",
         name: "object",
         title: "One layer or object",
-        description: "The layer or object with this id, with its children, bounds and paint (document.inspect)",
+        description: "The layer or object with this id, with its children, bounds and paint (document.node {summary: true}). Large containers can be sliced with run_command document.node {id, summary, depth, childLimit}: truncated levels report childCount",
         mime: "application/json",
         live: Live::Objects,
     },
@@ -118,7 +118,7 @@ pub fn read(b: &mut dyn Backend, uri: &str) -> Result<Value, ReadError> {
         return Err(ReadError::Invalid(format!("{} needs a value for `{}`", template.uri, variable_name(template.uri))));
     }
     let found = match template.name {
-        "object" => find_object(b, &var).map_err(ReadError::Backend)?,
+        "object" => read_object(b, &var).map_err(ReadError::Backend)?,
         // The command catalogue is a control method; the rest are engine commands.
         "command" => find_in(b.call("engine.commands", json!({})).map_err(ReadError::Backend)?, None, "id", &var),
         "effect" => find_in(exec(b, "effect.list").map_err(ReadError::Backend)?, Some("catalog"), "id", &var),
@@ -171,30 +171,21 @@ fn decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The layer or object with this id in the active document, with its subtree.
-fn find_object(b: &mut dyn Backend, id: &str) -> Result<Option<Value>, String> {
-    let doc = exec(b, "document.inspect")?;
-    Ok(find_node(doc.get("layers"), id))
-}
-
-/// Depth-first search of the layer tree for a node whose `id` matches.
-fn find_node(node: Option<&Value>, id: &str) -> Option<Value> {
-    let nodes = node?.as_array()?;
-    let mut stack: Vec<&Value> = nodes.iter().rev().collect();
-    while let Some(n) = stack.pop() {
-        let hit = match n.get("id") {
-            Some(Value::String(s)) => s == id,
-            Some(Value::Number(number)) => number.to_string() == id,
-            _ => false,
-        };
-        if hit {
-            return Some(n.clone());
-        }
-        if let Some(kids) = n.get("children").and_then(Value::as_array) {
-            stack.extend(kids.iter().rev());
-        }
+/// The layer or object with this id in the active document, as its compact summary
+/// (bounds, paint labels, subtree: the `document.inspect` shape for one node).
+///
+/// One `document.node {summary: true}` lookup instead of summarizing the whole document
+/// and searching it. A non-numeric id, or one that names nothing, is "not found" (the
+/// caller turns it into `-32602`); other failures (no document, an unreachable app) stay
+/// backend errors.
+fn read_object(b: &mut dyn Backend, id: &str) -> Result<Option<Value>, String> {
+    let Ok(id) = id.parse::<u64>() else { return Ok(None) };
+    match b.call("engine.execute", json!({"command": "document.node", "params": {"id": id, "summary": true}})) {
+        Ok(v) => Ok(Some(v)),
+        // `EngineError::NoNode`, as both backends word it.
+        Err(e) if e.starts_with("no such object") => Ok(None),
+        Err(e) => Err(e),
     }
-    None
 }
 
 /// The item in a query command's array whose `field` equals `value`.
@@ -251,6 +242,12 @@ mod tests {
         assert!(read(b.as_mut(), "vectorcraft://object/").is_err());
         assert!(read(b.as_mut(), "vectorcraft://object/99999").is_err());
         assert!(read(b.as_mut(), DOC_URI).is_ok());
+        // An id that names nothing is a bad value; without a document the backend says why.
+        for uri in ["vectorcraft://object/99999", "vectorcraft://object/abc"] {
+            assert!(matches!(read(b.as_mut(), uri), Err(ReadError::Invalid(_))), "{uri}");
+        }
+        let mut empty = Box::new(crate::Headless::new());
+        assert!(matches!(read(empty.as_mut(), "vectorcraft://object/1"), Err(ReadError::Backend(_))));
     }
 
     #[test]
@@ -261,5 +258,11 @@ mod tests {
         let v = read(b.as_mut(), &format!("vectorcraft://object/{id}")).unwrap();
         assert_eq!(v["id"].to_string(), id);
         assert!(v["bounds"].is_object(), "{v}");
+        // Layers resolve too, not just drawn objects.
+        let inspect = b.call("document.inspect", json!({})).unwrap();
+        let layer = inspect["layers"].as_array().and_then(|l| l.first()).expect("a layer");
+        let lid = layer["id"].to_string();
+        let v = read(b.as_mut(), &format!("vectorcraft://object/{lid}")).unwrap();
+        assert_eq!(v["id"].to_string(), lid);
     }
 }

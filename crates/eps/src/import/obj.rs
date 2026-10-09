@@ -32,6 +32,8 @@ pub(crate) enum Obj {
     /// An executable name: looked up and run.
     Exec(Rc<str>),
     Str(Shared<u8>),
+    /// An executable string (`cvx`): run, it runs its text as a program.
+    ExecStr(Shared<u8>),
     /// An array; executable ones are procedures.
     Array {
         items: Shared<Obj>,
@@ -40,7 +42,11 @@ pub(crate) enum Obj {
     Dict(DictRef),
     Op(Op),
     Mark,
-    File(Rc<RefCell<Stream>>),
+    /// A file; executable ones run their data as a program (`cvx exec`).
+    File {
+        stream: Rc<RefCell<Stream>>,
+        exec: bool,
+    },
     /// A `save` level (the graphics state depth it restores to).
     Save(usize),
     /// A graphics state object (`gstate`, `currentgstate`).
@@ -81,7 +87,7 @@ impl Obj {
     pub fn text(&self) -> Option<Rc<str>> {
         match self {
             Self::Name(n) | Self::Exec(n) => Some(n.clone()),
-            Self::Str(s) => Some(Rc::from(String::from_utf8_lossy(&s.borrow()).as_ref())),
+            Self::Str(s) | Self::ExecStr(s) => Some(Rc::from(String::from_utf8_lossy(&s.borrow()).as_ref())),
             _ => None,
         }
     }
@@ -113,12 +119,12 @@ impl Obj {
             Self::Int(_) => "integertype",
             Self::Real(_) => "realtype",
             Self::Name(_) | Self::Exec(_) => "nametype",
-            Self::Str(_) => "stringtype",
+            Self::Str(_) | Self::ExecStr(_) => "stringtype",
             Self::Array { .. } => "arraytype",
             Self::Dict(_) => "dicttype",
             Self::Op(_) => "operatortype",
             Self::Mark => "marktype",
-            Self::File(_) => "filetype",
+            Self::File { .. } => "filetype",
             Self::Save(_) => "savetype",
             Self::GState(_) => "gstatetype",
         }
@@ -270,8 +276,8 @@ ops! {
     // Dictionaries.
     NewDict = "dict", MaxLength = "maxlength", Begin = "begin", End = "end", Def = "def", Load = "load", Store = "store",
     Known = "known", Where = "where", Undef = "undef", CurrentDict = "currentdict", CountDictStack = "countdictstack",
-    SystemDict = "systemdict", UserDict = "userdict", GlobalDict = "globaldict", StatusDict = "statusdict",
-    ErrorDict = "errordict", DollarError = "$error", Bind = "bind",
+    DictStack = "dictstack", SystemDict = "systemdict", UserDict = "userdict", GlobalDict = "globaldict", StatusDict = "statusdict",
+    ErrorDict = "errordict", DollarError = "$error", InternalDict = "internaldict", Bind = "bind",
     // Virtual memory and the environment.
     Save = "save", Restore = "restore", SetGlobal = "setglobal", CurrentGlobal = "currentglobal", VmStatus = "vmstatus",
     Version = "version", Product = "product", RealTime = "realtime", UserTime = "usertime",
@@ -292,6 +298,7 @@ ops! {
     SetUnderColorRemoval = "setundercolorremoval", SetColorRendering = "setcolorrendering", SetSmoothness = "setsmoothness",
     SetStrokeAdjust = "setstrokeadjust", CurrentStrokeAdjust = "currentstrokeadjust", SetPageDevice = "setpagedevice",
     CurrentPageDevice = "currentpagedevice", SetUserParams = "setuserparams", SetSystemParams = "setsystemparams",
+    CurrentUserParams = "currentuserparams", CurrentSystemParams = "currentsystemparams",
     SetObjectFormat = "setobjectformat", ShowPage = "showpage", CopyPage = "copypage", ErasePage = "erasepage",
     CurrentScreen = "currentscreen", SetColorScreen = "setcolorscreen", CurrentHalftone = "currenthalftone",
     CurrentTransfer = "currenttransfer", CurrentColorTransfer = "currentcolortransfer",
@@ -320,6 +327,22 @@ ops! {
     DefineResource = "defineresource", UndefineResource = "undefineresource", ResourceStatus = "resourcestatus",
     ResourceForAll = "resourceforall", Show = "show", AShow = "ashow",
     WidthShow = "widthshow", AWidthShow = "awidthshow", XShow = "xshow", YShow = "yshow", XYShow = "xyshow",
-    KShow = "kshow", GlyphShow = "glyphshow", StringWidth = "stringwidth", CharPath = "charpath",
-    SetCacheDevice = "setcachedevice", SetCharWidth = "setcharwidth",
+    KShow = "kshow", CShow = "cshow", GlyphShow = "glyphshow", StringWidth = "stringwidth", CharPath = "charpath",
+    SetCacheDevice = "setcachedevice", SetCharWidth = "setcharwidth", SetCacheDevice2 = "setcachedevice2", RootFont = "rootfont",
+    // Forms, devices and files programs probe (no output device or file system here).
+    ExecForm = "execform", NullDevice = "nulldevice", PdfMark = "pdfmark", Status = "status", Token = "token",
+    BytesAvailable = "bytesavailable", ResetFile = "resetfile", Write = "write", WriteString = "writestring",
+    WriteHexString = "writehexstring", Echo = "echo", StrokePath = "strokepath", PathForAll = "pathforall",
+    // Queries and settings without an effect on the art.
+    CurrentHsbColor = "currenthsbcolor", CurrentColorRendering = "currentcolorrendering",
+    FindColorRendering = "findcolorrendering", CurrentColorScreen = "currentcolorscreen", CurrentSmoothness = "currentsmoothness",
+    SetHalftonePhase = "sethalftonephase", CurrentHalftonePhase = "currenthalftonephase", SetDevParams = "setdevparams",
+    CurrentDevParams = "currentdevparams", Gcheck = "gcheck", Scheck = "scheck", CurrentShared = "currentshared",
+    SetShared = "setshared", ClearDictStack = "cleardictstack", ExecStack = "execstack", SetCacheParams = "setcacheparams",
+    CurrentCacheParams = "currentcacheparams", CacheStatus = "cachestatus", UCacheStatus = "ucachestatus",
+    SetVmThreshold = "setvmthreshold", VmReclaim = "vmreclaim", StartJob = "startjob", CurrentObjectFormat = "currentobjectformat",
+    Revision = "revision", SerialNumber = "serialnumber", Read = "read", FilePosition = "fileposition",
+    SetFilePosition = "setfileposition", DeleteFile = "deletefile", RenameFile = "renamefile", Run = "run",
+    // User paths.
+    UFill = "ufill", UEoFill = "ueofill", UStroke = "ustroke", UAppend = "uappend", UPath = "upath", SetBBox = "setbbox",
 }

@@ -3,13 +3,22 @@
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
+use vectorcraft_color::Paint;
 use vectorcraft_doc::{Document, Node, NodeId, NodeKind};
 
 use super::*;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("select.all", "All", ["Select"], Some("Cmd+A"), "{}", has_doc, all),
+        cmd!(
+            "select.all",
+            "All",
+            ["Select"],
+            Some("Cmd+A"),
+            "{} → {count}; while the Type tool edits text, all of that text instead → {editing, start, end} (byte offsets)",
+            has_doc,
+            all
+        ),
         cmd!("select.allOnArtboard", "All on Active Artboard", ["Select"], Some("Cmd+Alt+A"), "{artboard?: index}", has_doc, all_on_artboard),
         cmd!("select.none", "Deselect", ["Select"], Some("Cmd+Shift+A"), "{}", has_doc, none),
         cmd!("select.reselect", "Reselect", ["Select"], Some("Cmd+6"), "{}", has_doc, reselect),
@@ -18,30 +27,78 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("select.nextBelow", "Next Object Below", ["Select"], Some("Cmd+Alt+["), "{}", has_selection, |s, _| step(s, -1)),
         cmd!("select.set", "Select Objects", [], None, "{ids: [id…]}", has_doc, set),
         cmd!("select.add", "Add to Selection", [], None, "{ids: [id…]}", has_doc, add),
-        cmd!("select.toggle", "Toggle Selection", [], None, "{id}", has_doc, toggle),
-        cmd!("select.key", "Set Key Object", [], None, "{id?} (none clears)", has_doc, key),
+        cmd!(
+            "select.toggle",
+            "Toggle Selection",
+            [],
+            None,
+            "{id} or {ids: [id…]}: each selected one leaves the selection, the others join it",
+            has_doc,
+            toggle
+        ),
+        cmd!(
+            "select.key",
+            "Set Key Object",
+            [],
+            None,
+            "{id?: a selected object (the Selection tool: a click on one object of a selection of several; on the key again: none)} the key object Align aligns to and Distribute Spacing spaces from; none clears it",
+            has_doc,
+            key
+        ),
         cmd!("select.anchors", "Select Anchors", [], None, "{id, anchors: [[subpath, anchor]…], mode: \"set\"|\"add\"|\"toggle\"}", has_doc, anchors),
-        cmd!("select.anchorsMany", "Select Anchors", [], None, "{items: [{id, anchors}], add?: bool}", has_doc, anchors_many),
-        cmd!("select.same.fillColor", "Fill Color", ["Select", "Same"], None, "{}", has_selection, |s, _| same(
-            s,
+        cmd!(
+            "select.anchorsMany",
+            "Select Anchors",
+            [],
+            None,
+            "{items: [{id, anchors}], mode?: \"set\"|\"add\"|\"toggle\"|\"subtract\" (set by default; add: true is mode add)}: toggle selects the anchors not selected and deselects the others, subtract deselects them; a path left with none leaves the selection",
+            has_doc,
+            anchors_many
+        ),
+        cmd!(
             "select.same.fillColor",
-            |a, b| a.appearance.fill_paint() == b.appearance.fill_paint()
-        )),
-        cmd!("select.same.strokeColor", "Stroke Color", ["Select", "Same"], None, "{}", has_selection, |s, _| same(
-            s,
+            "Fill Color",
+            ["Select", "Same"],
+            None,
+            "{} the objects filled with the first selected object's fill colour (any tint of its global or spot swatch, the same tint with prefs selectSameTintPercent)",
+            has_selection,
+            |s, _| {
+                let tint = s.prefs.select_same_tint_percent;
+                same(s, "select.same.fillColor", |a, b| same_paint(&a.appearance.fill_paint(), &b.appearance.fill_paint(), tint))
+            }
+        ),
+        cmd!(
             "select.same.strokeColor",
-            |a, b| a.appearance.stroke_paint() == b.appearance.stroke_paint()
-        )),
+            "Stroke Color",
+            ["Select", "Same"],
+            None,
+            "{} the objects stroked with the first selected object's stroke colour (tints as select.same.fillColor)",
+            has_selection,
+            |s, _| {
+                let tint = s.prefs.select_same_tint_percent;
+                same(s, "select.same.strokeColor", |a, b| same_paint(&a.appearance.stroke_paint(), &b.appearance.stroke_paint(), tint))
+            }
+        ),
         cmd!("select.same.strokeWeight", "Stroke Weight", ["Select", "Same"], None, "{}", has_selection, |s, _| same(
             s,
             "select.same.strokeWeight",
             |a, b| (a.appearance.stroke_width() - b.appearance.stroke_width()).abs() < 1e-9
         )),
-        cmd!("select.same.fillAndStroke", "Fill & Stroke", ["Select", "Same"], None, "{}", has_selection, |s, _| same(
-            s,
+        cmd!(
             "select.same.fillAndStroke",
-            |a, b| a.appearance.fill_paint() == b.appearance.fill_paint() && a.appearance.stroke_paint() == b.appearance.stroke_paint()
-        )),
+            "Fill & Stroke",
+            ["Select", "Same"],
+            None,
+            "{} the objects with the first selected object's fill and stroke colours (tints as select.same.fillColor)",
+            has_selection,
+            |s, _| {
+                let tint = s.prefs.select_same_tint_percent;
+                same(s, "select.same.fillAndStroke", |a, b| {
+                    let (x, y) = (&a.appearance, &b.appearance);
+                    same_paint(&x.fill_paint(), &y.fill_paint(), tint) && same_paint(&x.stroke_paint(), &y.stroke_paint(), tint)
+                })
+            }
+        ),
         cmd!("select.same.opacity", "Opacity", ["Select", "Same"], None, "{}", has_selection, |s, _| same(s, "select.same.opacity", |a, b| (a
             .opacity
             - b.opacity)
@@ -97,21 +154,28 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Selectable objects: children of visible, unlocked layers (or of the isolation container).
+/// The objects Select All takes: those of the isolated container, else of every layer (looking
+/// through sublayers, which are not objects).
 fn selectable(d: &Document, iso: Option<NodeId>) -> Vec<NodeId> {
     match iso.and_then(|i| d.node(i)) {
-        Some(c) => c.children().map(|v| v.iter().filter(|n| n.visible && !n.locked).map(|n| n.id).collect()).unwrap_or_default(),
-        None => d
-            .layers
-            .iter()
-            .filter(|l| l.visible && !l.locked)
-            .flat_map(|l| l.children().into_iter().flatten())
-            .filter(|n| n.visible && !n.locked)
-            .map(|n| n.id)
-            .collect(),
+        Some(c) => c.layer_art(true),
+        None => d.selectable_art(),
     }
 }
 
 fn all(s: &mut Session, _: &Value) -> Result<Value> {
+    // While the Type tool edits text, Select All takes all of that text and leaves the art
+    // selection as it is (Illustrator: text cursor in a text object).
+    if s.tool_wants_text() {
+        s.set_tool_option("selectAll", &json!(true));
+        let editing = s.tool_options()["editing"].clone();
+        let id = editing.as_u64().map(NodeId);
+        let end = id.and_then(|id| match &s.doc().ok()?.doc.node(id)?.kind {
+            NodeKind::Text(t) => Some(t.plain_text().len()),
+            _ => None,
+        });
+        return Ok(json!({ "editing": editing, "start": 0, "end": end.unwrap_or(0) }));
+    }
     let st = s.doc()?;
     let ids = selectable(&st.doc, st.isolation);
     s.select(|_, sel| sel.set(ids.iter().copied()))?;
@@ -177,8 +241,12 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn toggle(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = id_param(p, "id").ok_or_else(|| bad("select.toggle", "missing id"))?;
-    s.select(|_, sel| sel.toggle(id))?;
+    let ids = ids_param(p, "ids").or_else(|| id_param(p, "id").map(|id| vec![id])).ok_or_else(|| bad("select.toggle", "missing id or ids"))?;
+    s.select(|_, sel| {
+        for id in ids {
+            sel.toggle(id);
+        }
+    })?;
     ok()
 }
 
@@ -222,16 +290,48 @@ fn anchors_many(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|it| Some((NodeId(it.get("id")?.as_u64()?), parse_refs(it.get("anchors")).into_iter().collect()))).collect())
         .unwrap_or_default();
-    let add = bool_or(p, "add", false);
+    // `add: true` is the older spelling of mode add.
+    let mode = match str_param(p, "mode") {
+        Some(m @ ("set" | "add" | "toggle" | "subtract")) => m,
+        Some(m) => return Err(bad("select.anchorsMany", format!("unknown mode {m:?}"))),
+        None if bool_or(p, "add", false) => "add",
+        None => "set",
+    };
     s.select(|d, sel| {
-        if !add {
+        if mode == "set" {
             sel.clear();
         }
         for (id, refs) in items {
-            let total = d.node(id).and_then(|n| n.path_data()).map(|p| p.anchor_count()).unwrap_or(0);
+            let all: BTreeSet<(usize, usize)> =
+                d.node(id).and_then(|n| n.path_data()).map(|p| p.anchors().map(|(s, i, _)| (s, i)).collect()).unwrap_or_default();
+            // Anything but a path is selected, toggled or deselected as a whole.
+            if all.is_empty() {
+                match mode {
+                    "toggle" => sel.toggle(id),
+                    "subtract" => sel.remove(id),
+                    _ => sel.add(id),
+                }
+                continue;
+            }
+            // From the anchors selected now (all of them for a path selected as a whole).
+            let now = match sel.partial(id) {
+                Some(a) => a.clone(),
+                None if sel.contains(id) => all.clone(),
+                None => BTreeSet::new(),
+            };
+            let refs: BTreeSet<(usize, usize)> = refs.intersection(&all).copied().collect();
+            let next: BTreeSet<(usize, usize)> = match mode {
+                "toggle" => now.symmetric_difference(&refs).copied().collect(),
+                "subtract" => now.difference(&refs).copied().collect(),
+                _ => now.union(&refs).copied().collect(),
+            };
+            if next.is_empty() {
+                sel.remove(id);
+                continue;
+            }
             sel.add(id);
-            if refs.len() < total {
-                sel.anchors.entry(id).or_default().extend(refs);
+            if next.len() < all.len() {
+                sel.anchors.insert(id, next);
             } else {
                 sel.anchors.remove(&id);
             }
@@ -240,7 +340,16 @@ fn anchors_many(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn same(s: &mut Session, cmd: &str, eq: fn(&Node, &Node) -> bool) -> Result<Value> {
+/// Select › Same › Fill/Stroke Color: is `a` the same colour as `b`? Tints of one global or spot
+/// swatch are, unless `tint` (General › Select Same Tint %) asks for the same tint too.
+fn same_paint(a: &Paint, b: &Paint, tint: bool) -> bool {
+    match (a, b) {
+        (Paint::Solid { swatch: Some(x), tint: ta, .. }, Paint::Solid { swatch: Some(y), tint: tb, .. }) if x == y => !tint || (ta - tb).abs() < 1e-4,
+        _ => a == b,
+    }
+}
+
+fn same(s: &mut Session, cmd: &str, eq: impl Fn(&Node, &Node) -> bool) -> Result<Value> {
     let st = s.doc()?;
     let refn = st.selection.objects.first().and_then(|id| st.doc.node(*id)).cloned().ok_or_else(|| bad(cmd, "nothing selected"))?;
     select_where(s, cmd, &json!({}), |_, n| !n.is_container() && eq(n, &refn))
@@ -250,7 +359,11 @@ fn same(s: &mut Session, cmd: &str, eq: fn(&Node, &Node) -> bool) -> Result<Valu
 /// inside accepted ones); Select > Reselect repeats `cmd` with `p`.
 fn select_where(s: &mut Session, cmd: &str, p: &Value, f: impl Fn(&Document, &Node) -> bool) -> Result<Value> {
     fn visit(d: &Document, n: &Node, f: &impl Fn(&Document, &Node) -> bool, ids: &mut Vec<NodeId>) {
-        if n.visible && !n.locked && !n.is_layer() && f(d, n) {
+        // Hidden or locked objects and sublayers (and what they hold) are out of reach.
+        if !n.visible || n.locked || n.is_template() {
+            return;
+        }
+        if !n.is_layer() && f(d, n) {
             return ids.push(n.id);
         }
         for c in n.children().into_iter().flatten() {
@@ -307,14 +420,9 @@ fn same_attribute(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn same_layers(s: &mut Session, _: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let layers: BTreeSet<NodeId> = st.selection.objects.iter().filter_map(|id| st.doc.layer_of(*id)).collect();
-    let ids: Vec<NodeId> = layers
-        .iter()
-        .filter_map(|l| st.doc.node(*l))
-        .flat_map(|l| l.children().into_iter().flatten())
-        .filter(|n| n.visible && !n.locked)
-        .map(|n| n.id)
-        .collect();
+    // The layers or sublayers the selected objects are on (art in their sublayers too).
+    let layers: BTreeSet<NodeId> = st.selection.objects.iter().filter_map(|id| st.doc.layer_containing(*id)).collect();
+    let ids: Vec<NodeId> = layers.iter().filter_map(|l| st.doc.node(*l)).flat_map(|l| l.layer_art(true)).collect();
     s.select(|_, sel| sel.set(ids.iter().copied()))?;
     ok()
 }

@@ -453,16 +453,24 @@ pub(crate) struct Exporter<'a> {
     /// The fonts real text is written in, by face id, with their units per em; `None` for faces
     /// that can't be embedded.
     fonts: HashMap<u32, Option<(krilla::text::Font, f64)>>,
-    /// Top-level layers are drawn as forms marked for their optional content groups
+    /// Layers and sublayers are drawn as forms marked for their optional content groups
     /// ([`crate::forms`]).
     pub layers: bool,
-    /// A top-level layer's form is being drawn.
-    in_layer: bool,
+    /// Each layer's index in [`crate::forms::pdf_layers`], by address.
+    layer_index: HashMap<usize, usize>,
+    /// The address of the layer whose form is being drawn.
+    in_layer: usize,
     /// Overprinting fills and strokes are drawn as forms marked to overprint.
     pub overprint: bool,
     /// An overprinting fill or stroke was drawn so.
     pub overprinted: bool,
+    /// Inline graphics being drawn inside inline graphics (text in a symbol shown inline in
+    /// text…): deeper ones are left out.
+    inline_depth: u32,
 }
+
+/// How deep inline graphics nest before they are left out.
+const MAX_INLINE_DEPTH: u32 = 4;
 
 impl<'a> Exporter<'a> {
     /// An exporter of `doc` writing images as `set` says; layers whose Print option is off are
@@ -485,9 +493,11 @@ impl<'a> Exporter<'a> {
             outline_text: set.advanced.outline_text,
             fonts: HashMap::new(),
             layers: false,
-            in_layer: false,
+            layer_index: crate::forms::pdf_layers(doc).iter().enumerate().map(|(i, l)| (address(l.node), i)).collect(),
+            in_layer: 0,
             overprint: false,
             overprinted: false,
+            inline_depth: 0,
         }
     }
 
@@ -599,6 +609,11 @@ fn constant_mask(s: &mut Surface, page: Rect, alpha: f32) -> krilla::mask::Mask 
     cover(&mut ms, page, 0, alpha);
     ms.finish();
     krilla::mask::Mask::new(sb.finish(), krilla::mask::MaskType::Alpha)
+}
+
+/// A node's address, to tell the very node apart from equal ones.
+fn address(n: &Node) -> usize {
+    std::ptr::from_ref(n).addr()
 }
 
 fn rects_overlap(a: Rect, b: Rect) -> bool {
@@ -885,15 +900,15 @@ impl Exporter<'_> {
 
     fn node(&mut self, s: &mut Surface, n: &Node, page: Rect, force: bool) {
         if self.layers
-            && !self.in_layer
-            && let NodeKind::Layer { template: false, printable, .. } = n.kind
+            && self.in_layer != address(n)
+            && let NodeKind::Layer { printable, .. } = n.kind
             && (printable || self.non_printing)
-            && let Some(i) = self.doc.layers.iter().position(|l| std::ptr::eq(&**l, n))
+            && let Some(&i) = self.layer_index.get(&address(n))
         {
-            // A PDF layer: hidden layers are written too (their group is off).
-            self.in_layer = true;
+            // A PDF layer: hidden layers and sublayers are written too (their group is off).
+            let enclosing = std::mem::replace(&mut self.in_layer, address(n));
             crate::forms::form(s, Mark::Layer(i), |s| self.node(s, n, page, true));
-            self.in_layer = false;
+            self.in_layer = enclosing;
             return;
         }
         if !force && !n.visible {
@@ -982,7 +997,7 @@ impl Exporter<'_> {
                 }
             }
             // Live blends/envelopes/meshes export their evaluated (expanded) form.
-            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) => {
+            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) | NodeKind::PlacedDocument(_) => {
                 let g = vectorcraft_effects::expand_live_deep(Some(self.doc), n);
                 for c in g.children().into_iter().flatten() {
                     self.node(s, c, page, false);
@@ -1272,7 +1287,14 @@ impl Exporter<'_> {
         true
     }
 
+    ///
+    /// Inline graphics ([`vectorcraft_doc::TextRun::inline`]) are drawn as their symbols' art
+    /// (vector paths, like symbol instances) where the layout placed them; their characters
+    /// write no glyph.
     fn text(&mut self, s: &mut Surface, n: &Node, t: &TextObject, page: Rect) {
+        let doc = self.doc;
+        let resolved = doc.inline_resolved(t);
+        let t = &*resolved;
         let layout = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
         let tb = t.xf.transform_rect_bbox(layout.bounds);
         // The object's own fills and strokes paint the whole outline: those below the Characters
@@ -1323,6 +1345,18 @@ impl Exporter<'_> {
         s.set_fill(None);
         s.set_stroke(None);
         s.pop();
+        if self.inline_depth < MAX_INLINE_DEPTH {
+            self.inline_depth += 1;
+            for ig in &layout.inlines {
+                let Some(art) = t.runs.get(ig.run).and_then(|r| r.inline.as_ref()) else { continue };
+                let Some(sym) = doc.symbols.iter().find(|x| x.name == art.symbol) else { continue };
+                let mut node = (*sym.art).clone();
+                // Strokes scale with the art, as on the canvas.
+                node.transform(t.xf * ig.xf * doc.symbol_natural_xf(&art.symbol), true);
+                self.node(s, &node, page, true);
+            }
+            self.inline_depth -= 1;
+        }
         if let Some((bp, path)) = &all {
             self.text_items(s, above, bp, path, page, tb);
         }
@@ -1444,7 +1478,11 @@ impl Exporter<'_> {
         let name = format!("{} {}", face.family, face.style);
         let font = match face.embedding() {
             Embedding::Subset => {
-                let font = krilla::text::Font::new(face.file_data().to_vec().into(), face.face_index()).map(|f| (f, face.units_per_em()));
+                // A named instance of a variable font is embedded instanced (its own outlines and
+                // widths, not the default instance's).
+                let coords: Vec<(krilla::text::Tag, f32)> = face.variations().iter().map(|(t, v)| (krilla::text::Tag::new(t), *v)).collect();
+                let font =
+                    krilla::text::Font::new_variable(face.file_data().to_vec().into(), face.face_index(), &coords).map(|f| (f, face.units_per_em()));
                 if font.is_none() {
                     self.warn(format!("the font “{name}” can't be embedded: its text is exported as outlines"));
                 }
@@ -1466,8 +1504,8 @@ impl Exporter<'_> {
     }
 
     /// Image `key` placed `size` points wide and high, resampled and compressed as the Compression
-    /// settings say ([`crate::images::recode`]); cached by key (and size when images are
-    /// resampled).
+    /// settings say ([`crate::images::recode`], [`crate::images::recode_cmyk`] for CMYK images);
+    /// cached by key (and size when images are resampled).
     fn load_image(&mut self, key: &str, size: (f64, f64)) -> Option<Image> {
         let c = self.compression;
         let sized = [c.color.downsample, c.gray.downsample, c.mono.downsample].iter().any(|d| *d != crate::Downsample::None);
@@ -1479,7 +1517,11 @@ impl Exporter<'_> {
         let doc = self.doc;
         let out = self.out.clone();
         let img = doc.images.get(key).and_then(|blob| {
-            let r = crate::images::recode(&blob.bytes, size, c, interpolate, out.pixels());
+            let r = if blob.is_cmyk() {
+                crate::images::recode_cmyk(blob, size, c, interpolate, out.cmyk_pixels())
+            } else {
+                crate::images::recode(&blob.bytes, size, c, interpolate, out.pixels())
+            };
             if let Some(w) = r.warning {
                 self.warn(w);
             }

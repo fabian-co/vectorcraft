@@ -231,3 +231,68 @@ fn a_failed_batch_brings_back_a_document_it_reverted() {
     assert!(st.is_dirty() && st.interaction.is_none());
     assert!(st.revision > revision, "the restored document redraws");
 }
+
+#[test]
+fn a_failed_batch_gives_back_the_highlighted_rows_and_the_current_layer() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"created": null})).unwrap();
+    let layer = s.doc().unwrap().doc.layers[0].id;
+    // A step that highlights the layer's row, then one that fails: the highlight goes back too.
+    let steps = json!([{"command": "layer.setCurrent", "params": {"id": layer.0}}, {"command": "no.such.command"}]);
+    assert!(s.execute("command.batch", &json!({ "commands": steps })).is_err());
+    assert!(s.doc().unwrap().layer_rows.is_empty(), "no row stays highlighted");
+    assert_eq!(s.doc().unwrap().active_layer, Some(layer));
+    // So Collect in New Layer acts on the drawn rectangle, as it does when the journal is replayed
+    // (a failed batch isn't journaled).
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 1, "height": 1})).unwrap();
+    s.execute("layer.collectInNew", &json!({})).unwrap();
+    let r = replayed(&s);
+    assert_eq!(documents(&r), documents(&s));
+}
+
+/// The edits made in an undo group (a scrubbed numeric field, #400) are one undo step, journaled
+/// one by one; a cancelled group undoes them and leaves the journal as it was.
+#[test]
+fn an_undo_group_is_one_undo_step() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 100, "height": 50})).unwrap();
+    let width = |s: &Session| s.transform_box(&s.doc().unwrap().selection.objects).unwrap().rect.width();
+    let undo_len = |s: &Session| s.doc().unwrap().history.undo.len();
+    let (undo, journal) = (undo_len(&s), s.journal.len());
+    s.begin_undo_group();
+    for w in [101, 102, 103] {
+        s.execute("object.setBounds", &json!({"width": w})).unwrap();
+    }
+    // A live drag committed in the group (the Transparency panel's opacity field) joins it too.
+    s.begin_interaction("Opacity").unwrap();
+    s.preview("transparency.set", &json!({"opacity": 50})).unwrap();
+    s.commit_interaction().unwrap();
+    s.end_undo_group(false);
+    assert!((width(&s) - 103.0).abs() < 1e-9);
+    assert_eq!(undo_len(&s), undo + 1, "one undo step");
+    assert_eq!(s.journal.len(), journal + 4, "each edit journaled");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!((width(&s) - 100.0).abs() < 1e-9, "undo takes the whole drag back");
+    assert_eq!(undo_len(&s), undo);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!((width(&s) - 103.0).abs() < 1e-9);
+
+    // Escape: back where it started, with no trace in the history or the journal.
+    let (undo, journal) = (undo_len(&s), s.journal.len());
+    s.begin_undo_group();
+    s.execute("object.setBounds", &json!({"width": 150})).unwrap();
+    s.execute("object.setBounds", &json!({"width": 160})).unwrap();
+    s.end_undo_group(true);
+    assert!((width(&s) - 103.0).abs() < 1e-9);
+    assert_eq!((undo_len(&s), s.journal.len()), (undo, journal));
+    // Closed: the next edits are steps of their own again.
+    s.execute("object.setBounds", &json!({"width": 110})).unwrap();
+    s.execute("object.setBounds", &json!({"width": 120})).unwrap();
+    assert_eq!(undo_len(&s), undo + 2);
+    // A group with no edits records nothing, and cancelling it undoes nothing.
+    s.begin_undo_group();
+    s.end_undo_group(true);
+    assert!((width(&s) - 120.0).abs() < 1e-9);
+    assert_eq!(undo_len(&s), undo + 2);
+}

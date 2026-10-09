@@ -91,12 +91,12 @@ fn real_text_lands_within_half_a_point_of_the_outlines() {
     turned.xf *= Affine::rotate(-0.5) * Affine::skew(0.2, 0.0);
     let mut mixed = TextObject::point(Point::new(200.0, 60.0), "", style(20.0));
     mixed.runs = vec![
-        TextRun { text: "x".into(), style: style(20.0) },
-        TextRun { text: "2".into(), style: CharStyle { baseline_shift: 8.0, v_scale: 140.0, ..style(12.0) } },
-        TextRun { text: " ok".into(), style: CharStyle { rotation: 20.0, ..style(20.0) } },
+        TextRun { text: "x".into(), style: style(20.0), inline: None },
+        TextRun { text: "2".into(), style: CharStyle { baseline_shift: 8.0, v_scale: 140.0, ..style(12.0) }, inline: None },
+        TextRun { text: " ok".into(), style: CharStyle { rotation: 20.0, ..style(20.0) }, inline: None },
     ];
     let mut on_path = TextObject::point(Point::ZERO, "along the arc", style(18.0));
-    on_path.kind = TextKind::OnPath { path: arc(), start: 0.0 };
+    on_path.kind = TextKind::OnPath { path: arc(), start: 0.0, end: None };
     on_path.xf = Affine::IDENTITY;
     for t in [plain, turned, mixed, on_path] {
         let what = t.plain_text();
@@ -108,6 +108,28 @@ fn real_text_lands_within_half_a_point_of_the_outlines() {
         assert!(off < 0.5, "{what}: {a:?} vs {b:?}");
         assert_eq!(texts(&import_as(&pdf(&d, false).bytes, TextAs::Text)).concat().replace(' ', ""), what.replace(' ', ""), "{what}");
     }
+}
+
+/// A named instance of a variable font is real text in that instance: its embedded subset draws
+/// the instance's glyphs where the outlines would be, not the default instance's (#296).
+#[test]
+fn variable_font_instances_are_real_text_in_their_own_glyphs() {
+    use vectorcraft_text::test_fonts::{VARIABLE_CHARS, VARIABLE_FAMILY, variable_font};
+    FontDb::global().add_font(variable_font().unwrap());
+    let mut widths = vec![];
+    for s in ["Regular", "Bold"] {
+        let st = CharStyle { font_family: VARIABLE_FAMILY.into(), font_style: s.into(), ..style(48.0) };
+        let d = doc(vec![TextObject::point(Point::new(20.0, 80.0), VARIABLE_CHARS, st)]);
+        let r = pdf(&d, false);
+        assert!(r.warnings.is_empty(), "{s}: {:?}", r.warnings);
+        assert_eq!(texts(&import_as(&r.bytes, TextAs::Text)), [VARIABLE_CHARS], "{s}: real text");
+        let (real, outlined) = (ink(&import_as(&r.bytes, TextAs::Outlines)), ink(&import_as(&pdf(&d, true).bytes, TextAs::Outlines)));
+        let off =
+            [real.x0 - outlined.x0, real.y0 - outlined.y0, real.x1 - outlined.x1, real.y1 - outlined.y1].iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        assert!(off < 0.5, "{s}: {real:?} vs {outlined:?}");
+        widths.push(real.width());
+    }
+    assert!(widths[1] > widths[0] * 1.2, "Bold is wider: {widths:?}");
 }
 
 #[test]
@@ -188,4 +210,21 @@ fn pdf_a_takes_real_text() {
     let settings: PdfSettings = serde_json::from_value(json!({"standard": "pdfA2b", "advanced": {"outlineText": false}})).unwrap();
     let bytes = export(&d, &PdfOptions { settings, created: Some(0), ..Default::default() }).unwrap();
     assert_eq!(texts(&import_as(&bytes, TextAs::Text)), ["Archive"]);
+}
+
+/// A named instance comes back as live type in that style (not the default instance's).
+#[test]
+fn a_variable_font_instance_comes_back_in_its_own_style() {
+    use vectorcraft_text::test_fonts::{VARIABLE_CHARS, VARIABLE_FAMILY, variable_font};
+    FontDb::global().add_font(variable_font().unwrap());
+    let st = CharStyle { font_family: VARIABLE_FAMILY.into(), font_style: "Bold".into(), ..style(48.0) };
+    let d = doc(vec![TextObject::point(Point::new(20.0, 80.0), VARIABLE_CHARS, st)]);
+    let back = crate::import_with_report(&pdf(&d, false).bytes, &ImportOptions { text_as: TextAs::Text, ..Default::default() }).unwrap().document;
+    let mut styles = vec![];
+    back.walk(|n| {
+        if let NodeKind::Text(t) = &n.kind {
+            styles.extend(t.runs.iter().map(|r| r.style.font_style.clone()));
+        }
+    });
+    assert_eq!(styles, ["Bold"]);
 }

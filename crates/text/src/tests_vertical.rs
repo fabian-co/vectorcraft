@@ -73,10 +73,45 @@ fn area_type_starts_at_the_right_edge_and_wraps_to_the_left() {
     assert!(l.glyphs.iter().all(|g| g.outline.bounding_box().y1 <= 105.0 + 1e-6), "inside the frame");
 }
 
+/// `baselines`: one per line that holds characters, along it for horizontal type and down the
+/// column's centre line for vertical type (where point type's anchor is); none on a path.
+#[test]
+fn baselines_run_along_lines_and_down_column_centres() {
+    let h = layout(
+        FontDb::global(),
+        &TextObject::point(
+            Point::ZERO,
+            "§§
+
+§",
+            CharStyle { size: 20.0, ..CharStyle::default() },
+        ),
+    );
+    let hb = h.baselines();
+    assert_eq!(hb.len(), 2, "the empty line has none: {hb:?}");
+    assert!(hb[0].0 == Point::ZERO && hb[0].1.y == 0.0 && hb[0].1.x > 15.0, "the first baseline runs from the anchor: {hb:?}");
+    assert!(hb[1].0.y > 40.0 && hb[1].0.y == hb[1].1.y && hb[1].1.x > hb[1].0.x, "the third line's, lower: {hb:?}");
+    let v = layout(
+        FontDb::global(),
+        &vertical(
+            "§§
+§",
+        ),
+    );
+    let vb = v.baselines();
+    let (a, c) = (ink(&v, 0), ink(&v, 2));
+    assert_eq!(vb.len(), 2, "{vb:?}");
+    assert!(vb[0].0.x.abs() < 4.0 && vb[0].0.x == vb[0].1.x && vb[0].1.y > vb[0].0.y + 30.0, "down the first column's centre: {vb:?}");
+    assert!((vb[0].0.x - a.center().x).abs() < 4.0 && (vb[1].0.x - c.center().x).abs() < 4.0, "through the glyphs: {vb:?} {a:?} {c:?}");
+    let mut on_path = vertical("ab");
+    on_path.kind = TextKind::OnPath { path: PathData::from_bezpath(&kurbo::Line::new((0.0, 0.0), (100.0, 0.0)).to_path(0.1)), start: 0.0, end: None };
+    assert!(layout(FontDb::global(), &on_path).baselines().is_empty());
+}
+
 #[test]
 fn type_on_a_path_stays_horizontal() {
     let mut t = vertical("ab");
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&kurbo::Line::new((0.0, 0.0), (100.0, 0.0)).to_path(0.1)), start: 0.0 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&kurbo::Line::new((0.0, 0.0), (100.0, 0.0)).to_path(0.1)), start: 0.0, end: None };
     assert!(!layout(FontDb::global(), &t).vertical);
 }
 
@@ -260,4 +295,212 @@ fn japanese_numbers_keep_their_own_cells_down_the_column() {
         let inks = ink(&l, first).union(ink(&l, first + 1));
         assert!(inks.center().x.abs() < 2.8, "{block} centred on the column: {inks:?}");
     }
+}
+
+/// Upright glyphs take their cell from the font's vertical metrics: the advance down the column,
+/// and where the glyph hangs from its vertical origin (VORG, or the glyph's top and top side
+/// bearing). Fonts without them keep one em and the em box centre.
+#[test]
+fn upright_glyphs_follow_the_fonts_vertical_metrics() {
+    use crate::test_fonts::{VERTICAL_FAMILY, VERTICAL_TALL, vertical_font};
+    for vorg in [false, true] {
+        let db = FontDb::with_font_dirs(vec![]);
+        db.add_font(vertical_font(vorg).unwrap());
+        let text = format!("{VERTICAL_TALL}{VERTICAL_TALL}");
+        let mut t = vertical(&text);
+        t.runs[0].style.font_family = VERTICAL_FAMILY.into();
+        let l = layout(&db, &t);
+        let step = l.glyphs[1].origin.y - l.glyphs[0].origin.y;
+        assert!((step - 28.0).abs() < 0.01, "1.4 em down the column at 20 pt (vorg {vorg}): {step}");
+        // The glyph hangs from its vertical origin, 1.1 em above the baseline: its top is
+        // (1.1 em − its own top) below the top of its cell.
+        let face = db.face(VERTICAL_FAMILY, "Regular").unwrap();
+        let (_, origin) = face.vertical_glyph(face.glyph_for(VERTICAL_TALL)).unwrap();
+        assert!((origin - 1100.0).abs() < 1.0, "vorg {vorg}: {origin}");
+        let top = db.outline(&face, face.glyph_for(VERTICAL_TALL)).bounding_box().y0; // y-down: −yMax
+        let cell_top = l.glyphs[0].origin.y;
+        let expected = cell_top + (1.1 + top / 1000.0) * 20.0;
+        assert!((ink(&l, 0).y0 - expected).abs() < 0.05, "vorg {vorg}: ink top {} vs {expected}", ink(&l, 0).y0);
+    }
+    // The same glyph in the font without vertical metrics: one em, as before.
+    let l = layout(FontDb::global(), &vertical("§§"));
+    assert!((l.glyphs[1].origin.y - l.glyphs[0].origin.y - 20.0).abs() < 0.01);
+}
+
+/// Mojikumi (JLREQ 3.1): with Line-end Punctuation Half Width, a closing mark ending a line is set
+/// half width, a closing mark followed by punctuation loses the space after it, and an opening
+/// bracket after another loses the space before it; vertical type the same way down the column.
+/// Needs a font with full-width Japanese punctuation (skipped without one).
+#[test]
+fn mojikumi_halves_line_end_and_consecutive_punctuation() {
+    use vectorcraft_doc::Mojikumi;
+    let lay = |text: &str, m: Mojikumi, vertical_type: bool| {
+        let mut t = TextObject::point(Point::ZERO, text, CharStyle { size: 20.0, ..CharStyle::default() });
+        t.xf = Affine::IDENTITY;
+        t.vertical = vertical_type;
+        t.para.mojikumi = m;
+        layout(FontDb::global(), &t)
+    };
+    let solid = lay("一。", Mojikumi::None, false);
+    if (solid.glyphs[1].advance - 20.0).abs() > 2.0 {
+        return; // no font with full-width punctuation here
+    }
+    for vertical_type in [false, true] {
+        let adv = |text: &str, m| lay(text, m, vertical_type).glyphs.iter().map(|g| g.advance).collect::<Vec<_>>();
+        // Line end: 。 half width.
+        assert!((adv("一。", Mojikumi::LineEndHalf)[1] - 10.0).abs() < 0.01, "vertical {vertical_type}");
+        assert!((adv("一。", Mojikumi::None)[1] - 20.0).abs() < 0.01);
+        // 」 before 「: the closing mark's space goes; 「 keeps its own.
+        let a = adv("一」「二", Mojikumi::LineEndHalf);
+        assert!((a[1] - 10.0).abs() < 0.01 && (a[2] - 20.0).abs() < 0.01, "{a:?}");
+        // 「「: the second bracket loses the space before it and is drawn half an em earlier.
+        let a = adv("「「一", Mojikumi::LineEndHalf);
+        assert!((a[0] - 20.0).abs() < 0.01 && (a[1] - 10.0).abs() < 0.01, "{a:?}");
+        let (on, off) = (lay("「「一", Mojikumi::LineEndHalf, vertical_type), lay("「「一", Mojikumi::None, vertical_type));
+        let along = |r: Rect| if vertical_type { r.y0 } else { r.x0 };
+        let moved = along(off.glyphs[1].outline.bounding_box()) - along(on.glyphs[1].outline.bounding_box());
+        assert!((moved - 10.0).abs() < 0.01, "vertical {vertical_type}: the second 「 is drawn half an em earlier ({moved})");
+        let across = |r: Rect| if vertical_type { r.x0 } else { r.y0 };
+        let drift = across(off.glyphs[1].outline.bounding_box()) - across(on.glyphs[1].outline.bounding_box());
+        assert!(drift.abs() < 0.01, "vertical {vertical_type}: and not moved across the line ({drift})");
+        // Text without punctuation is untouched.
+        assert_eq!(adv("一二", Mojikumi::LineEndHalf), adv("一二", Mojikumi::None));
+    }
+}
+
+/// Mojikumi (JLREQ 3.2.2): a quarter em between Japanese and Latin letters or digits, either way
+/// round, horizontal and vertical; none inside a tate-chu-yoko block, none left at a line's end, and
+/// none with Mojikumi None. Needs a font with full-width Japanese (skipped without one).
+#[test]
+fn mojikumi_spaces_japanese_from_latin_by_a_quarter_em() {
+    use vectorcraft_doc::Mojikumi;
+    let lay = |text: &str, m: Mojikumi, vertical_type: bool| {
+        let mut t = TextObject::point(Point::ZERO, text, CharStyle { size: 20.0, ..CharStyle::default() });
+        t.xf = Affine::IDENTITY;
+        t.vertical = vertical_type;
+        t.para.mojikumi = m;
+        layout(FontDb::global(), &t)
+    };
+    if (lay("雅", Mojikumi::None, false).glyphs[0].advance - 20.0).abs() > 2.0 {
+        return; // no font with full-width Japanese here
+    }
+    for vertical_type in [false, true] {
+        let extra = |text: &str| -> Vec<f64> {
+            let (on, off) = (lay(text, Mojikumi::LineEndHalf, vertical_type), lay(text, Mojikumi::None, vertical_type));
+            on.glyphs.iter().zip(&off.glyphs).map(|(a, b)| a.advance - b.advance).collect()
+        };
+        // 雅楽 2026 年: after 楽 and after 6.
+        assert_eq!(extra("雅楽2026年").iter().map(|x| (x * 100.0).round() / 100.0).collect::<Vec<_>>(), [0.0, 5.0, 0.0, 0.0, 0.0, 5.0, 0.0]);
+        // Latin first, and nothing after the last character of the line.
+        assert_eq!(extra("AB雅").iter().map(|x| x.round()).collect::<Vec<_>>(), [0.0, 5.0, 0.0]);
+        assert_eq!(extra("雅A").iter().map(|x| x.round()).collect::<Vec<_>>(), [5.0, 0.0]);
+        // Punctuation takes no Japanese–Latin space (the closing bracket isn't at the line's end).
+        assert!(extra("「A」です").iter().all(|x| x.abs() < 0.01), "{:?}", extra("「A」です"));
+    }
+    // A tate-chu-yoko block is set as a Japanese character, with no space inside or around it.
+    let on = lay("第10回", Mojikumi::LineEndHalf, true);
+    let off = lay("第10回", Mojikumi::None, true);
+    assert!(on.glyphs.iter().zip(&off.glyphs).all(|(a, b)| (a.advance - b.advance).abs() < 0.01));
+}
+
+/// Mojikumi (JLREQ 3.1.5): with Line-end Punctuation Half Width, an opening bracket starting a
+/// wrapped line is set flush with the line's start (the space before it goes), giving the line half
+/// an em more room; at the start of a paragraph it keeps its full width. Horizontal and vertical.
+/// Needs a font with full-width Japanese punctuation (skipped without one).
+#[test]
+fn mojikumi_sets_an_opening_bracket_flush_at_the_start_of_a_wrapped_line() {
+    use vectorcraft_doc::Mojikumi;
+    // 20 pt type in a frame three and a half ems across the lines.
+    let lay = |text: &str, m: Mojikumi, vertical_type: bool| {
+        let mut t = TextObject::point(Point::ZERO, text, CharStyle { size: 20.0, ..CharStyle::default() });
+        t.xf = Affine::IDENTITY;
+        t.vertical = vertical_type;
+        t.para.mojikumi = m;
+        let frame = if vertical_type { Rect::new(0.0, 0.0, 200.0, 70.0) } else { Rect::new(0.0, 0.0, 70.0, 200.0) };
+        t.kind = TextKind::Area { frame: PathData::from_bezpath(&frame.to_path(0.1)) };
+        layout(FontDb::global(), &t)
+    };
+    if (lay("一「", Mojikumi::None, false).glyphs[1].advance - 20.0).abs() > 2.0 {
+        return; // no font with full-width punctuation here
+    }
+    for vertical_type in [false, true] {
+        let along = |r: Rect| if vertical_type { r.y0 } else { r.x0 };
+        // 一二三 / 「四五六: the bracket can't end the first line, so it starts the second.
+        let (on, off) = (lay("一二三「四五六", Mojikumi::LineEndHalf, vertical_type), lay("一二三「四五六", Mojikumi::None, vertical_type));
+        let moved = along(off.glyphs[3].outline.bounding_box()) - along(on.glyphs[3].outline.bounding_box());
+        assert!((moved - 10.0).abs() < 0.01, "vertical {vertical_type}: 「 is drawn half an em earlier ({moved})");
+        let across = |r: Rect| if vertical_type { r.x0 } else { r.y0 };
+        let drift = across(off.glyphs[3].outline.bounding_box()) - across(on.glyphs[3].outline.bounding_box());
+        assert!(drift.abs() < 0.01, "vertical {vertical_type}: and not moved across the line ({drift})");
+        assert!((on.glyphs[3].advance - 10.0).abs() < 0.01, "vertical {vertical_type}: {}", on.glyphs[3].advance);
+        // The half em it gave up lets 六 stay on the line.
+        assert_eq!(on.glyphs[6].line, on.glyphs[3].line, "vertical {vertical_type}");
+        assert_ne!(off.glyphs[6].line, off.glyphs[3].line, "vertical {vertical_type}");
+        // At the start of a paragraph the bracket keeps its full width.
+        let first = lay("「一」", Mojikumi::LineEndHalf, vertical_type);
+        assert!((first.glyphs[0].advance - 20.0).abs() < 0.01, "vertical {vertical_type}: {}", first.glyphs[0].advance);
+    }
+}
+
+/// Burasagari: in a measure of exactly five ems, a comma that would be the sixth character goes to
+/// the next line with the character before it (None) or hangs outside the line (Standard, Forced);
+/// a full stop that is the fifth character stays inside (None, Standard) or hangs while the four
+/// before it fill the measure (Forced). Closing brackets don't hang. Horizontal and vertical, with
+/// Line-end Punctuation Half Width (the hanging mark is half width). Needs a font with full-width
+/// Japanese punctuation (skipped without one).
+#[test]
+fn burasagari_hangs_a_comma_or_full_stop_outside_the_line() {
+    use vectorcraft_doc::{Burasagari, Mojikumi};
+    // 20 pt type, justified, in a frame five ems along the lines.
+    let lay = |text: &str, b: Burasagari, vertical_type: bool| {
+        let mut t = TextObject::point(Point::ZERO, text, CharStyle { size: 20.0, ..CharStyle::default() });
+        t.xf = Affine::IDENTITY;
+        t.vertical = vertical_type;
+        t.para.mojikumi = Mojikumi::LineEndHalf;
+        t.para.justify = Justify::JustifyLeft;
+        t.para.burasagari = b;
+        let frame = if vertical_type { Rect::new(0.0, 0.0, 200.0, 100.0) } else { Rect::new(0.0, 0.0, 100.0, 200.0) };
+        t.kind = TextKind::Area { frame: PathData::from_bezpath(&frame.to_path(0.1)) };
+        layout(FontDb::global(), &t)
+    };
+    if (lay("一、二", Burasagari::None, false).glyphs[1].advance - 20.0).abs() > 2.0 {
+        return; // no font with full-width punctuation here
+    }
+    let advances = |l: &TextLayout, n: usize| l.glyphs.iter().take(n).map(|g| (g.advance * 100.0).round() / 100.0).collect::<Vec<_>>();
+    for vertical_type in [false, true] {
+        // 、 as the sixth character.
+        let none = lay("一二三四五、六七", Burasagari::None, vertical_type);
+        assert_ne!(none.glyphs[4].line, none.glyphs[0].line, "vertical {vertical_type}: 五、 go to the next line");
+        for b in [Burasagari::Standard, Burasagari::Forced] {
+            let l = lay("一二三四五、六七", b, vertical_type);
+            assert_eq!(l.glyphs[5].line, l.glyphs[0].line, "vertical {vertical_type} {b:?}: 、 hangs");
+            assert_eq!(advances(&l, 6), [20.0, 20.0, 20.0, 20.0, 20.0, 10.0], "vertical {vertical_type} {b:?}: five ems inside, half an em outside");
+            assert_eq!(l.glyphs[6].line, l.glyphs[0].line + 1, "vertical {vertical_type} {b:?}");
+        }
+        // 。 as the fifth character: it fits.
+        for b in [Burasagari::None, Burasagari::Standard] {
+            let l = lay("一二三四。六七", b, vertical_type);
+            assert_eq!(l.glyphs[5].line, l.glyphs[0].line + 1, "vertical {vertical_type} {b:?}");
+            // Four ems and a half: the half em left is spread between the five characters.
+            assert_eq!(advances(&l, 5), [22.5, 22.5, 22.5, 22.5, 10.0], "vertical {vertical_type} {b:?}: 。 inside");
+        }
+        let forced = lay("一二三四。六七", Burasagari::Forced, vertical_type);
+        let a = advances(&forced, 5);
+        assert!((a[..4].iter().sum::<f64>() - 100.0).abs() < 0.05, "vertical {vertical_type}: the four fill the measure: {a:?}");
+        assert_eq!(a[4], 10.0, "vertical {vertical_type}");
+        assert_eq!(forced.glyphs[4].line, forced.glyphs[0].line);
+        // A closing bracket doesn't hang: 」 as the sixth character goes on with 五.
+        for b in [Burasagari::Standard, Burasagari::Forced] {
+            let l = lay("一二三四五」六七", b, vertical_type);
+            assert_ne!(l.glyphs[4].line, l.glyphs[0].line, "vertical {vertical_type} {b:?}");
+        }
+        // The full-width comma and full stop hang too.
+        for mark in ['，', '．'] {
+            let l = lay(&format!("一二三四五{mark}六七"), Burasagari::Standard, vertical_type);
+            assert_eq!(l.glyphs[5].line, l.glyphs[0].line, "vertical {vertical_type}: {mark} hangs");
+        }
+    }
+    // Horizontal: the hanging mark starts at the frame's edge.
+    let l = lay("一二三四五、六七", Burasagari::Standard, false);
+    assert!((l.glyphs[5].origin.x - 100.0).abs() < 0.01, "{:?}", l.glyphs[5].origin);
 }

@@ -2,9 +2,9 @@
 
 use egui::Ui;
 use serde_json::json;
-use vectorcraft_doc::{NodeKind, Unit};
+use vectorcraft_doc::{LiveShape, NodeKind, Unit};
 
-use super::{first_selected, pstate, set_pstate};
+use super::{corner_radius_row, first_selected, pstate, set_pstate};
 use crate::theme::Tokens;
 use crate::widgets::{self, dim_label, divider, section_header};
 use crate::{VectorcraftApp, icons};
@@ -16,22 +16,36 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     };
     let n_sel = st.selection.len();
+    let anchors = crate::chrome::anchor_controls(app);
     let first = first_selected(app);
+    // Edit Artboards (the Artboard tool): the active artboard, whatever is selected.
+    let editing_artboards = app.session.tool_id() == "artboard";
     let label = match (&first, n_sel) {
+        _ if editing_artboards => tl!("Artboard").to_string(),
         (None, _) => tl!("Document").to_string(),
         (_, n) if n > 1 => crate::i18n::tn(n as u64, "{n} Object", "{n} Objects"),
+        (Some(n), _) if crate::panels::image_trace::is_trace(n) => tl!("Image Tracing").to_string(),
         (Some(n), _) => tl!(n.kind_label()).to_string(),
     };
     ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
     ui.add_space(4.0);
+    if editing_artboards {
+        artboard_sections(app, ui);
+        return;
+    }
     if first.is_none() {
         document_sections(app, ui);
         return;
     }
     transform_section(app, ui);
     divider(ui);
-    if n_sel == 1 && matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Image(_))) {
+    let is_image = n_sel == 1 && matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Image(_)));
+    if is_image {
         image_section(app, ui);
+        divider(ui);
+    }
+    if let Some(preset) = crate::panels::image_trace::selected_preset(app) {
+        trace_section(app, ui, &preset);
         divider(ui);
     }
     if matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Text(_))) {
@@ -78,10 +92,15 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         });
     }
+    if anchors != crate::chrome::AnchorControls::None {
+        divider(ui);
+        section_header(ui, tl!("Anchor Point"));
+        crate::chrome::anchor_buttons(app, ui, anchors);
+    }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
     let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
-    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(_), .. }));
+    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(l, LiveShape::Path { .. }));
     let mut actions: Vec<(&str, &str)> = vec![];
     if n_sel > 1 {
         actions.push((tl!("Group"), "object.group"));
@@ -96,6 +115,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     if multi_color(app, ui.ctx()) {
         actions.push((tl!("Recolor"), "ui.recolorDialog"));
+    }
+    if is_image {
+        crate::panels::image_trace::trace_button(app, ui, ui.available_width());
+        actions.push((tl!("Crop Image"), "object.cropImage"));
+        actions.push((tl!("Mask"), "object.maskImage"));
     }
     actions.push((tl!("Offset Path"), "object.path.offsetPath"));
     actions.push((tl!("Simplify"), "object.path.simplify"));
@@ -126,29 +150,31 @@ fn image_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.add_space(4.0);
     let w = (ui.available_width() - 6.0) / 2.0;
     let links = crate::panels::links::ID;
-    ui.horizontal(|ui| {
-        if linked {
-            if widgets::flat_button(ui, tl!("Embed"), w).clicked() {
-                app.run("links.embed", json!({ "ids": [id] })).ok();
-            }
-            if widgets::flat_button(ui, tl!("Edit Original"), w).clicked() {
-                crate::menus::invoke(app, "links.editOriginal", json!({ "id": id }));
-            }
-        } else {
-            if widgets::flat_button(ui, tl!("Unembed…"), w).clicked() {
-                crate::panels::links::unembed(app, id, &name);
-            }
-            if widgets::flat_button(ui, tl!("Image Trace"), w).clicked() {
-                app.ui.open_panel = Some("imageTrace".into());
-            }
-        }
-    });
+    ui.horizontal(|ui| crate::place::link_buttons(app, ui, id, linked, &name, Some(w)));
     ui.horizontal(|ui| {
         if app.services.pick_open.is_some() && widgets::flat_button(ui, tl!("Relink…"), w).clicked() {
             crate::panels::links::relink(app, vec![id]);
         }
         if widgets::flat_button(ui, tl!("Links"), w).clicked() {
             app.ui.open_panel = Some(links.into());
+        }
+    });
+}
+
+/// The one selected Image Trace object: its preset (choosing another traces it again with that
+/// one), Expand and Release.
+fn trace_section(app: &mut VectorcraftApp, ui: &mut Ui, preset: &str) {
+    section_header(ui, tl!("Image Trace"));
+    ui.horizontal(|ui| {
+        dim_label(ui, tl!("Preset:"));
+        crate::panels::image_trace::preset_dropdown(app, ui, preset, ui.available_width());
+    });
+    let w = (ui.available_width() - 6.0) / 2.0;
+    ui.horizontal(|ui| {
+        for (label, id) in [(tl!("Expand"), "imageTrace.expand"), (tl!("Release"), "imageTrace.release")] {
+            if widgets::flat_button(ui, label, w).clicked() {
+                app.run(id, json!({})).ok();
+            }
         }
     });
 }
@@ -166,6 +192,48 @@ fn multi_color(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
             set_pstate(ctx, "props-multi-color", Some((key, multi)));
             multi
         }
+    }
+}
+
+/// Edit Artboards (the Artboard tool): the active artboard's name, position and size, New Artboard
+/// and Delete Artboard, and Exit back to the Selection tool (#530).
+fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let units = app.session.general_unit();
+    let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
+    let i = super::artboards::selected(app, n);
+    if let Some(ab) = app.session.active().and_then(|d| d.doc.artboards.get(i)).cloned() {
+        // Its name as it is (names are never translated).
+        ui.label(egui::RichText::new(&ab.name).size(13.0).color(Tokens::get(ui.ctx()).text));
+        let fw = ((ui.available_width() - 50.0) / 2.0).clamp(60.0, 110.0);
+        egui::Grid::new("ab-grid").num_columns(4).spacing([4.0, 6.0]).min_col_width(0.0).show(ui, |ui| {
+            let r = ab.rect;
+            for (row, [(l1, k1, v1), (l2, k2, v2)]) in
+                [[("X:", "x", r.x0), ("W:", "width", r.width())], [("Y:", "y", r.y0), ("H:", "height", r.height())]].into_iter().enumerate()
+            {
+                for (label, key, v) in [(l1, k1, v1), (l2, k2, v2)] {
+                    dim_label(ui, label);
+                    if let Some(v) = widgets::num_field(ui, ("ab", key, row), Some(v), units, fw) {
+                        app.run("artboard.setProps", json!({"index": i, key: v})).ok();
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    }
+    ui.add_space(4.0);
+    let w = (ui.available_width() - 6.0) / 2.0;
+    ui.horizontal(|ui| {
+        if widgets::flat_button(ui, tl!("New Artboard"), w).clicked() && app.run("artboard.new", json!({})).is_ok() {
+            super::artboards::select(app, n);
+        }
+        if ui.add_enabled_ui(n > 1, |ui| widgets::flat_button(ui, tl!("Delete Artboard"), w)).inner.clicked() {
+            app.run("artboard.delete", json!({"index": i})).ok();
+        }
+    });
+    divider(ui);
+    section_header(ui, tl!("Quick Actions"));
+    if widgets::flat_button(ui, tl!("Exit"), w).clicked() {
+        app.select_tool("selection");
     }
 }
 
@@ -188,6 +256,9 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.select_tool("artboard");
         }
     });
+    divider(ui);
+    section_header(ui, tl!("Appearance"));
+    fill_stroke_rows(app, ui);
     divider(ui);
     section_header(ui, tl!("Rulers & Grids"));
     ui.horizontal(|ui| {
@@ -294,7 +365,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         super::transform::constrain_link(app, ui);
     });
     ui.horizontal(|ui| {
-        icons::icon(ui, "rotate-ccw", 16.0, Tokens::get(ui.ctx()).icon);
+        let icon = icons::icon(ui, "rotate-ccw", 16.0, Tokens::get(ui.ctx()).icon);
+        crate::scrub::note_label(ui, icon.rect);
         // The bounding box's angle: a new value turns the selection to it.
         if let Some(a) = widgets::plain_field(ui, "rot", bx.angle, "°", 2, 70.0) {
             app.run("object.rotate", json!({"angle": a, "absolute": true})).ok();
@@ -312,14 +384,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         && let NodeKind::Path { live: Some(live), .. } = &n.kind
     {
         match live {
-            vectorcraft_doc::LiveShape::Rectangle { radii, .. } => {
-                ui.horizontal(|ui| {
-                    dim_label(ui, tl!("Corner Radius:"));
-                    if let Some(r) = widgets::num_field(ui, "radius", Some(radii[0]), units, 80.0) {
-                        app.run("object.setLiveShape", json!({"radius": r})).ok();
-                    }
-                });
-            }
+            vectorcraft_doc::LiveShape::Rectangle { .. } => corner_radius_row(app, ui, &n, "radius"),
             vectorcraft_doc::LiveShape::Polygon { sides, .. } => {
                 ui.horizontal(|ui| {
                     dim_label(ui, tl!("Sides:"));
@@ -327,6 +392,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
                         app.run("object.setLiveShape", json!({"sides": s as u32})).ok();
                     }
                 });
+                corner_radius_row(app, ui, &n, "radius");
             }
             _ => {}
         }
@@ -336,23 +402,9 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
 fn appearance_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     let Some(n) = first_selected(app) else { return };
     section_header(ui, tl!("Appearance"));
-    let weight = super::stroke::shown_weight(app, super::current_stroke(app).as_ref(), &super::stroke_mixed(app, ui.ctx()));
-    for (label, is_fill) in [(tl!("Fill"), true), (tl!("Stroke"), false)] {
-        ui.horizontal(|ui| {
-            super::paint_chip(app, ui, !is_fill, 22.0, false);
-            ui.label(egui::RichText::new(label).size(12.0));
-            if !is_fill {
-                ui.add_space(8.0);
-                if let Some(w) = widgets::num_field(ui, "ap-w", weight, app.session.stroke_unit(), 70.0) {
-                    app.run("stroke.set", json!({"weight": w})).ok();
-                }
-                let more = widgets::icon_button(ui, "ellipsis", tl!("Stroke options"), false, 22.0);
-                super::stroke::popover(app, &more);
-            }
-        });
-    }
+    fill_stroke_rows(app, ui);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(tl!("Opacity")).size(12.0));
+        widgets::field_label(ui, egui::RichText::new(tl!("Opacity")).size(12.0));
         ui.add_space(8.0);
         if let Some(o) = widgets::plain_field(ui, "ap-op", n.opacity as f64 * 100.0, "%", 0, 64.0) {
             app.run("object.setProps", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
@@ -371,6 +423,24 @@ fn appearance_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
 }
 
+/// The Fill and Stroke rows, with the Control bar's widgets: the chips (a click opens the
+/// swatches, Shift-click the mixer), the Stroke link that opens the Stroke panel as a popover
+/// and the weight spinner with its presets. With nothing selected they set up the next object.
+fn fill_stroke_rows(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let weight = super::stroke::shown_weight(app, super::current_stroke(app).as_ref(), &super::stroke_mixed(app, ui.ctx()));
+    ui.horizontal(|ui| {
+        super::paint_chip(app, ui, false, 22.0, true);
+        ui.label(egui::RichText::new(tl!("Fill")).size(12.0).color(t.text));
+    });
+    ui.horizontal(|ui| {
+        super::paint_chip(app, ui, true, 22.0, true);
+        super::stroke::link(app, ui, tl!("Stroke"));
+        ui.add_space(8.0);
+        super::stroke::weight_field(app, ui, "ap-w", weight, 90.0);
+    });
+}
+
 pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     let Some(n) = first_selected(app) else {
         dim_label(ui, tl!("Select a text object"));
@@ -382,26 +452,10 @@ pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     };
     let s = tx.first_style();
     section_header(ui, tl!("Character"));
-    if let Some(f) = widgets::font_dropdown(ui, "font", &s.font_family, ui.available_width() - 4.0) {
-        app.run("text.setStyle", json!({ "font": f })).ok();
-    }
-    ui.horizontal(|ui| {
-        dim_label(ui, tl!("Size"));
-        let type_unit = app.session.type_unit();
-        if let Some(v) = widgets::num_field(ui, "fsize", Some(s.size), type_unit, 70.0) {
-            app.run("text.setStyle", json!({"size": v})).ok();
-        }
-        dim_label(ui, tl!("Leading"));
-        if let Some(v) = widgets::num_field(ui, "lead", Some(s.effective_leading()), type_unit, 70.0) {
-            app.run("text.setStyle", json!({"leading": v})).ok();
-        }
-    });
-    ui.horizontal(|ui| {
-        dim_label(ui, tl!("Tracking"));
-        if let Some(v) = widgets::plain_field(ui, "track", s.tracking, "", 0, 60.0) {
-            app.run("text.setStyle", json!({"tracking": v})).ok();
-        }
-    });
+    // The font, Font Size, Leading, Kerning and Tracking as in the Character panel.
+    let w = ui.available_width();
+    super::character::font_pickers(app, ui, &s, ("font", "font-style"), (w - 4.0, w - 4.0));
+    super::character::metrics_grid(app, ui, "props-char", &s, w, false);
     section_header(ui, tl!("Paragraph"));
     ui.horizontal(|ui| {
         for (icon, j) in [("align-start-vertical", "left"), ("align-center-vertical", "center"), ("align-end-vertical", "right")] {
@@ -410,4 +464,59 @@ pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::{Event, PointerButton, Pos2, Rect, vec2};
+    use vectorcraft_engine::Session;
+
+    use super::*;
+
+    /// One frame of the panel with `events` → the texts painted, with their rects.
+    fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<Event>) -> Vec<(String, Rect)> {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 700.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| show(app, ui));
+        out.textures_delta.clear();
+        out.shapes
+            .iter()
+            .filter_map(|s| {
+                if let egui::Shape::Text(t) = &s.shape {
+                    Some((t.galley.text().to_string(), Rect::from_min_size(t.pos, t.galley.size())))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn click(app: &mut VectorcraftApp, ctx: &egui::Context, texts: &[(String, Rect)], label: &str) {
+        let at = texts.iter().find(|(t, _)| t == label).map(|(_, r)| r.center()).unwrap_or_else(|| panic!("no {label:?} in {texts:?}"));
+        let b = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Default::default() };
+        frame(app, ctx, vec![Event::PointerMoved(at), b(true)]);
+        frame(app, ctx, vec![b(false)]);
+    }
+
+    /// #530: Edit Artboards shows the active artboard, with New Artboard, Delete Artboard and Exit.
+    #[test]
+    fn edit_artboards_adds_artboards_and_exits() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
+        let ctx = egui::Context::default();
+        let texts = frame(&mut app, &ctx, vec![]);
+        click(&mut app, &ctx, &texts, "Edit Artboards");
+        assert_eq!(app.session.tool_id(), "artboard");
+        let texts = frame(&mut app, &ctx, vec![]);
+        assert!(texts.iter().any(|(t, _)| t == "Artboard 1") && texts.iter().any(|(t, _)| t == "200 pt"), "{texts:?}");
+        click(&mut app, &ctx, &texts, "New Artboard");
+        let boards = |app: &VectorcraftApp| app.session.active().unwrap().doc.artboards.len();
+        assert_eq!(boards(&app), 2);
+        let texts = frame(&mut app, &ctx, vec![]);
+        assert!(texts.iter().any(|(t, _)| t == "Artboard 2"), "the new artboard is the active one: {texts:?}");
+        click(&mut app, &ctx, &texts, "Delete Artboard");
+        assert_eq!(boards(&app), 1);
+        let texts = frame(&mut app, &ctx, vec![]);
+        click(&mut app, &ctx, &texts, "Exit");
+        assert_eq!(app.session.tool_id(), "selection");
+    }
 }

@@ -13,6 +13,8 @@ pub struct ViewInfo {
     pub zoom: f64,
     pub outline: bool,
     pub smart_guides: bool,
+    /// View → Show Guides: the ruler guides show (and, unlocked, can be picked).
+    pub guides: bool,
     pub snap_to_grid: bool,
     pub show_bbox: bool,
     /// View → Snap to Pixel: drawing and moving land on whole pixels (points at 72 ppi).
@@ -31,6 +33,7 @@ impl Default for ViewInfo {
             zoom: 1.0,
             outline: false,
             smart_guides: true,
+            guides: true,
             snap_to_grid: false,
             show_bbox: true,
             snap_to_pixel: false,
@@ -39,6 +42,14 @@ impl Default for ViewInfo {
             screen: None,
         }
     }
+}
+
+/// The RGB of a colour preference (`#rrggbb`), or `fallback` when it doesn't parse.
+fn rgb(hex: &str, fallback: [u8; 3]) -> [u8; 3] {
+    vectorcraft_color::Color::from_hex(hex).map_or(fallback, |c| {
+        let [r, g, b, _] = c.to_rgba8(1.0);
+        [r, g, b]
+    })
 }
 
 /// Requests from tools that only the frontend can fulfil.
@@ -56,8 +67,22 @@ impl Session {
         self.tool.id()
     }
 
-    /// Switch tools (finishing any pending tool work first).
+    /// Choose a tool (the toolbar, its shortcut, MCP), finishing any pending tool work first.
     pub fn select_tool(&mut self, id: &str, view: ViewInfo) -> Result<()> {
+        // Choosing a perspective tool shows the document's perspective grid; Hide Grid hides it
+        // again, the tool staying chosen.
+        if matches!(id, "perspectiveGrid" | "perspectiveSelection")
+            && self.active().is_some_and(|d| !vectorcraft_tools::distort::perspective::PerspectiveGrid::current(&d.doc).visible)
+        {
+            crate::cmd::distortcmds::silent(self, |g| g.visible = true)?;
+        }
+        self.switch_tool(id, view)
+    }
+
+    /// Switch to tool `id` without choosing it afresh (back from a temporary tool: a hidden
+    /// perspective grid stays hidden), finishing any pending tool work first.
+    pub fn switch_tool(&mut self, id: &str, view: ViewInfo) -> Result<()> {
+        self.give_back_tool(view)?;
         if self.tool.id() == id {
             return Ok(());
         }
@@ -65,7 +90,45 @@ impl Session {
         self.apply_actions(acts)?;
         self.keep_tool_settings();
         self.tool = self.make_tool(id);
+        if vectorcraft_tools::catalog::is_selection_tool(id) {
+            self.last_selection_tool = Some(self.tool.id());
+        }
         Ok(())
+    }
+
+    /// The selection tool Cmd lends tool `id` for a drag: the one chosen last; until one is,
+    /// Direct Selection to the tools that edit anchors (the Pen) and Selection to the others.
+    /// None for the selection tools themselves and the view tools.
+    fn lent_tool(&self, id: &str) -> Option<&'static str> {
+        use vectorcraft_tools::catalog::{edits_anchors, is_selection_tool};
+        if is_selection_tool(id) || matches!(id, "hand" | "zoom" | "rotateView") {
+            return None;
+        }
+        Some(self.last_selection_tool.unwrap_or(if edits_anchors(id) { "directSelection" } else { "selection" }))
+    }
+
+    /// A press with Cmd held (Ctrl elsewhere) and any other tool than a selection tool: the
+    /// selection tool [`Self::lent_tool`] takes the gesture, pressing without Cmd (a plain click,
+    /// not Select Behind). The tool lent to stays as it was, unaware, until the release.
+    fn lend_selection_tool(&mut self, ev: &PointerEvent) -> PointerEvent {
+        if ev.kind != PointerKind::Down || !ev.mods.cmd || self.lender.is_some() {
+            return *ev;
+        }
+        let Some(id) = self.lent_tool(self.tool.id()) else { return *ev };
+        let lent = self.make_tool(id);
+        self.lender = Some(std::mem::replace(&mut self.tool, lent));
+        PointerEvent { mods: Mods { cmd: false, ..ev.mods }, ..*ev }
+    }
+
+    /// The lent selection tool's gesture is over: the tool it was lent to is back as it was (the
+    /// Pen goes on drawing its path).
+    pub(crate) fn give_back_tool(&mut self, view: ViewInfo) -> Result<()> {
+        let Some(lender) = self.lender.take() else { return Ok(()) };
+        let acts = self.with_tool_cx(view, |t, cx| t.deactivate(cx));
+        let r = self.apply_actions(acts);
+        self.keep_tool_settings();
+        self.tool = lender;
+        r.map(drop)
     }
 
     /// A fresh `id` tool with the options it keeps ([`settings`]): its last values, from this
@@ -115,12 +178,14 @@ impl Session {
         let (unit, stroke_unit) = (self.general_unit(), self.stroke_unit());
         let cx = ToolContext {
             doc: &st.doc,
+            revision: (st.uid, st.revision),
             selection: &st.selection,
             zoom: view.zoom,
             isolation: st.isolation,
             paint: &self.paint,
             outline: view.outline,
             smart_guides: view.smart_guides,
+            guides: view.guides && !self.menu.guides_locked,
             snap_to_grid: view.snap_to_grid,
             show_bbox: view.show_bbox,
             snap_to_pixel: view.snap_to_pixel,
@@ -138,6 +203,32 @@ impl Session {
             paste_plain_text: self.prefs.paste_text_formatting == "plain",
             slices_hidden: self.menu.slices_hidden,
             slices_locked: self.menu.slices_locked,
+            auto_add_delete: !self.prefs.disable_auto_add_delete,
+            selection_tolerance: self.prefs.selection_tolerance,
+            anchor_size: self.prefs.anchor_size,
+            path_only: self.prefs.object_selection_by_path_only,
+            type_path_only: self.prefs.type_selection_by_path_only,
+            double_click_isolate: self.prefs.double_click_to_isolate,
+            select_behind: self.prefs.ctrl_click_selects_behind,
+            highlight_anchors: self.prefs.highlight_anchors_on_hover,
+            snap_tolerance: self.prefs.snap_to_point_tolerance,
+            handles_multiple: self.prefs.show_handles_multiple_anchors,
+            corner_widget_max_angle: self.prefs.hide_corner_widget_above,
+            move_locked_with_artboard: self.prefs.move_locked_with_artboard,
+            pen_rubber_band: self.prefs.pen_rubber_band,
+            curvature_rubber_band: self.prefs.curvature_rubber_band,
+            placeholder_text: self.prefs.placeholder_text,
+            smart_guide_color: rgb(&self.prefs.smart_guide_color, vectorcraft_tools::guides::MAGENTA),
+            alignment_guides: self.prefs.alignment_guides,
+            anchor_path_labels: self.prefs.anchor_path_labels,
+            measurement_labels: self.prefs.measurement_labels,
+            transform_tools_guides: self.prefs.transform_tools_guides,
+            snapping_tolerance: self.prefs.snapping_tolerance,
+            construction_angles: if self.prefs.construction_guides {
+                vectorcraft_tools::guides::construction_angles(&self.prefs.construction_angles)
+            } else {
+                &[]
+            },
             screen: view.screen,
             plane_widget: self.prefs.perspective_widget.show.then_some(self.prefs.perspective_widget.position),
         };
@@ -167,13 +258,43 @@ impl Session {
         if let Some(r) = self.plane_widget_pointer(ev, view) {
             return r;
         }
+        let ev = &self.lend_selection_tool(ev);
         let acts = self.with_tool_cx(view, |t, cx| t.pointer(cx, ev));
-        self.take_tool_panic()?;
-        // A gesture may change options (Alt-drag sizes a Liquify brush): keep them.
+        let r = self.take_tool_panic().and_then(|()| {
+            // A gesture may change options (Alt-drag sizes a Liquify brush): keep them.
+            if ev.kind == PointerKind::Up {
+                self.keep_tool_settings();
+            }
+            self.apply_actions(acts)
+        });
         if ev.kind == PointerKind::Up {
-            self.keep_tool_settings();
+            self.give_back_tool(view)?;
         }
-        self.apply_actions(acts)
+        r
+    }
+
+    /// A guide dragged out of a ruler, whatever the tool: a vertical one out of the left ruler, a
+    /// horizontal one out of the top ruler. `ev` is the pointer in document space (a drag, then the
+    /// release), over the canvas or not (`on_canvas`). The guide shows where the pointer is over
+    /// the canvas, snapped as a moved guide is, and is made where the button is released over it
+    /// (one undo step); released anywhere else, none is. With the Artboard tool it is an artboard
+    /// guide of the active artboard.
+    pub fn ruler_guide(&mut self, vertical: bool, ev: &PointerEvent, on_canvas: bool, view: ViewInfo) -> Result<()> {
+        let g = match self.ruler_guide.take() {
+            Some(g) => Some(g),
+            None => {
+                let boards = self.active().map_or(0, |d| d.doc.artboards.len());
+                let active = (self.tool.id() == "artboard").then(|| self.tool.options()["active"].as_u64()).flatten();
+                let artboard = active.and_then(|i| usize::try_from(i).ok()).filter(|i| *i < boards);
+                self.with_tool_cx(view, |_, cx| Some(vectorcraft_tools::rulerguide::NewGuide::new(cx, vertical, artboard)))
+            }
+        };
+        let Some(mut g) = g else { return Ok(()) };
+        let acts = self.with_tool_cx(view, |_, cx| g.pointer(cx, ev, on_canvas));
+        if ev.kind != PointerKind::Up {
+            self.ruler_guide = Some(g);
+        }
+        self.apply_actions(acts).map(drop)
     }
 
     /// Time passed while the pointer button is held (`dt` seconds; see [`Tool::tick`]): the
@@ -243,16 +364,34 @@ impl Session {
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
         let mut v = self.with_tool_cx(view, |t, cx| t.overlays(cx));
+        if let Some(g) = self.ruler_guide.take() {
+            v.extend(self.with_tool_cx(view, |_, cx| g.overlays(cx)));
+            self.ruler_guide = Some(g);
+        }
         if let Some(d) = self.active() {
             let w = self.prefs.perspective_widget;
             let place = w.show.then_some(WidgetPlace { screen: view.screen.as_ref(), corner: w.position });
-            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays_in(&d.doc, 1.0 / view.zoom.max(1e-9), self.tool.id(), place));
+            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays_in(&d.doc, 1.0 / view.zoom.max(1e-9), place));
         }
         v
     }
 
+    /// The pointer the active tool shows at `p` (General › Use Precise Cursors makes the drawing
+    /// tools' a crosshair, [`Cursor::precise`]). With Cmd held, the pointer of the selection tool a
+    /// press would borrow ([`Self::lend_selection_tool`]).
     pub fn cursor(&mut self, p: Point, mods: Mods, view: ViewInfo) -> Cursor {
-        self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods))
+        let lent = if mods.cmd && self.lender.is_none() { self.lent_tool(self.tool.id()) } else { None };
+        let c = match lent {
+            Some(id) => {
+                let lent = self.make_tool(id);
+                let own = std::mem::replace(&mut self.tool, lent);
+                let c = self.with_tool_cx(view, |t, cx| t.cursor(cx, p, Mods { cmd: false, ..mods }));
+                self.tool = own;
+                c
+            }
+            None => self.with_tool_cx(view, |t, cx| t.cursor(cx, p, mods)),
+        };
+        if self.prefs.use_precise_cursors { c.precise() } else { c }
     }
 
     pub fn tool_options(&self) -> Value {

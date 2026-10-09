@@ -17,7 +17,7 @@ use crate::widgets::{self, PanelDrag, menu_item};
 fn thumb(ui: &Ui, doc: &Document, name: &str, size: f32) -> Option<egui::TextureHandle> {
     thread_local! {
         static RENDERER: RefCell<vectorcraft_render::Renderer> = RefCell::new(vectorcraft_render::Renderer::new());
-        static CACHE: RefCell<HashMap<(usize, String, u32), egui::TextureHandle>> = RefCell::new(HashMap::new());
+        static CACHE: crate::graphics::TexCache<HashMap<(usize, String, u32), egui::TextureHandle>> = crate::graphics::TexCache::default();
     }
     let sym = doc.symbols.iter().find(|s| s.name == name)?;
     let px = (size * ui.ctx().pixels_per_point()).round().max(8.0) as u32;
@@ -57,15 +57,6 @@ pub(crate) fn chip(ui: &Ui, doc: &Document, r: egui::Rect, name: &str) {
     if let Some(tex) = thumb(ui, doc, name, r.width()) {
         ui.painter().image(tex.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
     }
-}
-
-/// Art dragged off the canvas over the symbol list: outline it; dropped, the art becomes a new
-/// symbol (`ids`).
-fn art_drop(ui: &Ui, zone: &egui::Response) -> Option<Vec<u64>> {
-    let drag = zone.dnd_hover_payload::<PanelDrag>()?;
-    let PanelDrag::Art(ids) = &*drag else { return None };
-    ui.painter().rect_stroke(zone.rect, 0.0, Stroke::new(1.5, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-    zone.dnd_release_payload::<PanelDrag>().map(|_| ids.iter().map(|id| id.0).collect())
 }
 
 fn current(app: &mut VectorcraftApp) -> Option<String> {
@@ -141,7 +132,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.min_rect()
     });
     let zone = ui.interact(list_rect, ui.id().with("symbols-drop"), Sense::hover());
-    if let Some(ids) = art_drop(ui, &zone)
+    if let Some(ids) = widgets::art_drop(ui, &zone)
         && let Err(e) = app.run("symbol.new", json!({ "ids": ids }))
     {
         app.status(e);

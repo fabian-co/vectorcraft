@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use super::*;
+use vectorcraft_geom::Point;
 use vectorcraft_tools::{PointerEvent, PointerKind, ToolKey};
 
 fn session() -> Session {
@@ -198,6 +199,37 @@ fn align_left() {
     assert_eq!(s.doc().unwrap().doc.node(b).unwrap().geometric_bounds().unwrap().x0, 0.0);
 }
 
+/// #541: with the Selection tool, a click on one object of the selection makes it the key object:
+/// aligning to the key moves the others to it, Distribute Spacing spaces them from it, and a click
+/// on the key again lets it go.
+#[test]
+fn a_click_sets_the_key_object_that_align_and_spacing_keep_still() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    let b = rect(&mut s, 100.0, 30.0, 20.0, 20.0);
+    let c = rect(&mut s, 300.0, 60.0, 10.0, 10.0);
+    s.execute("select.set", &json!({"ids": [a.0, b.0, c.0]})).unwrap();
+    let v = ViewInfo::default();
+    s.select_tool("selection", v).unwrap();
+    let click = |s: &mut Session| {
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(&PointerEvent::new(kind, 110.0, 40.0), v).unwrap();
+        }
+    };
+    click(&mut s);
+    assert_eq!(s.doc().unwrap().selection.key, Some(b));
+    assert_eq!(s.doc().unwrap().selection.objects.len(), 3, "the selection stays");
+    let x0 = |s: &Session, id| s.doc().unwrap().doc.node(id).unwrap().geometric_bounds().unwrap().x0;
+    // With a key object, aligning aligns to it (the Control bar and Properties name no target).
+    s.execute("object.align", &json!({"horizontal": "left", "bounds": "geometric"})).unwrap();
+    assert_eq!((x0(&s, a), x0(&s, b), x0(&s, c)), (100.0, 100.0, 100.0), "the others moved to the key");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("object.distributeSpacing", &json!({"axis": "horizontal", "spacing": 5, "bounds": "geometric"})).unwrap();
+    assert_eq!((x0(&s, a), x0(&s, b), x0(&s, c)), (85.0, 100.0, 125.0), "5 pt apart, the key still");
+    click(&mut s);
+    assert_eq!(s.doc().unwrap().selection.key, None, "a click on the key again lets it go");
+}
+
 #[test]
 fn selection_tool_drag_is_one_undo_step() {
     let mut s = session();
@@ -252,6 +284,33 @@ fn pen_tool_draws_closed_path() {
     assert!(p.is_closed());
 }
 
+/// Auto Add/Delete: a Pen click on a selected path's segment adds an anchor, unless General →
+/// Disable Auto Add/Delete is on.
+#[test]
+fn pen_click_on_a_selected_path_adds_an_anchor_unless_disabled() {
+    let mut s = session();
+    let v = ViewInfo::default();
+    let r = s.execute("path.create", &json!({"anchors": [{"x": 10, "y": 100}, {"x": 110, "y": 100}, {"x": 210, "y": 100}]})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    s.execute("select.all", &json!({})).unwrap();
+    s.select_tool("pen", v).unwrap();
+    let click = |s: &mut Session| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, 60.0, 101.0), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 60.0, 101.0), v).unwrap();
+    };
+    click(&mut s);
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.layers[0].children().unwrap().len(), 1);
+    assert_eq!(d.node(id).unwrap().path_data().unwrap().anchor_count(), 4);
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("prefs.set", &json!({"key": "disableAutoAddDelete", "value": true})).unwrap();
+    s.execute("select.all", &json!({})).unwrap();
+    click(&mut s);
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.layers[0].children().unwrap().len(), 2, "a new path starts");
+    assert_eq!(d.node(id).unwrap().path_data().unwrap().anchor_count(), 3);
+}
+
 #[test]
 fn direct_selection_moves_one_anchor() {
     let mut s = session();
@@ -265,6 +324,43 @@ fn direct_selection_moves_one_anchor() {
     let p = s.doc().unwrap().doc.node(a).unwrap().path_data().unwrap().clone();
     assert_eq!(p.subpaths[0].anchors[0].p, vectorcraft_geom::Point::new(90.0, 90.0));
     assert_eq!(p.subpaths[0].anchors[1].p, vectorcraft_geom::Point::new(200.0, 100.0));
+}
+
+/// Dragging a curved segment with Direct Selection bends it (its anchors stay), and dragging a
+/// straight one moves its two anchors, not the whole path; each is one undo step.
+#[test]
+fn direct_selection_drags_segments() {
+    let mut s = session();
+    let v = ViewInfo::default();
+    let drag = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, from.0, from.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, to.0, to.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, to.0, to.1), v).unwrap();
+    };
+    let arch = &json!({"anchors": [{"x": 100, "y": 200, "out": [100, 100]}, {"x": 300, "y": 200, "in": [300, 100]}]});
+    let arch = NodeId(s.execute("path.create", arch).unwrap()["id"].as_u64().unwrap());
+    let square = &json!({"anchors": [{"x": 150, "y": 400}, {"x": 150, "y": 300}, {"x": 250, "y": 300}, {"x": 250, "y": 400}], "closed": true});
+    let square = NodeId(s.execute("path.create", square).unwrap()["id"].as_u64().unwrap());
+    s.execute("select.none", &json!({})).unwrap();
+    s.select_tool("directSelection", v).unwrap();
+    let steps = |s: &Session| s.doc().unwrap().history.undo.len();
+    let before = steps(&s);
+    // The arch's middle, 40 up: the curve bends, its two anchors stay.
+    drag(&mut s, (200.0, 125.0), (200.0, 85.0));
+    let sp = s.doc().unwrap().doc.node(arch).unwrap().path_data().unwrap().subpaths[0].clone();
+    let (a, b) = (sp.anchors[0], sp.anchors[1]);
+    assert_eq!((a.p, b.p), (vectorcraft_geom::Point::new(100.0, 200.0), vectorcraft_geom::Point::new(300.0, 200.0)), "the anchors stay");
+    assert!(a.h_out.y < 100.0 && b.h_in.y < 100.0, "the curve bent up: {a:?} {b:?}");
+    assert_eq!(steps(&s), before + 1);
+    // The square's top edge, 40 up: its two anchors move, the bottom two stay.
+    drag(&mut s, (200.0, 300.0), (200.0, 260.0));
+    let sq = s.doc().unwrap().doc.node(square).unwrap().geometric_bounds().unwrap();
+    assert_eq!((sq.y0, sq.y1, sq.x0, sq.x1), (260.0, 400.0, 150.0, 250.0), "the edge moved, the rest stayed");
+    assert_eq!(steps(&s), before + 2);
+    // Its fill still moves the whole square.
+    drag(&mut s, (200.0, 350.0), (200.0, 330.0));
+    let sq = s.doc().unwrap().doc.node(square).unwrap().geometric_bounds().unwrap();
+    assert_eq!((sq.y0, sq.y1), (240.0, 380.0), "the whole path moved");
 }
 
 #[test]
@@ -283,6 +379,127 @@ fn inspect_lists_everything() {
     let v = s.execute("document.inspect", &json!({})).unwrap();
     assert_eq!(v["layers"][0]["children"][0]["kind"], "Rectangle");
     assert!(s.commands().len() > 100);
+}
+
+/// `document.node {summary: true}` answers the `document.inspect` shape for one node:
+/// the same fields the full-tree summary carries, without serializing the whole tree.
+#[test]
+fn document_node_summary_matches_inspect() {
+    let mut s = session();
+    let id = rect(&mut s, 0.0, 0.0, 10.0, 10.0).0;
+    let full = s.execute("document.node", &json!({"id": id})).unwrap();
+    assert!(full.get("bounds").is_none(), "full object JSON carries geometry, not bounds: {full}");
+    let summary = s.execute("document.node", &json!({"id": id, "summary": true})).unwrap();
+    let v = s.execute("document.inspect", &json!({})).unwrap();
+    let node = v["layers"][0]["children"].as_array().unwrap().iter().find(|n| n["id"] == id).cloned().unwrap();
+    assert_eq!(summary, node, "{summary} vs {node}");
+    assert!(s.execute("document.node", &json!({"id": 999999, "summary": true})).is_err());
+}
+
+/// `depth` and `childLimit` slice a summary read; a level that shows fewer children
+/// than it has reports `childCount`, and invalid values are rejected, not reinterpreted.
+#[test]
+fn document_node_summary_slices_with_depth_and_limit() {
+    let mut s = session();
+    rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let inner = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    rect(&mut s, 40.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let outer = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let mut read = |p: Value| s.execute("document.node", &p).unwrap();
+
+    let g = read(json!({"id": outer, "summary": true}));
+    assert_eq!(g["children"].as_array().map(Vec::len), Some(2));
+    assert!(g.get("childCount").is_none(), "nothing truncated: {g}");
+    // Limits beyond the tree are the whole tree, byte for byte.
+    assert_eq!(read(json!({"id": outer, "summary": true, "depth": u64::MAX, "childLimit": u64::MAX})), g);
+
+    let one = read(json!({"id": outer, "summary": true, "childLimit": 1}));
+    assert_eq!(one["children"].as_array().map(Vec::len), Some(1));
+    assert_eq!(one["childCount"], 2);
+
+    let flat = read(json!({"id": outer, "summary": true, "depth": 0}));
+    assert!(flat.get("children").is_none(), "{flat}");
+    assert_eq!(flat["childCount"], 2);
+
+    // Limits compose per level: the outer children show; the inner group's own
+    // children don't, and it says so.
+    let shallow = read(json!({"id": outer, "summary": true, "depth": 1}));
+    let kids = shallow["children"].as_array().unwrap();
+    assert_eq!(kids.len(), 2);
+    assert!(shallow.get("childCount").is_none(), "{shallow}");
+    let nested = kids.iter().find(|n| n["id"] == inner).unwrap();
+    assert!(nested.get("children").is_none(), "{nested}");
+    assert_eq!(nested["childCount"], 2);
+
+    for bad in [
+        json!({"id": outer, "summary": true, "depth": -1}),
+        json!({"id": outer, "summary": true, "depth": 1.5}),
+        json!({"id": outer, "summary": true, "childLimit": "many"}),
+        // A slice of the full object JSON would silently be the whole subtree.
+        json!({"id": outer, "depth": 0}),
+        json!({"id": outer, "summary": false, "childLimit": 1}),
+    ] {
+        assert!(s.execute("document.node", &bad).is_err(), "{bad}");
+    }
+}
+
+/// `document.inspect` slices the layer tree with the same options; artboards and the
+/// rest always come whole, and the default output is unchanged.
+#[test]
+fn document_inspect_slices_the_layer_tree() {
+    let mut s = session();
+    rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    s.execute("object.group", &json!({})).unwrap();
+
+    let full = s.execute("document.inspect", &json!({})).unwrap();
+    assert!(full["layers"][0].get("childCount").is_none(), "{full}");
+    let flat = s.execute("document.inspect", &json!({"depth": 0})).unwrap();
+    assert!(flat["layers"][0].get("children").is_none(), "{flat}");
+    assert_eq!(flat["layers"][0]["childCount"], 1);
+    assert_eq!(flat["artboards"], full["artboards"]);
+    assert_eq!(flat["objects"], full["objects"]);
+    let one = s.execute("document.inspect", &json!({"childLimit": 0})).unwrap();
+    assert_eq!(one["layers"][0]["children"], json!([]));
+    assert_eq!(one["layers"][0]["childCount"], 1);
+    assert!(s.execute("document.inspect", &json!({"depth": "deep"})).is_err());
+}
+
+/// `document.find` searches names, kinds and type content across the whole tree and
+/// answers ids with ancestor paths plus the total, so capped replies stay explicit.
+#[test]
+fn document_find_searches_names_kinds_and_text() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0).0;
+    s.execute("object.setProps", &json!({"ids": [a], "name": "Hero Banner"})).unwrap();
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let group = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let mut find = |p: Value| s.execute("document.find", &p).unwrap();
+
+    let v = find(json!({"name": "hero"}));
+    assert_eq!(v["total"], 1);
+    assert_eq!(v["matches"][0]["id"], a);
+    assert_eq!(v["matches"][0]["path"], json!([1, group]));
+
+    let v = find(json!({"kind": "group"}));
+    assert_eq!(v["total"], 1);
+    assert_eq!(v["matches"][0]["id"], group);
+
+    // `limit: 0` counts without listing; a missing filter is rejected, not a full dump.
+    let v = find(json!({"kind": "rectangle", "limit": 0}));
+    assert_eq!(v["matches"].as_array().map(Vec::len), Some(0));
+    assert_eq!(v["total"], 2);
+    assert!(s.execute("document.find", &json!({})).is_err());
+    assert!(s.execute("document.find", &json!({"name": ""})).is_err());
+    assert!(s.execute("document.find", &json!({"name": "hero", "limit": "many"})).is_err());
+    // A filter of the wrong type is rejected, not dropped (dropping it would widen the search).
+    assert!(s.execute("document.find", &json!({"kind": "group", "name": 5})).is_err());
+    assert_eq!(s.execute("document.find", &json!({"kind": "nope"})).unwrap()["total"], 0);
 }
 
 /// Type reports the paint its characters show, and its own object-level paint apart from it.
@@ -479,7 +696,7 @@ fn snap_to_pixel_rounds_drawing_and_moves() {
 }
 
 #[test]
-fn shaper_turns_rough_strokes_into_live_shapes_and_scribbles_delete() {
+fn shaper_turns_rough_strokes_into_live_shapes_and_scribbles_punch_fills() {
     let mut s = session();
     let v = ViewInfo { smart_guides: false, ..Default::default() };
     s.select_tool("shaper", v).unwrap();
@@ -509,10 +726,86 @@ fn shaper_turns_rough_strokes_into_live_shapes_and_scribbles_delete() {
         "{:?}",
         n.kind_label()
     );
-    // A zig-zag over it deletes it.
+    // A zig-zag inside it clears its fill while retaining the editable original and stroke.
     let zig: Vec<(f64, f64)> = (0..30).map(|i| (150.0 + (i % 2) as f64 * 80.0, 120.0 + i as f64 * 2.0)).collect();
     stroke(&mut s, &zig);
+    assert_eq!(s.doc().unwrap().doc.node(id).unwrap(), &n);
+    let group = s.doc().unwrap().doc.node(s.doc().unwrap().selection.objects[0]).unwrap();
+    assert!(group.shaper.is_some());
+    assert!(group.children().unwrap().iter().skip(1).all(|n| n.appearance.fill_paint().is_none()));
+    assert!(group.children().unwrap().iter().skip(1).any(|n| !n.appearance.stroke_paint().is_none()));
+}
+
+#[test]
+fn shaper_square_started_mid_edge_closes_on_pointer_release_and_undoes_once() {
+    let mut s = session();
+    let v = ViewInfo { smart_guides: false, ..Default::default() };
+    s.select_tool("shaper", v).unwrap();
+    let undo = s.doc().unwrap().history.undo.len();
+    for (kind, x, y) in [
+        (PointerKind::Down, 150.0, 100.0),
+        (PointerKind::Drag, 200.0, 105.0),
+        (PointerKind::Drag, 194.0, 200.0),
+        (PointerKind::Drag, 110.0, 191.0),
+        (PointerKind::Drag, 100.0, 100.0),
+        (PointerKind::Up, 150.0, 100.0),
+    ] {
+        s.pointer(&PointerEvent::new(kind, x, y), v).unwrap();
+    }
+    let id = *s.doc().unwrap().selection.objects.first().expect("recognized square");
+    assert!(matches!(
+        s.doc().unwrap().doc.node(id).unwrap().kind,
+        vectorcraft_doc::NodeKind::Path { live: Some(vectorcraft_doc::LiveShape::Rectangle { .. }), .. }
+    ));
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1);
+    s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.node(id).is_none());
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().doc.node(id).is_some());
+}
+
+#[test]
+fn shaper_creates_upright_or_inverted_live_triangles_with_one_undo_step() {
+    let v = ViewInfo { smart_guides: false, ..Default::default() };
+    for direction in [0.0_f64, 180.0] {
+        let mut s = session();
+        s.select_tool("shaper", v).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let corners: Vec<Point> = (0..3)
+            .map(|i| {
+                let angle = (direction + 7.0 - 90.0).to_radians() + std::f64::consts::TAU * i as f64 / 3.0;
+                Point::new(200.0 + 70.0 * angle.cos(), 200.0 + 70.0 * angle.sin())
+            })
+            .collect();
+        let mut pts = vec![];
+        for i in 0..3 {
+            for j in 0..20 {
+                pts.push(corners[i] + (corners[(i + 1) % 3] - corners[i]) * (j as f64 / 20.0));
+            }
+        }
+        // Begin midway along an edge; the release closes the final segment.
+        pts.rotate_left(7);
+        s.pointer(&PointerEvent::new(PointerKind::Down, pts[0].x, pts[0].y), v).unwrap();
+        for p in &pts[1..] {
+            s.pointer(&PointerEvent::new(PointerKind::Drag, p.x, p.y), v).unwrap();
+        }
+        s.pointer(&PointerEvent::new(PointerKind::Up, pts[0].x, pts[0].y), v).unwrap();
+        let id = *s.doc().unwrap().selection.objects.first().expect("recognized triangle");
+        let node = s.doc().unwrap().doc.node(id).unwrap().clone();
+        let vectorcraft_doc::NodeKind::Path { live: Some(vectorcraft_doc::LiveShape::Polygon { sides: 3, xf, .. }), .. } = &node.kind else {
+            panic!("expected live triangle, got {:?}", node.kind_label());
+        };
+        let [a, b, c, d, _, _] = xf.as_coeffs();
+        let (sin, cos) = direction.to_radians().sin_cos();
+        for (actual, expected) in [(a, cos), (b, sin), (c, -sin), (d, cos)] {
+            assert!((actual - expected).abs() < 1e-12, "direction {direction}, transform {xf:?}");
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.doc().unwrap().doc.node(id).is_none());
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.node(id).unwrap(), &node);
+    }
 }
 
 #[test]
@@ -542,4 +835,21 @@ fn a_panicking_command_rolls_back_instead_of_crashing() {
     let b = rect(&mut s, 200.0, 10.0, 50.0, 50.0);
     assert!(s.doc().unwrap().doc.node(b).is_some());
     assert_eq!(s.journal.last().map(|j| j.0.as_str()), Some("shape.rectangle"));
+}
+
+/// New layers and sublayers share one "Layer N" numbering, whatever art the document holds, and
+/// never repeat a name.
+#[test]
+fn new_layers_and_sublayers_are_numbered_together() {
+    let name = |s: &Session, id: &Value| s.doc().unwrap().doc.node(NodeId(id["id"].as_u64().unwrap())).unwrap().display_name().to_string();
+    let mut s = session();
+    let sub = s.execute("layer.newSublayer", &json!({})).unwrap();
+    assert_eq!(name(&s, &sub), "Layer 2", "not its parent's name");
+    for x in [0.0, 60.0, 120.0, 180.0, 240.0] {
+        rect(&mut s, x, 0.0, 50.0, 50.0);
+    }
+    let layer = s.execute("layer.new", &json!({})).unwrap();
+    assert_eq!(name(&s, &layer), "Layer 3", "after the sublayer, not a repeat of it");
+    let sub = s.execute("layer.newSublayer", &json!({})).unwrap();
+    assert_eq!(name(&s, &sub), "Layer 4", "the art doesn't count");
 }

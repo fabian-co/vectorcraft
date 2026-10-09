@@ -1,11 +1,14 @@
 //! Object menu: transforms, arrange, group, lock/hide, compound paths, clipping masks, isolation,
 //! align & distribute, object properties.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use vectorcraft_color::{BlendMode, Paint};
-use vectorcraft_doc::{Appearance, Document, Knockout, Node, NodeId, NodeKind, OrientedBox, Scaling};
+use vectorcraft_doc::corners::set_corners;
+use vectorcraft_doc::{Appearance, Document, Knockout, LiveCorners, LiveShape, Node, NodeId, NodeKind, OrientedBox, Scaling};
+use vectorcraft_geom::shapes::CornerKind;
 use vectorcraft_geom::{Affine, FillRule, Point, Rect, Vec2};
 
 use super::edit::{duplicate_in, selected_roots};
@@ -20,17 +23,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform",
             [],
             None,
-            "{matrix: [a,b,c,d,e,f], copy?: bool, ids?, strokes?: bool, corners?: bool, typeAreas?: bool} apply an affine to the selection (or ids); strokes/corners: Scale Strokes & Effects / Scale Corners (default: the preferences); typeAreas: area type among them (not type inside a group) reshapes its frame by the matrix and its text reflows at its size, as a bounding-box handle drag does (default: the type transforms too)",
+            "{matrix: [a,b,c,d,e,f], copy?: bool, ids?, strokes?: bool, corners?: bool, typeAreas?: bool, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} apply an affine to the selection (or ids); strokes/corners: Scale Strokes & Effects / Scale Corners (default: the preferences); typeAreas: area type among them (not type inside a group) reshapes its frame by the matrix and its text reflows at its size, as a bounding-box handle drag does (default: the type transforms too)",
             has_doc,
             transform
         ),
-        cmd!("object.move", "Move…", ["Object", "Transform"], Some("Cmd+Shift+M"), "{dx, dy, copy?}", has_selection, move_cmd),
+        cmd!(
+            "object.move",
+            "Move…",
+            ["Object", "Transform"],
+            Some("Cmd+Shift+M"),
+            "{dx, dy, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}",
+            has_selection,
+            move_cmd
+        ),
         cmd!(
             "object.rotate",
             "Rotate…",
             ["Object", "Transform"],
             None,
-            "{angle: deg (counter-clockwise), absolute?: bool (angle is the bounding box's new angle, not an amount), origin?: [x,y] (default: the bounding box centre), copy?} → {ids}",
+            "{angle: deg (counter-clockwise), absolute?: bool (angle is the bounding box's new angle, not an amount), origin?: [x,y] (default: the bounding box centre), copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} → {ids}",
             has_selection,
             rotate
         ),
@@ -39,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Scale…",
             ["Object", "Transform"],
             None,
-            "{sx: %, sy?: %, origin?: [x,y], copy?, strokes?: bool (Scale Strokes & Effects: stroke weights, dashes and effect distances scale; off keeps them, type strokes included), corners?: bool (Scale Corners: live corner radii scale)} (strokes/corners default to the preferences)",
+            "{sx: %, sy?: %, origin?: [x,y], copy?, strokes?: bool (Scale Strokes & Effects: stroke weights, dashes and effect distances scale; off keeps them, type strokes included), corners?: bool (Scale Corners: live corner radii scale), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} (strokes/corners default to the preferences)",
             has_selection,
             scale
         ),
@@ -48,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reflect…",
             ["Object", "Transform"],
             None,
-            "{axis: \"vertical\"|\"horizontal\"|deg, origin?, copy?}",
+            "{axis: \"vertical\"|\"horizontal\"|deg, origin?, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}",
             has_selection,
             reflect
         ),
@@ -57,7 +68,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shear…",
             ["Object", "Transform"],
             None,
-            "{angle: deg, axis?: \"horizontal\"|\"vertical\", origin?, copy?}",
+            "{angle: deg, axis?: \"horizontal\"|\"vertical\", origin?, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}",
             has_selection,
             shear
         ),
@@ -67,8 +78,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Nudge",
             [],
             None,
-            "{dx: -1|0|1, dy: -1|0|1, big?: bool (×10), copy?: bool} arrow-key nudge by the keyboard increment",
-            has_selection,
+            "{dx: -1|0|1, dy: -1|0|1, big?: bool (×10), copy?: bool} arrow-key nudge by the keyboard increment (the selected anchors, else objects, else ruler guides)",
+            has_selection_or_guides,
             nudge
         ),
         cmd!("object.arrange.bringToFront", "Bring to Front", ["Object", "Arrange"], Some("Cmd+Shift+]"), "{}", has_selection, |s, _| arrange(
@@ -139,7 +150,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Object Properties",
             [],
             None,
-            "{ids?|id?, name?, visible?, locked?, opacity?: 0..100, blend?: \"Multiply\"…, isolate?, knockout?: \"on\"|\"off\"|\"neutral\"|bool (true = on, false = neutral), knockoutShape?: bool}",
+            "{ids?|id?, name?, visible?, locked?, opacity?: 0..100, blend?: \"Multiply\"…, isolate?, knockout?: \"on\"|\"off\"|\"neutral\"|bool (true = on, false = neutral), knockoutShape?: bool, data?: {key: \"value\" | null (removes it)} (the object's own data, SVG data-* attributes: {pivot: \"100,180\"} is data-pivot; document.node → attrs.data)}",
             has_doc,
             set_props
         ),
@@ -148,7 +159,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Align",
             ["Window", "Align"],
             None,
-            "{horizontal?: \"left\"|\"center\"|\"right\", vertical?: \"top\"|\"center\"|\"bottom\", to?: \"selection\"|\"artboard\"|\"key\", bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes)}",
+            "{horizontal?: \"left\"|\"center\"|\"right\", vertical?: \"top\"|\"center\"|\"bottom\", to?: \"selection\"|\"artboard\"|\"key\" (default: the key object when the selection has one, select.key, else the selection), bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes)}",
             has_selection,
             align
         ),
@@ -166,7 +177,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Distribute Spacing",
             ["Window", "Align"],
             None,
-            "{axis: \"horizontal\"|\"vertical\", spacing?: pt, bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes)}",
+            "{axis: \"horizontal\"|\"vertical\", spacing?: pt (the key object, select.key, stays put and the others are spaced from it), bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes)}",
             has_multi,
             distribute_spacing
         ),
@@ -180,7 +191,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_bounds
         ),
         cmd!("object.expandShape", "Expand Shape", ["Object", "Shape"], None, "{} convert live shapes to plain paths", has_selection, expand_shape),
-        cmd!("object.setLiveShape", "Live Shape Properties", [], None, "{id?, radius?: pt (all corners), sides?: n}", has_selection, set_live_shape),
+        cmd!(
+            "object.setLiveShape",
+            "Live Shape Properties",
+            [],
+            None,
+            "{id?, ids?, radius?: pt, kind?: \"round\"|\"invertedRound\"|\"chamfer\", corners?: [i…], sides?: n} (Live Corners on any path: radius and kind set its corners (anchors without handles between two straight sides): `corners` (anchor indices of the path with its corners uncut, counting every subpath's anchors in order: a rectangle's 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left; a polygon's from the first vertex clockwise), else the corners with a Direct-Selected anchor, else every corner; each radius is drawn no larger than half the corner's shorter side allows; a path that isn't a live shape keeps its uncut outline so its corners stay editable, and is plain again once none is cut; sides: a polygon's, which keep the radius they shared)",
+            has_selection,
+            set_live_shape
+        ),
     ]
 }
 
@@ -199,15 +218,39 @@ pub(crate) fn scaling(s: &mut Session, p: &Value) -> Scaling {
     let corners = bool_or(p, "corners", s.prefs.scale_corners);
     s.note_journal("strokes", json!(strokes));
     s.note_journal("corners", json!(corners));
-    Scaling { strokes, effects: strokes.then_some(vectorcraft_render::effects::scale_effect), keep_type_strokes: !strokes, keep_corners: !corners }
+    Scaling {
+        strokes,
+        effects: strokes.then_some(vectorcraft_render::effects::scale_effect),
+        keep_type_strokes: !strokes,
+        keep_corners: !corners,
+        ..Scaling::default()
+    }
+}
+
+/// Transform Patterns: do the pattern fills and strokes of `ids` transform with them (`patterns`
+/// param, else General › Transform Pattern Tiles)? Noted in the journal when they use a pattern,
+/// so a replay moves their tiles alike whatever the preference is then.
+pub(crate) fn transform_patterns(s: &mut Session, p: &Value, ids: &[NodeId]) -> Result<bool> {
+    let on = bool_or(p, "patterns", s.prefs.transform_pattern_tiles);
+    let d = &s.doc()?.doc;
+    let mut uses = false;
+    for n in ids.iter().filter_map(|id| d.node(*id)) {
+        n.walk(&mut |c| uses |= vectorcraft_doc::pattern::uses_pattern(c, None));
+    }
+    if uses {
+        s.note_journal("patterns", json!(on));
+    }
+    Ok(on)
 }
 
 /// Apply `xf` to `ids` (`copy` param: duplicate first; `strokes`/`corners`: see [`scaling`];
-/// `typeAreas`: see [`resize_type_area`]). Records Transform Again.
+/// `patterns`: see [`transform_patterns`]; `typeAreas`: see [`resize_type_area`]). Records
+/// Transform Again.
 pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf: Affine, p: &Value) -> Result<Value> {
     let copy = bool_or(p, "copy", false);
     let areas = bool_or(p, "typeAreas", false);
-    let sc = if Scaling::factor(xf).is_some() { scaling(s, p) } else { Scaling::default() };
+    let mut sc = if Scaling::factor(xf).is_some() { scaling(s, p) } else { Scaling::default() };
+    sc.patterns = transform_patterns(s, p, &ids)?;
     let ids = s.edit(label, |d, sel| {
         let targets = if copy { duplicate_in(d, sel, &ids, Affine::IDENTITY)? } else { ids.clone() };
         for id in &targets {
@@ -258,6 +301,9 @@ fn nudge(s: &mut Session, p: &Value) -> Result<Value> {
     let dy = f64_or(p, "dy", 0.0) * k;
     if !s.doc()?.selection.anchors.is_empty() {
         return super::path::move_anchors(s, &json!({ "dx": dx, "dy": dy }));
+    }
+    if s.doc()?.selection.is_empty() {
+        return super::docmenu::guide_move(s, &json!({ "dx": dx, "dy": dy, "copy": bool_or(p, "copy", false) }));
     }
     let ids = selected_roots(s)?;
     apply_transform(s, "Move", ids, Affine::translate((dx, dy)), p)
@@ -676,7 +722,8 @@ fn isolate(s: &mut Session, p: &Value) -> Result<Value> {
     if st.doc.node(id).is_none_or(|n| !n.is_container()) {
         return Err(bad("object.isolate", "only groups and layers can be isolated"));
     }
-    st.isolation = Some(id);
+    let isolation = st.doc.node(id).filter(|n| n.shaper.is_some()).and_then(|n| n.children()).and_then(|c| c.first()).map_or(id, |n| n.id);
+    st.isolation = Some(isolation);
     st.selection.clear();
     st.revision += 1;
     ok()
@@ -686,10 +733,37 @@ fn exit_isolation(s: &mut Session, _: &Value) -> Result<Value> {
     let st = s.doc_mut()?;
     if let Some(i) = st.isolation.take() {
         super::distortcmds::finish_edit_text(st, i);
-        st.selection.set([i]);
+        let target = st.doc.parent_of(i).filter(|p| st.doc.node(*p).is_some_and(|n| n.shaper.is_some())).unwrap_or(i);
+        st.selection.set([target]);
     }
     st.revision += 1;
     ok()
+}
+
+/// The most data entries `object.setProps` takes at once.
+const MAX_DATA: usize = 256;
+
+/// `object.setProps`'s `data`: each key (a data-* attribute's name: letters, digits, `-`, `_`,
+/// `.`) with its value, or `None` to remove it.
+fn data_param(m: &serde_json::Map<String, Value>) -> Result<Vec<(String, Option<String>)>> {
+    const C: &str = "object.setProps";
+    if m.len() > MAX_DATA {
+        return Err(bad(C, format!("data takes at most {MAX_DATA} keys at once")));
+    }
+    m.iter()
+        .map(|(k, v)| {
+            let k = k.strip_prefix("data-").unwrap_or(k);
+            if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) || k == "name" || k.starts_with("vc-") {
+                return Err(bad(C, format!("data key `{k}`: letters, digits, -, _ and . (not name or vc-…)")));
+            }
+            let v = match v {
+                Value::Null => None,
+                Value::String(s) => Some(s.clone()),
+                other => Some(other.to_string()),
+            };
+            Ok((k.to_string(), v))
+        })
+        .collect()
 }
 
 fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
@@ -698,6 +772,11 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     let blend = match str_param(p, "blend") {
         Some(b) => Some(BlendMode::parse(b).ok_or_else(|| bad("object.setProps", format!("unknown blend mode `{b}`")))?),
         None => None,
+    };
+    let data = match p.get("data") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(m)) => Some(data_param(m)?),
+        Some(v) => return Err(bad("object.setProps", format!("data must be an object of key: value, not {v}"))),
     };
     let knockout = match p.get("knockout") {
         Some(v) => Some(
@@ -733,6 +812,24 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = p.get("knockoutShape").and_then(Value::as_bool) {
                 n.knockout_shape = v;
             }
+            if let Some(changes) = &data {
+                n.edit_attrs(|a| {
+                    for (k, v) in changes {
+                        match (a.data.iter().position(|(key, _)| key == k), v) {
+                            (Some(i), Some(v)) => {
+                                if let Some(e) = a.data.get_mut(i) {
+                                    e.1 = v.clone();
+                                }
+                            }
+                            (Some(i), None) => {
+                                a.data.remove(i);
+                            }
+                            (None, Some(v)) => a.data.push((k.clone(), v.clone())),
+                            (None, None) => {}
+                        }
+                    }
+                });
+            }
         }
         Ok(())
     })?;
@@ -767,9 +864,15 @@ fn items_bounds(d: &Document, ids: &[NodeId], preview: bool) -> Vec<(NodeId, Rec
     ids.iter().filter_map(|id| Some((*id, d.bounds_of(&[*id], preview)?))).collect()
 }
 
+/// What `object.align` aligns to: `to`, else the key object when there is one, else the
+/// selection.
+fn align_to<'a>(s: &Session, p: &'a Value) -> Option<&'a str> {
+    str_param(p, "to").or_else(|| s.doc().ok()?.selection.key.map(|_| "key"))
+}
+
 fn reference_rect(s: &Session, p: &Value, ids: &[NodeId], preview: bool) -> Result<Rect> {
     let st = s.doc()?;
-    match str_param(p, "to") {
+    match align_to(s, p) {
         Some("artboard") => {
             let b = st.doc.bounds_of(ids, preview).unwrap_or_default();
             let i = st.doc.artboard_at(b.center()).unwrap_or(0);
@@ -794,7 +897,7 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
         let d = &s.doc()?.doc;
         items_bounds(d, &ids, preview)
             .into_iter()
-            .filter(|(id, _)| Some(*id) != key || str_param(p, "to") != Some("key"))
+            .filter(|(id, _)| Some(*id) != key || align_to(s, p) != Some("key"))
             .map(|(id, b)| {
                 let dx = match h {
                     Some("left") => r.x0 - b.x0,
@@ -880,22 +983,31 @@ fn distribute_spacing(s: &mut Session, p: &Value) -> Result<Value> {
     let mut items = items_bounds(&s.doc()?.doc, &ids, preview);
     items.sort_by(|a, b| if horiz { a.1.x0.total_cmp(&b.1.x0) } else { a.1.y0.total_cmp(&b.1.y0) });
     let n = items.len();
+    let &[(_, first), .., (_, last)] = items.as_slice() else {
+        return Err(EngineError::Other("select two or more objects to distribute".into()));
+    };
     let size = |r: &Rect| if horiz { r.width() } else { r.height() };
     let start = |r: &Rect| if horiz { r.x0 } else { r.y0 };
-    let gap = match p.get("spacing").and_then(Value::as_f64) {
+    let spacing = p.get("spacing").and_then(Value::as_f64).filter(|g| g.is_finite());
+    let gap = match spacing {
         Some(g) => g,
         None => {
-            let span = if horiz { items[n - 1].1.x1 - items[0].1.x0 } else { items[n - 1].1.y1 - items[0].1.y0 };
+            let span = if horiz { last.x1 - first.x0 } else { last.y1 - first.y0 };
             (span - items.iter().map(|i| size(&i.1)).sum::<f64>()) / (n - 1) as f64
         }
     };
-    let mut pos = start(&items[0].1);
-    let mut moves = vec![];
+    let mut pos = start(&first);
+    let mut deltas = vec![];
     for (id, r) in &items {
-        let delta = pos - start(r);
-        moves.push((*id, if horiz { Vec2::new(delta, 0.0) } else { Vec2::new(0.0, delta) }));
+        deltas.push((*id, pos - start(r)));
         pos += size(r) + gap;
     }
+    // With a spacing (aligning to a key object) the key object stays where it is: the others
+    // are spaced from it.
+    let key = s.doc()?.selection.key;
+    let fixed = spacing.and_then(|_| deltas.iter().find(|(id, _)| Some(*id) == key)).map_or(0.0, |k| k.1);
+    let moves: Vec<(NodeId, Vec2)> =
+        deltas.into_iter().map(|(id, d)| (id, if horiz { Vec2::new(d - fixed, 0.0) } else { Vec2::new(0.0, d - fixed) })).collect();
     s.edit("Distribute Spacing", |d, _| {
         for (id, dv) in &moves {
             if let Some(n) = d.node_mut(*id) {
@@ -962,25 +1074,58 @@ fn expand_shape(s: &mut Session, _: &Value) -> Result<Value> {
     ok()
 }
 
+/// The `corners` of `object.setLiveShape`: anchor indices of a path's uncut outline.
+fn corners_param(p: &Value) -> Result<Option<BTreeSet<usize>>> {
+    let Some(v) = p.get("corners").filter(|v| !v.is_null()) else { return Ok(None) };
+    let err = || bad("object.setLiveShape", format!("`corners` must list anchor indices (0, 1, 2…), not {v}"));
+    let list = v.as_array().ok_or_else(err)?;
+    list.iter().map(|k| k.as_u64().and_then(|k| usize::try_from(k).ok()).ok_or_else(err)).collect::<Result<_>>().map(Some)
+}
+
 fn set_live_shape(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
-    s.edit("Live Shape", |d, _| {
+    let corners = corners_param(p)?;
+    let kind = p
+        .get("kind")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            serde_json::from_value::<CornerKind>(v.clone())
+                .map_err(|_| bad("object.setLiveShape", format!("`kind` must be \"round\", \"invertedRound\" or \"chamfer\", not {v}")))
+        })
+        .transpose()?;
+    let radius = p.get("radius").and_then(Value::as_f64);
+    let sides = p.get("sides").and_then(Value::as_u64);
+    s.edit("Live Shape", |d, sel| {
         for id in &ids {
-            let Some(NodeKind::Path { path, live: Some(live), .. }) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
-            match live {
-                vectorcraft_doc::LiveShape::Rectangle { radii, .. } => {
-                    if let Some(r) = p.get("radius").and_then(Value::as_f64) {
-                        *radii = [r.max(0.0); 4];
-                    }
-                }
-                vectorcraft_doc::LiveShape::Polygon { sides, .. } => {
-                    if let Some(n) = p.get("sides").and_then(Value::as_u64) {
-                        *sides = n.clamp(3, 1000) as u32;
-                    }
-                }
-                _ => {}
+            let Some(NodeKind::Path { path, live, .. }) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
+            if let (Some(l @ LiveShape::Polygon { .. }), Some(n)) = (live.as_mut(), sides) {
+                l.set_sides(n);
+                *path = l.to_path();
             }
-            *path = live.to_path();
+            if radius.is_none() && kind.is_none() {
+                continue;
+            }
+            let partial = sel.anchors.get_mut(id);
+            // The corners to edit, the Direct-Selected ones and the anchor layout before the edit.
+            let Some(c) = LiveCorners::new(path, live.as_ref()) else { continue };
+            let picked = match &corners {
+                Some(k) if k.last().is_some_and(|k| *k >= c.base.anchor_count()) => {
+                    let n = c.base.anchor_count();
+                    let past: Vec<_> = k.range(n..).collect();
+                    return Err(bad("object.setLiveShape", format!("object {id} has anchors 0–{} for `corners`, not {past:?}", n.saturating_sub(1))));
+                }
+                Some(k) => k.clone(),
+                None => c.picked(partial.as_deref()),
+            };
+            let (selected, layout) = (partial.as_deref().map(|a| c.corners_of(a)), c.sources().to_vec());
+            set_corners(path, live, &picked, radius, kind);
+            // Direct-Selected corners stay selected as they gain or lose anchors.
+            if let (Some(anchors), Some(selected)) = (partial, selected)
+                && let Some(c) = LiveCorners::new(path, live.as_ref())
+                && c.sources() != layout
+            {
+                *anchors = c.anchors_of(&selected);
+            }
         }
         Ok(())
     })?;

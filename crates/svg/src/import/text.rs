@@ -15,18 +15,22 @@
 //! line spacing), other vertical moves become baseline shift, horizontal moves become kerning (an
 //! absolute `x` is measured against the laid-out text), and rotations become character rotation.
 //! `<textPath>` becomes type on a path; vertical `writing-mode` becomes type on a vertical path.
+//!
+//! Type takes the size it draws at: the scale of the transforms and `viewBox` above a `<text>`
+//! moves into its sizes ([`size_scale`], [`fold_scale`]), and the rest (a stretch, skew,
+//! rotation or reflection) stays its transform.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 use std::str::FromStr;
 
 use usvg::roxmltree;
 use vectorcraft_color::{Color, Paint};
-use vectorcraft_doc::{CharStyle, Dash, Justify, LineCap, LineJoin, StrokeLayer, TextKind, TextObject, TextRun};
+use vectorcraft_doc::{CharStyle, Dash, Justify, LineCap, LineJoin, ParaDirection, ParaStyle, StrokeLayer, TextKind, TextObject, TextRun};
 use vectorcraft_geom::kurbo::ParamCurveArclen;
 use vectorcraft_geom::{Affine, BezPath, PathData, Point, Rect};
 use vectorcraft_text::{FontDb, TextLayout};
@@ -552,11 +556,12 @@ impl Ctx {
             .collect();
         let under = stroke_under(&mut cells, label, warnings);
 
-        let anchor = match self.css.prop(cs.chars[0].1, "text-anchor").as_deref() {
+        let anchor_of = |i: usize| match cs.chars.get(i).and_then(|c| self.css.prop(c.1, "text-anchor")).as_deref() {
             Some("middle") => 0.5,
             Some("end") => 1.0,
             _ => 0.0,
         };
+        let anchor = anchor_of(0);
         let path = cs.path.and_then(|tp| match self.text_path(xml, tp) {
             Some(p) => Some((tp, p)),
             None => {
@@ -567,6 +572,7 @@ impl Ctx {
         let vertical = self.css.prop(t, "writing-mode").is_some_and(|m| m.starts_with("tb") || m.starts_with("vertical"));
         let mut obj = TextObject::point(Point::ZERO, "", CharStyle::default());
         let mut breaks: Vec<Break> = vec![];
+        let mut para_styles: Vec<ParaStyle> = vec![];
         if let Some((tp, bp)) = path {
             // Along the path: dx is extra advance, dy shifts off the path.
             let mut off = 0.0;
@@ -582,7 +588,7 @@ impl Ctx {
             let offset = tp.attribute("startOffset").and_then(|v| self.length(v, em, len)).unwrap_or(0.0) + dx[0];
             let width = if anchor > 0.0 { advance(&point_text(&cells)) } else { 0.0 };
             let start = Some((offset - anchor * width) / len).filter(|s| s.is_finite()).map_or(0.0, |s| s.clamp(0.0, 1.0));
-            obj.kind = TextKind::OnPath { path: PathData::from_bezpath(&bp), start };
+            obj.kind = TextKind::OnPath { path: PathData::from_bezpath(&bp), start, end: None };
             obj.xf = Affine::IDENTITY;
         } else if vertical {
             // Type on a vertical path: dy is extra advance, dx shifts across the column.
@@ -602,16 +608,43 @@ impl Ctx {
             let mut bp = BezPath::new();
             bp.move_to((x0, y0));
             bp.line_to((x0, y0 + width + 1.0));
-            obj.kind = TextKind::OnPath { path: PathData::from_bezpath(&bp), start: 0.0 };
+            obj.kind = TextKind::OnPath { path: PathData::from_bezpath(&bp), start: 0.0, end: None };
             obj.xf = Affine::IDENTITY;
         } else {
             let origin = Point::new(x[0].unwrap_or(0.0) + dx[0], y[0].unwrap_or(0.0) + dy[0]);
-            let (justify, left) = lines(&mut cells, &x, &y, &dx, &dy, anchor, origin.x, &mut breaks);
+            let (justify, left, starts) = lines(&mut cells, &x, &y, &dx, &dy, anchor, origin.x, &mut breaks);
             obj.para.justify = justify;
             obj.xf = Affine::translate((finite(left), finite(origin.y)));
+            // Lines anchored differently (paragraphs aligned differently): each line's paragraph
+            // takes its alignment, and indents that put it where it was.
+            if let Some(starts) = starts.filter(|st| st.iter().any(|(i, _)| anchor_of(*i) != anchor)) {
+                for (k, &(i, ax)) in starts.iter().enumerate() {
+                    let a = anchor_of(i);
+                    let d = finite(ax - left);
+                    let mut pa = ParaStyle { justify: justify_of(a), ..ParaStyle::default() };
+                    match pa.justify {
+                        Justify::Center if d >= 0.0 => pa.left_indent = 2.0 * d,
+                        Justify::Center => pa.right_indent = -2.0 * d,
+                        Justify::Right => pa.right_indent = -d,
+                        _ => pa.left_indent = d,
+                    }
+                    let count = if k == 0 { 1 } else { breaks.get(k - 1).map_or(1, |b| b.count) };
+                    para_styles.extend(std::iter::repeat_n(pa, count));
+                }
+            }
         }
         let (runs, servers) = assemble(&cells, &breaks).0;
         obj.runs = runs;
+        if !para_styles.is_empty() {
+            obj.set_paragraph_styles(para_styles);
+        }
+        // SVG text runs left to right unless `direction: rtl` says otherwise, whatever its first
+        // strong character: pinned (on every paragraph) when that would read as right to left.
+        if self.css.prop(t, "direction").is_some_and(|d| d.trim() == "rtl") {
+            obj.edit_paras(None, |pa| pa.direction = Some(ParaDirection::RightToLeft));
+        } else if obj.plain_text().split('\n').any(|p| vectorcraft_text::paragraph_is_rtl(p, None)) {
+            obj.edit_paras(None, |pa| pa.direction = Some(ParaDirection::LeftToRight));
+        }
         // The placeholder covers the text (laid out when a paint server needs its bounding box).
         let b = if paints.is_empty() { obj.bounds() } else { Some(obj.xf.transform_rect_bbox(measure(&obj).bounds)) }.unwrap_or_default();
         let marker = Rect::new(b.x0, b.y0, b.x1.max(b.x0 + 1.0), b.y1.max(b.y0 + 1.0));
@@ -646,13 +679,69 @@ fn stroke_under(cells: &mut [Cell], label: &str, warnings: &mut Vec<String>) -> 
     first
 }
 
+/// The type sizes the Character panel takes, in points.
+const SIZES: RangeInclusive<f64> = 0.1..=1296.0;
+
+/// How much of `xf` (text space → document) [`fold_scale`] makes the type's size: the scale
+/// across the baseline for point type (a stretch along it, a skew, a rotation and a reflection
+/// stay in the transform), the mean scale for type on a path, whose baseline turns. Not past the
+/// Character panel's sizes (the rest stays in the transform); 1 when `xf` collapses the text.
+pub(super) fn size_scale(t: &TextObject, xf: Affine) -> f64 {
+    let [a, b, ..] = xf.as_coeffs();
+    let det = xf.determinant().abs();
+    let k = match t.kind {
+        TextKind::OnPath { .. } => det.sqrt(),
+        _ => det / a.hypot(b),
+    };
+    // To 6 significant digits: usvg's transforms are single precision, and `rotate(30) scale(2)`
+    // makes 7 pt type 14 pt, not 13.9999998 pt (the type draws the same either way).
+    let p = 10f64.powi((5.0 - k.log10().floor()) as i32);
+    let k = (k * p).round() / p;
+    if !(k.is_finite() && k > 0.0) {
+        return 1.0;
+    }
+    let (lo, hi) = t.runs.iter().map(|r| r.style.size).fold((f64::INFINITY, 0.0f64), |(lo, hi), s| (lo.min(s), hi.max(s)));
+    // Sizes already outside the range don't move further out.
+    if k > 1.0 { k.min((SIZES.end() / hi).max(1.0)) } else { k.max((SIZES.start() / lo).min(1.0)) }
+}
+
+/// Make text space `k` times larger and the transform `1 / k` times smaller, so the type draws
+/// the same at `k` times its size (and leading, baseline shift, character strokes and path): the
+/// size the Character panel shows is the size it draws at.
+pub(super) fn fold_scale(t: &mut TextObject, k: f64) {
+    for r in &mut t.runs {
+        let st = &mut r.style;
+        st.size *= k;
+        st.leading = st.leading.map(|l| l * k);
+        st.baseline_shift *= k;
+    }
+    t.scale_char_strokes(k);
+    let up = Affine::scale(k);
+    match &mut t.kind {
+        TextKind::OnPath { path, .. } | TextKind::Area { frame: path } => path.transform(up),
+        TextKind::Point => {}
+    }
+    t.cached_bounds = t.cached_bounds.map(|b| up.transform_rect_bbox(b));
+    t.xf *= Affine::scale(1.0 / k);
+}
+
 /// `v`, or 0 when far-off positions added up past f64's range.
 fn finite(v: f64) -> f64 {
     if v.is_finite() { v } else { 0.0 }
 }
 
+/// The alignment of an SVG text chunk anchored at `anchor` (0 start, 0.5 middle, 1 end).
+fn justify_of(anchor: f64) -> Justify {
+    match anchor {
+        a if a >= 1.0 => Justify::Right,
+        a if a > 0.0 => Justify::Center,
+        _ => Justify::Left,
+    }
+}
+
 /// Point type: line breaks, baseline shifts and kerning from the positioning lists. Returns the
-/// justification and the x of the first line's left (or anchor) edge.
+/// justification, the x of the first line's left (or anchor) edge and, when no character is
+/// placed on its own, each line's first character and anchor x.
 #[allow(clippy::too_many_arguments)]
 fn lines(
     cells: &mut [Cell],
@@ -663,7 +752,7 @@ fn lines(
     anchor: f64,
     x0: f64,
     breaks: &mut Vec<Break>,
-) -> (Justify, f64) {
+) -> (Justify, f64, Option<Vec<(usize, f64)>>) {
     let n = cells.len();
     let y0 = y[0].unwrap_or(0.0) + dy[0];
     let (mut base, mut cur) = (y0, y0);
@@ -701,12 +790,7 @@ fn lines(
         }
     }
     if targets.is_empty() {
-        let justify = match anchor {
-            a if a >= 1.0 => Justify::Right,
-            a if a > 0.0 => Justify::Center,
-            _ => Justify::Left,
-        };
-        return (justify, x0);
+        return (justify_of(anchor), x0, Some(lines));
     }
     // Absolutely placed characters: lay the text out left-aligned and kern each one onto its x.
     // SVG anchors every absolutely placed chunk on its own, so with a middle/end anchor each
@@ -762,7 +846,7 @@ fn lines(
             break;
         }
     }
-    (Justify::Left, left)
+    (Justify::Left, left, None)
 }
 
 /// A left-aligned point text of `runs` at the origin (for measuring).
@@ -808,7 +892,7 @@ fn assemble(cells: &[Cell], breaks: &[Break]) -> (Runs, Vec<usize>) {
             r.text.push(ch);
             return;
         }
-        runs.push(TextRun { text: ch.into(), style });
+        runs.push(TextRun { text: ch.into(), style, inline: None });
         keys.push(key);
     }
     let mut out: Runs = (vec![], vec![]);

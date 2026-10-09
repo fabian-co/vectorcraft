@@ -1,12 +1,16 @@
 //! Line Segment family drag tools: Arc, Spiral, Rectangular Grid and Polar Grid.
 //!
-//! Drag draws (Shift = equal axes / square, Alt = from the centre for arc and grids); a click
-//! without dragging asks the UI for the options dialog. While dragging, ↑/↓ change the spiral's
-//! segments, the grid rows or the concentric dividers; ←/→ change grid columns / radial dividers.
+//! Drag draws (Shift = equal axes / square, Alt = from the centre for arc and grids, Space held
+//! moves the shape being drawn); a click without dragging asks the UI for the options dialog. The
+//! start point and the dragged corner snap to Smart Guides ([`DrawSnap`]), hovering too.
+//! While dragging, ↑/↓ change the spiral's segments, the grid rows or the concentric dividers; ←/→
+//! change grid columns / radial dividers.
 
 use serde_json::{Value, json};
-use vectorcraft_geom::{Point, Rect, Vec2};
+use vectorcraft_geom::Point;
 
+use crate::guides::{DrawSnap, Leave, square};
+use crate::shape::drag_rect;
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey};
 
 pub struct FamilyTool {
@@ -23,6 +27,7 @@ pub struct FamilyTool {
     pub rows: u32,
     /// Columns / radial dividers.
     pub columns: u32,
+    snap: DrawSnap,
 }
 
 impl FamilyTool {
@@ -45,6 +50,7 @@ impl FamilyTool {
             clockwise: true,
             rows: 5,
             columns: 5,
+            snap: DrawSnap::default(),
         }
     }
 
@@ -57,13 +63,10 @@ impl FamilyTool {
         }
     }
 
-    fn rect(start: Point, p: Point, m: Mods) -> Rect {
-        let mut d = p - start;
-        if m.shift {
-            let s = d.x.abs().max(d.y.abs());
-            d = Vec2::new(s * d.x.signum(), s * d.y.signum());
-        }
-        if m.alt { Rect::from_points(start - d, start + d) } else { Rect::from_points(start, start + d) }
+    /// How the dragged point keeps to the start: a spiral's radius goes anywhere, the arc's and
+    /// the grids' corner keeps to a diagonal with Shift.
+    fn leave(&self, start: Point, m: Mods) -> Option<Leave> {
+        (self.id != "spiral").then(|| Leave::diagonal(start, m.shift))
     }
 
     /// The command for a drag from `start` to `p`.
@@ -77,25 +80,21 @@ impl FamilyTool {
                 )
             }
             "rectangularGrid" => {
-                let r = Self::rect(start, p, m);
+                let r = drag_rect(start, p, m);
                 (
                     "shape.rectangularGrid".into(),
                     json!({"x": r.x0, "y": r.y0, "width": r.width(), "height": r.height(), "rows": self.rows, "columns": self.columns}),
                 )
             }
             "polarGrid" => {
-                let r = Self::rect(start, p, m);
+                let r = drag_rect(start, p, m);
                 (
                     "shape.polarGrid".into(),
                     json!({"x": r.x0, "y": r.y0, "width": r.width(), "height": r.height(), "concentric": self.rows, "radial": self.columns}),
                 )
             }
             _ => {
-                let mut d = p - start;
-                if m.shift {
-                    let s = d.x.abs().max(d.y.abs());
-                    d = Vec2::new(s * d.x.signum(), s * d.y.signum());
-                }
+                let d = if m.shift { square(p - start) } else { p - start };
                 let (a, b) = if m.alt { (start - d, start + d) } else { (start, start + d) };
                 ("shape.arc".into(), json!({"x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y, "closed": self.closed}))
             }
@@ -112,16 +111,23 @@ impl Tool for FamilyTool {
     }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         match ev.kind {
+            PointerKind::Move => {
+                self.snap.hover(cx, ev.pos, &[], None);
+                vec![]
+            }
             PointerKind::Down => {
-                let (p, _) = crate::guides::snap_draw(cx, ev.pos, &[]);
+                let p = self.snap.press(cx, ev.pos, &[], None);
                 self.start = Some(p);
                 self.last = p;
                 self.began = false;
                 vec![]
             }
             PointerKind::Drag => {
-                let Some(s) = self.start else { return vec![] };
-                self.last = ev.pos;
+                let Some(mut s) = self.start else { return vec![] };
+                let pos = self.snap.drag(cx, ev.pos, self.leave(s, ev.mods).as_ref());
+                let ev = &PointerEvent { pos, ..*ev };
+                crate::shape::space_moves(&mut s, &mut self.last, ev, self.began);
+                self.start = Some(s);
                 self.mods = ev.mods;
                 let mut out = vec![];
                 if !self.began {
@@ -137,6 +143,7 @@ impl Tool for FamilyTool {
             }
             PointerKind::Up => {
                 let Some(s) = self.start.take() else { return vec![] };
+                self.snap.clear();
                 if std::mem::take(&mut self.began) { vec![Action::Commit] } else { vec![Action::Dialog(self.id.into(), json!({"x": s.x, "y": s.y}))] }
             }
             _ => vec![],
@@ -177,19 +184,21 @@ impl Tool for FamilyTool {
         } else if key == ToolKey::Escape {
             self.start = None;
             self.began = false;
+            self.snap.clear();
             vec![Action::Cancel]
         } else {
             vec![]
         }
     }
     fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
-        match self.start {
-            Some(s) if self.began => {
-                let d = self.last - s;
-                vec![Overlay::Measure { p: self.last, text: cx.size_label(d.x.abs(), d.y.abs()) }]
-            }
-            _ => vec![],
+        let mut o = self.snap.guides().to_vec();
+        if let Some(s) = self.start.filter(|_| self.began && cx.measurement_labels) {
+            // The size as drawn (from the centre with Alt, square with Shift).
+            let r = drag_rect(s, self.last, self.mods);
+            let (w, h) = if self.id == "spiral" { ((self.last - s).x.abs(), (self.last - s).y.abs()) } else { (r.width(), r.height()) };
+            o.push(Overlay::Measure { p: self.last, text: cx.size_label(w, h) });
         }
+        o
     }
     fn cursor(&self, _cx: &ToolContext, _p: Point, _m: Mods) -> Cursor {
         Cursor::Crosshair
@@ -238,7 +247,13 @@ mod tests {
         );
         let a = t.key(&cx, ToolKey::Right, Mods::default());
         assert!(matches!(&a[0], Action::Preview(_, v) if v["columns"] == 6));
-        assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 60.0, 40.0)), vec![Action::Commit]);
+        // Space held moves the grid at its size; let go, it grows again from there.
+        let space = Mods { space: true, ..Mods::default() };
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 80.0, 50.0).with_mods(space));
+        assert!(matches!(&a[..], [Action::Preview(_, v)] if v["x"] == 30.0 && v["y"] == 20.0 && v["width"] == 50.0 && v["height"] == 30.0), "{a:?}");
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 90.0, 60.0));
+        assert!(matches!(&a[..], [Action::Preview(_, v)] if v["x"] == 30.0 && v["width"] == 60.0 && v["height"] == 40.0), "{a:?}");
+        assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 90.0, 60.0)), vec![Action::Commit]);
     }
 
     #[test]
@@ -258,5 +273,24 @@ mod tests {
         let (c, v) = t.command(Point::new(0.0, 0.0), Point::new(10.0, 4.0), Mods { shift: true, ..Default::default() });
         assert_eq!(c, "shape.arc");
         assert_eq!(v, json!({"x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 10.0, "closed": false}));
+    }
+
+    /// The start and the dragged corner snap to Smart Guides (#506), Shift sliding the corner of
+    /// a square grid along its diagonal into line.
+    #[test]
+    fn corners_snap_to_smart_guides() {
+        let (d, _) = doc_with_rect();
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = FamilyTool::new("rectangularGrid");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 202.0, 99.0));
+        let shift = Mods { shift: true, ..Mods::default() };
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 255.0, 147.0).with_mods(shift));
+        assert!(
+            matches!(&a[..], [Action::Begin(_), Action::Preview(_, v)] if v["x"] == 200.0 && v["y"] == 100.0 && v["width"] == 50.0 && v["height"] == 50.0),
+            "{a:?}"
+        );
+        assert!(t.overlays(&cx).iter().any(|o| matches!(o, Overlay::Label { text, .. } if text == "align")));
     }
 }

@@ -30,6 +30,32 @@ pub const EMF: &str = "image/emf";
 /// What Paste reads from other apps, best first: vector art before text, text before bitmaps
 /// (word processors offer a picture of copied text too).
 pub const PASTE_ORDER: [&str; 5] = [SVG, PDF, EMF, TEXT, BITMAP];
+/// Is `text` only an address (a web page's, an image's, a file's)? A browser's Copy Image puts the
+/// image's address as text next to the picture: then the picture is what Paste takes (#597). An
+/// address alone pastes as text, and nothing is fetched.
+pub fn is_address(text: &str) -> bool {
+    const SCHEMES: [&str; 6] = ["http://", "https://", "file://", "ftp://", "data:", "blob:"];
+    let t = text.trim();
+    !t.chars().any(char::is_whitespace) && SCHEMES.iter().any(|s| t.get(..s.len()).is_some_and(|h| h.eq_ignore_ascii_case(s)) && t.len() > s.len())
+}
+
+/// How much of a copied file [`file_flavour`] needs to tell what it is.
+pub const FILE_HEAD: usize = 4096;
+
+/// What a file copied in a file manager pastes as, if one of `mimes` (`image/*`: any bitmap):
+/// SVG, PDF, a Windows metafile or a bitmap (its own `image/…` type), told from its first
+/// [`FILE_HEAD`] bytes and its name. The file's bytes are that flavour's data.
+pub fn file_flavour(name: &str, head: &[u8], mimes: &[&str]) -> Option<&'static str> {
+    let f = fileio::detect(name, head)?;
+    let (asked, mime) = match f.id {
+        "svg" => (SVG, SVG),
+        "pdf" => (PDF, PDF),
+        "emf" | "wmf" => (EMF, EMF),
+        _ if f.raster => (BITMAP, f.mime),
+        _ => return None,
+    };
+    mimes.contains(&asked).then_some(mime)
+}
 
 /// One representation of the clipboard's contents.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -283,7 +309,7 @@ fn import_text(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "the text is empty"));
     }
     let mut t = TextObject::point(Point::ZERO, text, super::super::create::new_type_style(s, &Value::Null));
-    t.cached_bounds = Some(vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t).bounds);
+    crate::cmd::typecmd::refresh_bounds(&mut t);
     let n = Node::new(NodeId(1), NodeKind::Text(Box::new(t)));
     let count = s.load_clipboard(Clipboard { nodes: vec![n], ..Default::default() }, p)?;
     Ok(json!({ "count": count }))

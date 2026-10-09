@@ -247,10 +247,13 @@ fn artboard_tool_moves_with_art_creates_and_deletes() {
     assert_eq!(s.doc().unwrap().doc.artboards.len(), 2);
     assert_eq!(s.tool_options()["active"], 1);
     assert_eq!(s.doc().unwrap().doc.artboards[1].rect, Rect::new(1000.0, 0.0, 1200.0, 100.0));
-    // Delete it.
+    // Delete it: the tool takes the key ahead of the Clear shortcut (the UI only hands Delete to a
+    // tool that claims it).
+    assert!(s.tool_claims_key(ToolKey::Delete, ViewInfo::default()));
     s.tool_key(ToolKey::Delete, Mods::default(), ViewInfo::default()).unwrap();
     assert_eq!(s.doc().unwrap().doc.artboards.len(), 1);
-    // The last artboard can't be deleted.
+    // The last artboard can't be deleted, so Delete stays the shortcut's.
+    assert!(!s.tool_claims_key(ToolKey::Delete, ViewInfo::default()));
     s.tool_key(ToolKey::Delete, Mods::default(), ViewInfo::default()).unwrap();
     assert_eq!(s.doc().unwrap().doc.artboards.len(), 1);
 }
@@ -263,6 +266,54 @@ fn artboard_resize_via_handle_and_move_command() {
     s.execute("artboard.move", &json!({"index": 0, "dx": -10, "dy": 5})).unwrap();
     assert_eq!(s.doc().unwrap().doc.artboards[0].rect, Rect::new(-10.0, 5.0, 890.0, 605.0));
     assert!(s.execute("artboard.move", &json!({"index": 7, "dx": 1})).is_err());
+}
+
+/// Alt-dragging an artboard with the Artboard tool leaves it and its art in place and moves
+/// copies of both.
+#[test]
+fn artboard_alt_drag_duplicates_it_with_its_art() {
+    let mut s = session();
+    let r = rect(&mut s, 100.0, 100.0, 50.0, 50.0);
+    s.execute("select.none", &json!({})).unwrap();
+    let alt = Mods { alt: true, ..Mods::default() };
+    gesture(&mut s, "artboard", &[(400.0, 300.0), (600.0, 300.0), (1300.0, 300.0), (1300.0, 300.0)], alt);
+    let st = s.doc().unwrap();
+    let d = &st.doc;
+    assert_eq!(d.artboards.len(), 2);
+    assert_eq!(d.artboards[0].rect, Rect::new(0.0, 0.0, 800.0, 600.0), "the original stays");
+    assert_eq!((d.artboards[1].rect, d.artboards[1].name.as_str()), (Rect::new(900.0, 0.0, 1700.0, 600.0), "Artboard 1 copy"));
+    assert_ne!(d.artboards[1].id, d.artboards[0].id);
+    let kids = d.layers[0].children().unwrap();
+    assert_eq!(kids.len(), 2, "the rectangle and its copy");
+    assert_eq!(d.node(r).unwrap().geometric_bounds().unwrap().x0, 100.0);
+    let copy = kids.iter().find(|n| n.id != r).unwrap();
+    assert_eq!(copy.geometric_bounds().unwrap().x0, 1000.0);
+    assert_eq!(st.history.undo.last().unwrap().label, "Duplicate Artboard");
+    // One undo takes the copies away.
+    s.execute("edit.undo", &json!({})).unwrap();
+    let d = &s.doc().unwrap().doc;
+    assert_eq!((d.artboards.len(), d.layers[0].children().unwrap().len()), (1, 1));
+}
+
+/// `artboard.move` with `copy` reports the copies it moved, and copies only the artboard when Move/Copy
+/// Artwork with Artboard is off.
+#[test]
+fn artboard_move_copy_reports_the_copies_and_follows_move_art() {
+    let mut s = session();
+    let r = rect(&mut s, 100.0, 100.0, 50.0, 50.0);
+    let out = s.execute("artboard.move", &json!({"index": 0, "dx": 900, "dy": 0, "copy": true, "moveArt": true})).unwrap();
+    assert_eq!(out["index"], 1);
+    let copies: Vec<NodeId> = out["moved"].as_array().unwrap().iter().map(|v| NodeId(v.as_u64().unwrap())).collect();
+    assert_eq!(copies.len(), 1);
+    assert_ne!(copies[0], r);
+    assert_eq!(s.doc().unwrap().doc.node(copies[0]).unwrap().geometric_bounds().unwrap().x0, 1000.0);
+    let out = s.execute("artboard.move", &json!({"index": 0, "dx": 0, "dy": 900, "copy": true})).unwrap();
+    assert_eq!(out["moved"], json!([]));
+    let d = &s.doc().unwrap().doc;
+    assert_eq!((d.artboards.len(), d.layers[0].children().unwrap().len()), (3, 2), "an artboard alone");
+    assert_eq!(d.artboards[2].name, "Artboard 1 copy 2", "a name of its own");
+    let ids: std::collections::HashSet<u32> = d.artboards.iter().map(|a| a.id).collect();
+    assert_eq!(ids.len(), 3, "every artboard has an id of its own");
 }
 
 #[test]
@@ -288,6 +339,72 @@ fn lasso_selects_anchor_subset() {
     let st = s.doc().unwrap();
     assert_eq!(st.selection.objects, vec![a]);
     assert_eq!(st.selection.partial(a).map(|p| p.len()), Some(2));
+}
+
+/// Shift-drag a marquee with the Selection tool (#483): the selected objects it reaches are
+/// deselected and the others selected, the rest of the selection staying as it was.
+#[test]
+fn selection_shift_marquee_toggles_objects() {
+    let mut s = session();
+    let a = rect(&mut s, 100.0, 100.0, 50.0, 50.0);
+    let b = rect(&mut s, 200.0, 100.0, 50.0, 50.0);
+    let c = rect(&mut s, 300.0, 100.0, 50.0, 50.0);
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+    let shift = Mods { shift: true, ..Default::default() };
+    gesture(&mut s, "selection", &[(180.0, 80.0), (300.0, 200.0), (380.0, 200.0)], shift);
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a, c]);
+    // Again over all three: a leaves, b joins, c leaves.
+    gesture(&mut s, "selection", &[(80.0, 80.0), (300.0, 200.0), (380.0, 200.0)], shift);
+    assert_eq!(s.doc().unwrap().selection.objects, vec![b]);
+    // Without Shift the marquee replaces the selection.
+    gesture(&mut s, "selection", &[(80.0, 80.0), (300.0, 200.0), (260.0, 200.0)], Mods::default());
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a, b]);
+}
+
+/// Shift-drag a marquee with Direct Selection (#483): the anchors inside toggle; a path left with
+/// none of them leaves the selection, one with all of them is selected whole again.
+#[test]
+fn direct_selection_shift_marquee_toggles_anchors() {
+    let mut s = session();
+    let a = rect(&mut s, 100.0, 100.0, 100.0, 100.0);
+    let b = rect(&mut s, 300.0, 100.0, 100.0, 100.0);
+    s.execute("select.set", &json!({"ids": [a.0]})).unwrap();
+    let shift = Mods { shift: true, ..Default::default() };
+    // Around a's top edge (two anchors, selected) and b's top-left anchor (not selected).
+    let top = [(90.0, 90.0), (310.0, 110.0), (310.0, 110.0)];
+    gesture(&mut s, "directSelection", &top, shift);
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.objects, vec![a, b]);
+    assert_eq!(st.selection.partial(a).map(|p| p.len()), Some(2), "a's bottom anchors stay");
+    assert_eq!(st.selection.partial(b).map(|p| p.len()), Some(1));
+    // The same again: a whole once more, b out.
+    gesture(&mut s, "directSelection", &top, shift);
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.objects, vec![a]);
+    assert_eq!(st.selection.partial(a), None);
+    // Group Selection's marquee toggles the same way.
+    gesture(&mut s, "groupSelection", &top, shift);
+    assert_eq!(s.doc().unwrap().selection.partial(a).map(|p| p.len()), Some(2));
+}
+
+/// The Lasso: Shift adds anchors, Alt takes them away, and neither drops the rest of the
+/// selection (a path selected whole stays whole when its anchors are added again).
+#[test]
+fn lasso_shift_adds_and_alt_subtracts() {
+    let mut s = session();
+    let a = rect(&mut s, 100.0, 100.0, 100.0, 100.0);
+    let t = s.execute("text.create", &json!({"x": 300, "y": 300, "text": "Hi"})).unwrap();
+    let t = NodeId(t["id"].as_u64().unwrap());
+    s.execute("select.set", &json!({"ids": [a.0, t.0]})).unwrap();
+    // A loop round a's top-left anchor.
+    let corner = [(90.0, 90.0), (110.0, 90.0), (110.0, 110.0), (90.0, 110.0), (90.0, 110.0)];
+    gesture(&mut s, "lasso", &corner, Mods { shift: true, ..Default::default() });
+    let st = s.doc().unwrap();
+    assert_eq!((st.selection.objects.clone(), st.selection.partial(a)), (vec![a, t], None));
+    gesture(&mut s, "lasso", &corner, Mods { alt: true, ..Default::default() });
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.objects, vec![a, t], "the type stays selected");
+    assert_eq!(st.selection.partial(a).map(|p| p.len()), Some(3));
 }
 
 #[test]

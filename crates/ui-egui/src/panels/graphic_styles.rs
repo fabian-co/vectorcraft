@@ -68,7 +68,7 @@ const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 thread_local! {
     static RENDERER: RefCell<vectorcraft_render::Renderer> = RefCell::new(vectorcraft_render::Renderer::new());
     /// Thumbnails by (look hash, pixels, preview shape, Override Character Color on type).
-    static THUMBS: RefCell<HashMap<(u64, u32, Preview, bool), TextureHandle>> = RefCell::new(HashMap::new());
+    static THUMBS: crate::graphics::TexCache<HashMap<(u64, u32, Preview, bool), TextureHandle>> = crate::graphics::TexCache::default();
 }
 
 // ---------- thumbnails ----------
@@ -351,7 +351,7 @@ fn zone_input(ui: &Ui, zone: &Response, d: &Document, ev: &mut Events) {
         PanelDrag::GraphicStyle(n) => (Some(n), None),
         PanelDrag::Art(ids) => (None, ids.first().copied()),
         PanelDrag::Appearance(id) => (None, Some(*id)),
-        PanelDrag::Paint { .. } | PanelDrag::Symbol(_) => (None, None),
+        PanelDrag::Paint { .. } | PanelDrag::Symbol(_) | PanelDrag::Brush { .. } => (None, None),
     };
     if style.is_none() && source.is_none() {
         return;

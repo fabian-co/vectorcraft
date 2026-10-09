@@ -4,38 +4,55 @@
 //! - `lex`: the scanner; `obj`: objects, operators and errors; `interp`: the stacks, running
 //!   procedures, and the operators that don't draw.
 //! - `graphics`: the graphics state, coordinates, paths, colours (grey, RGB, CMYK, spot inks as
-//!   spot swatches at a tint, indexed), painting, clipping, and axial and radial shadings as
-//!   gradients.
+//!   spot swatches at a tint, indexed, patterns), painting, clipping, axial and radial shadings as
+//!   gradients and tiling patterns as pattern swatches.
+//! - `shading`: function-based and mesh shadings as gradient meshes, sampled functions.
 //! - `data`: data the program reads from itself through decoding filters, and images.
-//! - `text`: fonts by name and type as point type.
+//! - `text`: fonts by name and type as point type; Type 3 fonts' glyphs drawn by their procedures.
+//! - `preview`: the previews a file carries, for when its PostScript can't be read.
+//!
+//! Clipped art comes in as clipping groups. In a file in the legacy Illustrator format (versions
+//! 3–8, with the prolog that defines its operators), the group operators `u` … `U` (nested) come in
+//! as groups. The format's published specification documents its header comments (`%AI…`,
+//! `%%Creator`) and these operators: Adobe Illustrator File Format Specification, version 7.0
+//! (1998), listed by PRONOM at https://www.nationalarchives.gov.uk/PRONOM/fmt/423.
 //!
 //! The page is the file's `%%BoundingBox` (`%%HiResBoundingBox` when it has one), the first page
 //! of a PostScript file without one. A file whose program can't be read (an operator the
-//! interpreter doesn't know, an error, a limit reached) or that draws nothing comes in as its TIFF
-//! preview, with a warning; without a preview, what was drawn before the error is kept (with a
-//! warning), else the file is refused.
+//! interpreter doesn't know, an error, a limit reached) or that draws nothing comes in as its
+//! preview (a TIFF image, a Windows metafile or an EPSI bitmap), with a warning that names the
+//! error, the operator and the procedures it ran in; without a preview, what was drawn before the
+//! error is kept (with that warning), else the file is refused.
 
 mod data;
 mod graphics;
 mod interp;
 mod lex;
 mod obj;
+mod preview;
+mod shading;
 mod text;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_fontnames;
+#[cfg(test)]
+mod tests_generators;
+#[cfg(test)]
+mod tests_illustrator;
+#[cfg(test)]
+mod tests_images;
 
 use std::sync::Arc;
 
 use vectorcraft_color::Paint;
 use vectorcraft_color::swatch::Swatch;
-use vectorcraft_doc::{ColorMode, Document, ImageBlob, ImageObject, LayerColor, Node, NodeKind};
+use vectorcraft_doc::{ColorMode, Document, LayerColor, Node};
 use vectorcraft_geom::{Affine, Rect};
 
 use graphics::{GState, Out};
-use interp::Interp;
+use interp::{Fault, Interp};
 use obj::PsError;
 
 pub use text::family_style;
@@ -60,6 +77,9 @@ struct Dsc {
     /// `llx lly urx ury` in PostScript's default space.
     bbox: Option<[f64; 4]>,
     pages: Option<u32>,
+    /// In the legacy Illustrator format: its header has `%AI…` comments or names the app as the
+    /// creator (see the module docs for the specification).
+    illustrator: bool,
 }
 
 /// The four numbers of a bounding box comment's value, when it has them and they make a box.
@@ -90,6 +110,10 @@ impl Dsc {
                 }
             }
             let value = |key: &str| line.strip_prefix(key).map(str::trim);
+            let creator = value("%%Creator:").is_some_and(|v| v.contains("Illustrator")); // brand-ok: the creator its files name
+            if header && (line.starts_with("%AI") || line.starts_with("%%AI") || creator) {
+                d.illustrator = true;
+            }
             if let Some(v) = value("%%HiResBoundingBox:") {
                 if header || atend {
                     hires = box_of(v).or(hires);
@@ -111,21 +135,33 @@ impl Dsc {
     }
 }
 
-/// What went wrong, for the user.
-fn reason(e: &PsError) -> String {
-    match e {
+/// What went wrong, for the user (and for us, reading a report): the PostScript error, the
+/// operator that raised it and the procedure it ran in (`fault`).
+fn reason(e: &PsError, fault: Option<&Fault>) -> String {
+    let what = match e {
         PsError::Ps("undefined", at) => format!("it uses `{at}`, which VectorCraft's PostScript reader doesn't know"),
-        PsError::Ps(name, at) if at.is_empty() => format!("a PostScript error ({name})"),
-        PsError::Ps(name, at) => format!("a PostScript error ({name} in `{at}`)"),
-        PsError::Limit(what) => what.to_string(),
-        PsError::Exit | PsError::Stop => "the program stopped with an error".into(),
-        PsError::Quit => "the program ended early".into(),
+        PsError::Ps(name, at) => match fault.and_then(|f| f.op) {
+            Some(op) if at.is_empty() || at == op => format!("a PostScript error ({name} in `{op}`)"),
+            Some(op) => format!("a PostScript error ({name} in `{op}`: {at})"),
+            None if at.is_empty() => format!("a PostScript error ({name})"),
+            None => format!("a PostScript error ({name} in `{at}`)"),
+        },
+        PsError::Limit(what) => return what.to_string(),
+        PsError::Exit | PsError::Stop => return "the program stopped with an error".into(),
+        PsError::Quit => return "the program ended early".into(),
+    };
+    match fault.map(|f| f.procs.as_slice()).unwrap_or_default() {
+        [] => what,
+        procs => {
+            let names: Vec<String> = procs.iter().map(|p| format!("`{p}`")).collect();
+            format!("{what}, in {}", names.join(" in "))
+        }
     }
 }
 
 /// Read an EPS or PostScript file (its first page).
 pub fn import(bytes: &[u8]) -> Result<Imported, String> {
-    let (ps, tiff) = crate::sections(bytes).ok_or("the file's preview header points outside the file")?;
+    let (ps, _) = crate::sections(bytes).ok_or("the file's preview header points outside the file")?;
     if !ps.starts_with(b"%!") {
         return Err("this is not a PostScript file".into());
     }
@@ -136,7 +172,10 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     doc.layers.clear();
     let page = Affine::new([1.0, 0.0, 0.0, -1.0, -llx, ury]);
     let mut it = Interp::new(ps, GState::default(), Out::new(doc, page, frame));
+    it.illustrator = dsc.illustrator;
     let result = it.run();
+    it.release();
+    let fault = it.fault.take();
     let mut out = it.out;
     if let Some(n) = dsc.pages.filter(|n| *n > 1) {
         out.warn(&format!("only the first of the file's {n} pages was read"));
@@ -145,11 +184,11 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     let why = match (&result, drew) {
         (Ok(()), true) => return Ok(finish(out)),
         (Ok(()), false) => "it draws nothing VectorCraft's PostScript reader can show".to_string(),
-        (Err(e), _) => reason(e),
+        (Err(e), _) => reason(e, fault.as_ref()),
     };
-    if let Some(doc) = tiff.and_then(|t| preview(t, frame)) {
-        let warnings = vec![format!("this file's PostScript couldn't be read ({why}): its preview was placed instead, at screen resolution")];
-        return Ok(Imported { document: doc, warnings, preview: true });
+    if let Some(p) = preview::preview(bytes, ps, frame) {
+        let warnings = vec![format!("this file's PostScript couldn't be read ({why}): {}", p.what)];
+        return Ok(Imported { document: p.document, warnings, preview: true });
     }
     if drew {
         out.warnings.insert(0, format!("the file was read up to an error ({why}): what follows it was left out"));
@@ -160,12 +199,12 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
             out.warn("the file draws nothing");
             Ok(finish(out))
         }
-        Err(e) => Err(format!("this PostScript file can't be read ({}): save it as PDF or SVG in the app that made it", reason(&e))),
+        Err(e) => Err(format!("this PostScript file can't be read ({}): save it as PDF or SVG in the app that made it", reason(&e, fault.as_ref()))),
     }
 }
 
-/// The document of what `out` drew: one layer, clipped art in clipping groups, the spot inks as
-/// spot swatches, in CMYK when most process colours were.
+/// The document of what `out` drew: one layer, clipped art in clipping groups (grouped art in
+/// groups), the spot inks as spot swatches, in CMYK when most process colours were.
 fn finish(mut out: Out) -> Imported {
     let drawn = std::mem::take(&mut out.drawn);
     let mut children = vectorcraft_doc::clipnest::nest(&mut out.doc, drawn);
@@ -182,34 +221,16 @@ fn finish(mut out: Out) -> Imported {
             doc.swatches.push(Swatch { name, paint: Paint::solid(color), global: true, spot: true });
         }
     }
+    // Tiling patterns are pattern swatches.
+    for name in doc.patterns.iter().map(|p| p.name.clone()).collect::<Vec<_>>() {
+        if doc.swatch(&name).is_none() {
+            doc.swatches.push(Swatch { paint: Paint::Pattern { pattern: name.clone(), xf: Affine::IDENTITY }, name, global: false, spot: false });
+        }
+    }
     let mut layer = Node::layer(doc.alloc_id(), "Layer 1", LayerColor::Preset(0));
     if let Some(c) = layer.children_mut() {
         *c = children;
     }
     doc.layers = vec![Arc::new(layer)];
     Imported { document: doc, warnings: out.warnings, preview: false }
-}
-
-/// A document of `frame`'s size showing TIFF preview `tiff` stretched over it.
-fn preview(tiff: &[u8], frame: Rect) -> Option<Document> {
-    let img = match image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff) {
-        Ok(img) => img.to_rgba8(),
-        Err(_) => crate::tiff::palette_rgba(tiff)?,
-    };
-    let (w, h) = img.dimensions();
-    if w == 0 || h == 0 {
-        return None;
-    }
-    let mut png = vec![];
-    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    let mut doc = Document::new(frame.width(), frame.height());
-    let blob = ImageBlob::new("image/png", png);
-    let key = blob.content_key();
-    doc.images.insert(key.clone(), blob);
-    let xf = Affine::scale_non_uniform(frame.width() / f64::from(w), frame.height() / f64::from(h));
-    let mut n = Node::new(doc.alloc_id(), NodeKind::Image(ImageObject { key, width: w, height: h, xf, link: None, placement: Default::default() }));
-    n.name = Some("Preview".into());
-    let layer = doc.layers.first().map(|l| l.id)?;
-    doc.insert(Some(layer), 0, n).ok()?;
-    Some(doc)
 }

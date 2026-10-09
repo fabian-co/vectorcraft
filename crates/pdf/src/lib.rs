@@ -10,7 +10,7 @@
 //!   text in embedded subset fonts (Advanced). Colours are converted, tagged with ICC profiles and
 //!   given an output intent as the Output settings say. Hidden objects,
 //!   guides and template layers are skipped, and so are non-printing layers unless asked for.
-//!   Top-level layers can be PDF layers (optional content groups with their visibility, print
+//!   Layers and sublayers can be PDF layers (optional content groups with their visibility, print
 //!   state and lock), and overprinting fills and strokes overprint (Advanced).
 //!   Each page is its artboard (the trim box) grown by the bleed (the bleed box) and by the
 //!   printer's marks around it (the media box), drawn in Registration. [`PdfSettings`] is the Save PDF
@@ -47,6 +47,8 @@ mod forms;
 mod images;
 mod import;
 mod import_color;
+mod import_image;
+mod import_lines;
 mod import_mask;
 mod import_scan;
 mod import_shading;
@@ -210,6 +212,8 @@ mod tests_charstroke;
 #[cfg(test)]
 mod tests_cmykblend;
 #[cfg(test)]
+mod tests_cmykimages;
+#[cfg(test)]
 mod tests_compression;
 #[cfg(test)]
 mod tests_dashalign;
@@ -228,9 +232,13 @@ mod tests_import_fidelity;
 #[cfg(test)]
 mod tests_import_layers;
 #[cfg(test)]
+mod tests_import_lines;
+#[cfg(test)]
 mod tests_import_options;
 #[cfg(test)]
 mod tests_layers;
+#[cfg(test)]
+mod tests_live_text;
 #[cfg(test)]
 mod tests_marks;
 #[cfg(test)]

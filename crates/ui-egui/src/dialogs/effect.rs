@@ -131,7 +131,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let changed = match vectorcraft_plugins::effect::installed(&id) {
         Some(plugin) => form::schema_fields(ui, d, &plugin.manifest().params),
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
-        None => form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), app.session.general_unit()),
+        None => form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|_| None, app.session.general_unit()),
     };
     ui.add_space(6.0);
     let mut pv = d.bool("preview");
@@ -225,8 +225,7 @@ fn adjust_fields(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     }
     if d.fields.contains_key("gamma") {
         widgets::label_row(ui, tl!("Gamma"), LABEL_W, |ui| {
-            let mut g = d.f64("gamma", 1.0);
-            if ui.add(egui::DragValue::new(&mut g).speed(0.01).range(0.1..=10.0).max_decimals(2)).changed() {
+            if let Some(g) = widgets::range_field(ui, "gamma", d.f64("gamma", 1.0), 0.1..=10.0, "", 2, 60.0) {
                 d.fields.insert("gamma".into(), json!(g));
             }
         });

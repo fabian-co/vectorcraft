@@ -9,7 +9,9 @@ use vectorcraft_tools::{Mods, PointerEvent, PointerKind, ToolKey};
 use super::*;
 
 fn session() -> Session {
+    // Type placed by the Type tools starts empty (Fill New Type Objects With Placeholder Text off).
     let mut s = Session::new();
+    s.prefs.placeholder_text = false;
     s.execute("file.new", &json!({"width": 800, "height": 600})).unwrap();
     s
 }
@@ -310,15 +312,18 @@ fn character_panel_flow_styles_the_selected_range_while_editing() {
 fn select_all_and_cut_like_ui() {
     let mut s = session();
     let v = ViewInfo::default();
+    s.execute("shape.rectangle", &json!({"x": 300, "y": 300, "width": 10, "height": 10})).unwrap();
     let id = text(&mut s, "abc def");
     s.select_tool("type", v).unwrap();
     let t = obj(&s, id);
     let p = t.xf * Point::new(2.0, -5.0);
     click(&mut s, p.x, p.y);
-    s.set_tool_option("selectAll", &json!(true));
-    let o = s.tool_options();
-    let len = obj(&s, id).plain_text().len() as u64;
-    let r = s.execute("text.getRange", &json!({"id": o["editing"], "start": o["start"], "end": o["end"].as_u64().unwrap().min(len)})).unwrap();
+    // Select All while editing takes the text, not the art (the rectangle stays unselected).
+    assert!(s.tool_wants_text());
+    let o = s.execute("select.all", &json!({})).unwrap();
+    assert_eq!(o, json!({"editing": id.0, "start": 0, "end": 7}));
+    assert_eq!(s.doc().unwrap().selection.objects, [id]);
+    let r = s.execute("text.getRange", &json!({"id": o["editing"], "start": o["start"], "end": o["end"]})).unwrap();
     assert_eq!(r["text"], json!("abc def"));
     s.set_tool_option("copy", &r["runs"]);
     key(&mut s, ToolKey::Delete, Mods::default());
@@ -326,6 +331,10 @@ fn select_all_and_cut_like_ui() {
     s.tool_text("abc def", v).unwrap();
     s.tool_text("abc def", v).unwrap();
     assert_eq!(obj(&s, id).plain_text(), "abc defabc def");
+    // Not editing: Select All selects the art again.
+    key(&mut s, ToolKey::Escape, Mods::default());
+    assert!(!s.tool_wants_text());
+    assert_eq!(s.execute("select.all", &json!({})).unwrap(), json!({"count": 2}));
 }
 
 #[test]
@@ -505,4 +514,52 @@ fn vertical_text_creation_orientation_and_persistence() {
     assert!(old.get("vertical").is_none());
     let old: TextObject = serde_json::from_value(old).unwrap();
     assert!(!old.vertical);
+}
+
+#[test]
+fn rtl_edit_commands_and_undo_preserve_logical_source_and_style_ranges() {
+    let mut s = session();
+    let id = text(&mut s, "שלום Rust 123");
+    s.execute("text.editRange", &json!({"id": id.0, "start": 0, "end": 8, "insert": "مرحبا"})).unwrap();
+    let t = obj(&s, id);
+    assert_eq!(t.plain_text(), "مرحبا Rust 123");
+    let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t);
+    assert!(lay.glyphs.iter().any(|g| g.rtl));
+    s.execute("text.setRangeStyle", &json!({"id": id.0, "start": 0, "end": 10, "size": 30})).unwrap();
+    assert_eq!(obj(&s, id).runs[0].text, "مرحبا");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(obj(&s, id).plain_text(), "שלום Rust 123");
+}
+
+#[test]
+fn automatic_alignment_updates_during_edits_and_can_be_overridden() {
+    let mut s = session();
+    let id = text(&mut s, "English");
+    let db = vectorcraft_text::FontDb::global();
+    assert_eq!(obj(&s, id).para.justify, vectorcraft_doc::Justify::Auto);
+    for content in ["שלום", "مرحبا", "English"] {
+        let len = obj(&s, id).plain_text().len();
+        s.execute("text.editRange", &json!({"id": id.0, "start": 0, "end": len, "insert": content})).unwrap();
+        let t = obj(&s, id);
+        let l = vectorcraft_text::layout(db, &t);
+        if content == "English" {
+            assert_eq!(l.lines[0].x0, 0.0);
+        } else {
+            assert!(l.lines[0].x1.abs() < 1e-6);
+        }
+    }
+    s.execute("text.setStyle", &json!({"id": id.0, "justify": "center"})).unwrap();
+    s.execute("text.editRange", &json!({"id": id.0, "start": 0, "end": 7, "insert": "שלום"})).unwrap();
+    assert_eq!(obj(&s, id).para.justify, vectorcraft_doc::Justify::Center);
+    s.execute("text.setStyle", &json!({"id": id.0, "justify": "auto"})).unwrap();
+    let t = obj(&s, id);
+    assert!(vectorcraft_text::layout(db, &t).lines[0].x1.abs() < 1e-6);
+    let restored: TextObject = serde_json::from_value(serde_json::to_value(&t).unwrap()).unwrap();
+    assert_eq!(restored.para.justify, vectorcraft_doc::Justify::Auto);
+    // Legacy documents with explicit alignment retain that choice.
+    let mut legacy = serde_json::to_value(t).unwrap();
+    legacy["para"].as_object_mut().unwrap().remove("justify_auto");
+    legacy["para"]["justify"] = json!("Left");
+    assert_eq!(serde_json::from_value::<TextObject>(legacy).unwrap().para.justify, vectorcraft_doc::Justify::Left);
 }

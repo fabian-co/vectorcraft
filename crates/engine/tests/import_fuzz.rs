@@ -1,5 +1,5 @@
 //! Untrusted files never crash the app: garbage, truncated, mutated and hostile SVG, PDF and DXF input,
-//! mutated raster images placed with File → Place, and swatch (`.vcswatches`, `.gpl`, `.acb` colour books), graphic style (`.vcstyles`) and flattener preset
+//! mutated raster images placed with File → Place, and swatch (`.vcswatches`, `.gpl`, `.ase`, `.acb` colour books), graphic style (`.vcstyles`) and flattener preset
 //! (`.vcflattener`) libraries, and native files (compressed, damaged, saved for older versions),
 //! must load as an error or as a document that then renders and exports, without a panic; nor may
 //! bitmaps, PDF and text pasted from other apps, nor EMF and WMF pictures (damaged files, records
@@ -488,6 +488,10 @@ fn arb_rich_op() -> impl Strategy<Value = String> {
             "/Sh0 sh",
             "/Sh1 sh",
             "BT /F1 12 Tf 10 10 Td (Hi there) Tj [(a) -900 (b)] TJ ET",
+            // Lines wrapped in a frame, digits set apart by gaps, glyph outlines stroked (#508).
+            "BT /F1 10 Tf 10 80 Td (Wrapped line ) Tj 0 -12 Td (and its next ) Tj 0 -12 Td (end.) Tj ET",
+            "BT /F1 10 Tf 10 40 Td (3) Tj 20 0 Td (5331) Tj 40 0 Td (0106) Tj ET",
+            "0.5 w 10 10 m 14 18 l 18 10 l h S",
             "7 Tr",
             "q 10 10 50 50 re W n",
             "Q",
@@ -525,12 +529,21 @@ fn saved(cmd: &str, params: Value) -> String {
     rich_session().execute(cmd, &params).unwrap()["data"].as_str().unwrap().to_string()
 }
 
+/// `r`, after failing the case if the command panicked. The engine's guard reports a panic as
+/// `EngineError::Internal`.
+fn no_panic(r: Result<Value, vectorcraft_engine::EngineError>) -> Result<Value, vectorcraft_engine::EngineError> {
+    if let Err(vectorcraft_engine::EngineError::Internal { cmd, msg }) = &r {
+        panic!("{cmd} panicked: {msg}");
+    }
+    r
+}
+
 /// Library file `data` loaded with `load`; what it holds is then used on the rich document
 /// (`then`, given the load's result), which renders and exports.
 fn survive_library(what: &str, load: &str, data: &str, then: impl FnOnce(&mut vectorcraft_engine::Session, &Value)) -> Result<(), TestCaseError> {
     survive(what, || {
         let mut s = rich_session();
-        let r = s.execute(load, &json!({"data": data, "name": "fuzz"})).ok()?;
+        let r = no_panic(s.execute(load, &json!({"data": data, "name": "fuzz"}))).ok()?;
         then(&mut s, &r);
         Some((*s.doc().ok()?.doc).clone())
     })
@@ -538,23 +551,23 @@ fn survive_library(what: &str, load: &str, data: &str, then: impl FnOnce(&mut ve
 
 fn swatches(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "swatch.library.load", data, |s, r| {
-        let _ = s.execute("swatch.library.add", &json!({"library": r["library"], "apply": "fill"}));
+        let _ = no_panic(s.execute("swatch.library.add", &json!({"library": r["library"], "apply": "fill"})));
     })
 }
 
 fn styles(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "graphicStyle.loadLibrary", data, |s, r| {
-        let _ = s.execute("select.all", &json!({}));
-        let _ = s.execute("graphicStyle.addFromLibrary", &json!({"library": r["library"], "apply": true}));
+        let _ = no_panic(s.execute("select.all", &json!({})));
+        let _ = no_panic(s.execute("graphicStyle.addFromLibrary", &json!({"library": r["library"], "apply": true})));
     })
 }
 
 fn flattener_presets(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "flattener.presets.import", data, |s, r| {
-        let _ = s.execute("select.all", &json!({}));
+        let _ = no_panic(s.execute("select.all", &json!({})));
         if let Some(name) = r["imported"].get(0) {
-            let _ = s.execute("flattener.preview", &json!({"preset": name, "highlight": "allAffected"}));
-            let _ = s.execute("object.flattenTransparency", &json!({"preset": name, "lineArtPpi": 36, "gradientPpi": 36}));
+            let _ = no_panic(s.execute("flattener.preview", &json!({"preset": name, "highlight": "allAffected"})));
+            let _ = no_panic(s.execute("object.flattenTransparency", &json!({"preset": name, "lineArtPpi": 36, "gradientPpi": 36})));
         }
     })
 }
@@ -588,6 +601,34 @@ fn color_books(what: &str, bytes: &[u8]) -> Result<(), TestCaseError> {
         let r = s.execute("swatch.library.load", &json!({"dataBase64": vectorcraft_format::base64_encode(bytes), "name": "fuzz.acb"})).ok()?;
         let _ = s.execute("swatch.library.add", &json!({"library": r["library"], "apply": "fill"}));
         Some((*s.doc().ok()?.doc).clone())
+    })
+}
+
+/// Swatch exchange (`.ase`) bytes loaded as a swatch library, then added to the rich document.
+fn swatch_exchange(what: &str, bytes: &[u8]) -> Result<(), TestCaseError> {
+    survive(what, || {
+        let mut s = rich_session();
+        let load = json!({"dataBase64": vectorcraft_format::base64_encode(bytes), "name": "fuzz.ase"});
+        let r = no_panic(s.execute("swatch.library.load", &load)).ok()?;
+        let _ = no_panic(s.execute("swatch.library.add", &json!({"library": r["library"], "apply": "fill"})));
+        Some((*s.doc().ok()?.doc).clone())
+    })
+}
+
+/// A random swatch exchange block (type, body). The body holds a name, a color model when the block
+/// is a color, and random bytes for the rest.
+fn arb_ase_block() -> impl Strategy<Value = (u16, Vec<u8>)> {
+    let kind = prop::sample::select(vec![0xC001u16, 0xC002, 0x0001, 0x0042]);
+    let model = prop::sample::select(vec![*b"RGB ", *b"CMYK", *b"LAB ", *b"Gray", *b"HSB "]);
+    (kind, "[ -~]{0,8}", model, prop::collection::vec(any::<u8>(), 0..24)).prop_map(|(kind, name, model, rest)| {
+        let units: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let mut body = (units.len() as u16).to_be_bytes().to_vec();
+        body.extend(units.iter().flat_map(|u| u.to_be_bytes()));
+        if kind == 0x0001 {
+            body.extend(model);
+        }
+        body.extend(rest);
+        (kind, body)
     })
 }
 
@@ -642,6 +683,32 @@ proptest! {
     fn mutated_flattener_presets_never_panic(cut in 0usize..5_000, edits in prop::collection::vec(arb_edit(), 0..10)) {
         let text = saved("flattener.presets.export", json!({"names": ["high", "medium", "low"]}));
         flattener_presets("mutated flattener presets", &mutate_text(&text, cut, &edits))?;
+    }
+
+    #[test]
+    fn swatch_exchange_garbage_never_panics(blocks in prop::collection::vec(arb_ase_block(), 0..12), tail in prop::collection::vec(any::<u8>(), 0..16)) {
+        let mut bytes = b"ASEF\0\x01\0\0".to_vec();
+        bytes.extend((blocks.len() as u32).to_be_bytes());
+        for (kind, body) in &blocks {
+            bytes.extend(kind.to_be_bytes());
+            bytes.extend((body.len() as u32).to_be_bytes());
+            bytes.extend(body);
+        }
+        bytes.extend(tail);
+        swatch_exchange("swatch exchange garbage", &bytes)?;
+    }
+
+    #[test]
+    fn mutated_swatch_exchange_files_never_panic(cut in prop::option::of(0usize..200), edits in prop::collection::vec((0usize..200, any::<u8>()), 0..12)) {
+        let mut bytes = vectorcraft_testkit::ase::sample();
+        for (at, b) in edits {
+            let n = bytes.len();
+            bytes[at % n] = b;
+        }
+        if let Some(cut) = cut {
+            bytes.truncate(cut);
+        }
+        swatch_exchange("mutated swatch exchange file", &bytes)?;
     }
 }
 
@@ -751,8 +818,8 @@ proptest! {
 fn pdf_presets(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "pdf.preset.import", data, |s, r| {
         for name in r["imported"].as_array().into_iter().flatten() {
-            let _ = s.execute("document.exportPdf", &json!({"preset": name}));
-            let _ = s.execute("document.save", &json!({"format": "ai", "preset": name}));
+            let _ = no_panic(s.execute("document.exportPdf", &json!({"preset": name})));
+            let _ = no_panic(s.execute("document.save", &json!({"format": "ai", "preset": name})));
         }
     })
 }
@@ -924,10 +991,13 @@ proptest! {
         survive("mutated EPS PostScript", || vectorcraft_eps::import(&bytes).ok().map(|r| r.document))?;
     }
 
-    /// Hostile PostScript programs: operators in any order with any operands, opened and placed.
+    /// Hostile PostScript programs: operators in any order with any operands, opened and placed;
+    /// as files in the legacy Illustrator format too (the creator line is what turns on its
+    /// documented `u` … `U` groups), the groups unbalanced, deep and among clips.
     #[test]
-    fn eps_hostile_programs_never_panic(tokens in prop::collection::vec(arb_ps_token(), 0..60)) {
-        let ps = format!("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 200\n%%EndComments\n{}\nshowpage\n", tokens.join(" "));
+    fn eps_hostile_programs_never_panic(tokens in prop::collection::vec(arb_ps_token(), 0..60), illustrator in any::<bool>()) {
+        let head = if illustrator { "%%Creator: Adobe Illustrator(R) 8.0\n%%EndComments\n/u {} def /U {} def" } else { "%%EndComments" };
+        let ps = format!("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 200\n{head}\n{}\nshowpage\n", tokens.join(" "));
         survive("hostile PostScript", || vectorcraft_engine::cmd::fileio::load("x.eps", ps.as_bytes()).ok().map(|l| l.doc))?;
         let r = catch_quiet(|| {
             let mut s = rich_session();
@@ -964,12 +1034,47 @@ fn arb_ps_token() -> impl Strategy<Value = String> {
             "clipsave", "cliprestore", "languagelevel", "cvx", "findresource", "defineresource", "undefineresource", "resourcestatus",
             "resourceforall", "/Category", "/Generic", "/ProcSet", "(*)", "(G?n*\\\\*?)", "{pop}", "8 string",
             "(*) {pop} 8 string /Category resourceforall", "/Generic /Category findresource dup length dict copy /Category defineresource",
+            "dictstack", "8 array", "1183615869 internaldict", "cshow", "currentsystemparams", "currentuserparams", "flushfile", "xcheck",
+            "systemdict", "/userdict", "SharedFontDirectory", "(1 2 add) 0 () /SubFileDecode filter cvx exec", "currentfile cvx exec",
+            "/p { (p) 0 () /SubFileDecode filter cvx exec } def p", "currentfile 0 () /SubFileDecode filter cvx exec", "cvlit", "{ (a) cshow }",
             "/ASCII85Decode", "/ASCIIHexDecode", "/FlateDecode", "/RunLengthDecode", "/LZWDecode", "/DCTDecode", "/SubFileDecode",
             "/DeviceRGB", "/DeviceCMYK", "/DeviceGray", "/Pattern", "/x", "x", "/Helvetica", "(abc)", "<ff00>", "<~87cURD]i,\"Ebo80~>",
             "true", "false", "null", "[/Separation (S) /DeviceCMYK {dup dup dup}]", "[/Indexed /DeviceRGB 1 <ff000000ff00>]",
             "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 1] /Function << /FunctionType 2 /C0 [0 0 0] /C1 [1 1 1] /N 1 >> >>",
             "<< /PatternType 2 /Shading << /ShadingType 3 /ColorSpace /DeviceGray /Coords [0 0 0 9 9 9] /Function << /FunctionType 3 /Functions [] /Bounds [] /Encode [] >> >> >>",
             "<< /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] /DataSource (abcdefghijkl) >>",
+            "u", "U", "u u u", "U U", "{ u } 300 repeat", "1 1 300 { pop u 0 0 9 9 rectclip } for",
+            // Probing, files, forms and devices.
+            "status", "token", "bytesavailable", "resetfile", "pdfmark", "execform", "nulldevice", "strokepath", "pathforall",
+            "currenthsbcolor", "currentcolorrendering", "gcheck", "rootfont", "setcachedevice2", "writestring", "(%stdout) (w) file",
+            "//x", "{ //dup }", "/ReusableStreamDecode", "currentfile /ASCII85Decode filter /ReusableStreamDecode filter",
+            "<< /Predictor 12 /Columns 2 /Colors 1 >> /FlateDecode", "<< /FormType 1 /BBox [0 0 9 9] /PaintProc { pop 0 0 5 5 rectfill } >>",
+            // Tiling patterns, uncoloured ones and patterns drawing patterns.
+            "<< /PatternType 1 /PaintType 1 /XStep 5 /YStep 5 /BBox [0 0 5 5] /PaintProc { pop 0 0 3 3 rectfill } >> matrix makepattern",
+            "<< /PatternType 1 /PaintType 2 /XStep 5 /YStep 5 /BBox [0 0 5 5] /PaintProc { pop dup setpattern 0 0 3 3 rectfill } >>",
+            "[/Pattern /DeviceRGB] setcolorspace", "1 0 0", "setpattern",
+            // Mesh and function shadings, sampled functions.
+            "<< /ShadingType 4 /ColorSpace /DeviceGray /DataSource [0 0 0 0 0 9 0 1 0 0 9 1 1 9 9 0] >>",
+            "<< /ShadingType 5 /ColorSpace /DeviceGray /VerticesPerRow 2 /DataSource [0 0 0 9 0 1 0 9 1 9 9 0] >>",
+            "<< /ShadingType 6 /ColorSpace /DeviceGray /BitsPerCoordinate 8 /BitsPerComponent 8 /BitsPerFlag 8 /Decode [0 9 0 9 0 1] /DataSource <00ff10ff20ff30> >>",
+            "<< /ShadingType 7 /ColorSpace /DeviceRGB /BitsPerCoordinate 32 /BitsPerComponent 16 /BitsPerFlag 8 /Decode [0 9 0 9 0 1 0 1 0 1] /DataSource (abc) >>",
+            "<< /ShadingType 1 /ColorSpace /DeviceGray /Function << /FunctionType 0 /Domain [0 1 0 1] /Range [0 1] /Size [2 2] /BitsPerSample 8 /DataSource <00ff00ff> >> >>",
+            "<< /FunctionType 0 /Domain [0 1] /Range [0 1 0 1 0 1] /Size [99999999] /BitsPerSample 32 /DataSource () >>",
+            // Masked images.
+            "<< /ImageType 3 /InterleaveType 1 /DataDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 8 /ImageMatrix [2 0 0 2 0 0] /DataSource (abcdefghijklmnop) >> /MaskDict << /ImageType 1 /Width 2 /Height 2 /BitsPerComponent 1 /ImageMatrix [2 0 0 2 0 0] >> >>",
+            "<< /ImageType 3 /InterleaveType 2 /DataDict << /ImageType 1 /Width 3 /Height 1 /BitsPerComponent 8 /ImageMatrix [3 0 0 1 0 0] /DataSource (abcdefghijklmnop) >> /MaskDict << /ImageType 1 /Width 3 /Height 5 /BitsPerComponent 1 /ImageMatrix [3 0 0 5 0 0] >> >>",
+            // Type 3 fonts and the show operators that space their glyphs.
+            "/T3 << /FontType 3 /FontMatrix [0.1 0 0 0.1 0 0] /FontBBox [0 0 9 9] /Encoding [/a /b] /BuildChar { pop pop 9 0 setcharwidth 0 0 5 5 rectfill } >> definefont setfont",
+            "/T4 << /FontType 3 /FontMatrix [1 0 0 1 0 0] /BuildGlyph { pop pop (x) show } /Encoding [/a] >> definefont setfont",
+            "glyphshow", "xshow", "xyshow", "awidthshow", "kshow", "/a", "[1 2 3]",
+            // Several data sources reading one file in turn, and sources of uneven lengths.
+            "/f currentfile /ASCIIHexDecode filter def", "{f 3 string readstring pop}", "{f 0 string readstring pop}", "true 3 colorimage",
+            "3 2 8 [3 0 0 2 0 0] {f 5 string readstring pop} {(ab)} {f 1 string readstring pop} true 3 colorimage",
+            "<< /ImageType 1 /Width 3 /Height 2 /BitsPerComponent 4 /Decode [0 1 0 1 0 1 0 1] /ImageMatrix [3 0 0 2 0 0] /MultipleDataSources true /DataSource [(a) (bc) {f 2 string readstring pop} (d)] >>",
+            // Local VM restored: dictionary changes undone, saves restored twice.
+            "/a 1 def save /a 2 def", "restore", "save dup restore", "1 dict save exch /k 1 put", "cachestatus", "/n 0 def save /n n 1 add store",
+            // Executable strings and keys other than names (PLRM 3rd ed., `cvx`, `load`).
+            "(>>) cvx", "(1 2 add) cvx exec", "(x) cvx dup exec", "0 load", "1 { } def", "(mark) cvx cvlit"
         ])
         .prop_map(str::to_string),
     ]
@@ -1228,14 +1333,14 @@ proptest! {
 /// each one imported.
 fn print_presets(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "print.presets.import", data, |s, r| {
-        let list = s.execute("print.presets.list", &json!({})).unwrap_or_default();
+        let list = no_panic(s.execute("print.presets.list", &json!({}))).unwrap_or_default();
         for name in r["imported"].as_array().into_iter().flatten() {
             let Some(p) = list["presets"].as_array().into_iter().flatten().find(|p| &p["name"] == name) else { continue };
             let settings = json!({ "settings": p["settings"] });
-            let pages = s.execute("print.preview", &settings).ok().and_then(|v| v["pages"].as_u64());
-            let _ = s.execute("print.setup", &settings);
+            let pages = no_panic(s.execute("print.preview", &settings)).ok().and_then(|v| v["pages"].as_u64());
+            let _ = no_panic(s.execute("print.setup", &settings));
             if pages.is_some_and(|n| n <= 8) {
-                let _ = s.execute("file.print", &settings);
+                let _ = no_panic(s.execute("file.print", &settings));
             }
         }
     })
@@ -1265,9 +1370,11 @@ proptest! {
 fn perspective_presets(what: &str, data: &str) -> Result<(), TestCaseError> {
     survive_library(what, "perspective.presets.import", data, |s, r| {
         for name in r["imported"].as_array().into_iter().flatten() {
-            let _ = s.execute("perspective.grid.preset", &json!({"name": name}));
-            let _ = s.execute("perspective.grid.define", &json!({"name": name, "gridline": 3}));
-            let _ = s.execute("perspective.draw", &json!({"command": "shape.rectangle", "params": {"x": 300, "y": 400, "width": 40, "height": 30}}));
+            let _ = no_panic(s.execute("perspective.grid.preset", &json!({"name": name})));
+            let _ = no_panic(s.execute("perspective.grid.define", &json!({"name": name, "gridline": 3})));
+            let _ = no_panic(
+                s.execute("perspective.draw", &json!({"command": "shape.rectangle", "params": {"x": 300, "y": 400, "width": 40, "height": 30}})),
+            );
         }
     })
 }

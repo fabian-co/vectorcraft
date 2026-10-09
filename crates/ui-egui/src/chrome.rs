@@ -29,12 +29,13 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
             crate::brand::paint_mark(ui, r);
             ui.add_space(4.0);
-            let on_home = app.ui.home.is_some() || app.session.active().is_none();
+            let on_home = menus::home_showing(app);
             if widgets::icon_button(ui, "house", tl!("Home"), on_home, 24.0).clicked() {
                 app.run("app.home", json!({})).ok();
             }
             ui.add_space(2.0);
-            let menus_end = if app.native_menu {
+            // With the macOS menu bar the menus are at the top of the screen instead.
+            let menus_end = if app.services.native_menu.is_some() {
                 let full = ui.max_rect();
                 ui.painter().text(full.center(), egui::Align2::CENTER_CENTER, "VectorCraft", egui::FontId::proportional(13.5), t.text);
                 ui.cursor().min.x
@@ -105,6 +106,77 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
 }
 
+/// An anchor button: icon, tooltip, command and the convert command's `to`.
+type AnchorButton<'a> = (&'a str, &'a str, &'a str, Option<&'a str>);
+
+/// The anchor controls the Control bar and the Properties panel show.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AnchorControls {
+    None,
+    /// Paths selected as a whole with a tool that edits anchors (Direct Selection, the Pen…),
+    /// which shows all their anchors selected: "Convert:" only, as removing or cutting at every
+    /// anchor isn't what they're for.
+    Convert,
+    /// Anchors direct-selected: "Convert:" and "Anchors:".
+    All,
+}
+
+/// Which anchor controls show for the selection and the active tool.
+pub fn anchor_controls(app: &VectorcraftApp) -> AnchorControls {
+    let Some(st) = app.session.active() else { return AnchorControls::None };
+    if !st.selection.anchors.is_empty() {
+        return AnchorControls::All;
+    }
+    let paths = st.selection.objects.iter().any(|id| st.doc.node(*id).is_some_and(|n| matches!(n.kind, NodeKind::Path { .. })));
+    if paths && vectorcraft_tools::catalog::edits_anchors(app.session.tool_id()) { AnchorControls::Convert } else { AnchorControls::None }
+}
+
+/// What the Control bar and the Properties panel offer for selected anchors ([`anchor_controls`]):
+/// "Convert:" corner or smooth, then "Anchors:" remove, connect (Join) and cut. Each group is a
+/// row of its own: inline in the Control bar, one under the other in a panel.
+pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui, controls: AnchorControls) {
+    let t = Tokens::get(ui.ctx());
+    let mut run = None;
+    let groups: [(&str, &[AnchorButton]); 2] = [
+        (
+            tl!("Convert:"),
+            &[
+                ("dc-anchor", tl!("Convert Selected Anchor Points to Corner"), "path.convertAnchors", Some("corner")),
+                ("dc-anchor-smooth", tl!("Convert Selected Anchor Points to Smooth"), "path.convertAnchors", Some("smooth")),
+            ],
+        ),
+        (
+            tl!("Anchors:"),
+            &[
+                ("pen-tool-delete", tl!("Remove Anchor Points"), "path.removeAnchors", None),
+                ("dc-join", tl!("Connect Selected End Points"), "path.join", None),
+                ("scissors", tl!("Cut Path at Selected Anchor Points"), "path.cutAtAnchors", None),
+            ],
+        ),
+    ];
+    let shown = match controls {
+        AnchorControls::None => 0,
+        AnchorControls::Convert => 1,
+        AnchorControls::All => groups.len(),
+    };
+    for (label, buttons) in groups.into_iter().take(shown) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(label).size(12.0).color(t.text));
+            for &(icon, tip, id, to) in buttons {
+                if widgets::icon_button(ui, icon, tip, false, 24.0).clicked() {
+                    run = Some((id, to.map_or_else(|| json!({}), |to| json!({ "to": to }))));
+                }
+            }
+        });
+    }
+    if let Some((id, p)) = run {
+        crate::menus::invoke(app, id, p);
+    }
+}
+
+/// The room the Control bar's inline X/Y/W/H fields need; with less, only the Transform link shows.
+const INLINE_TRANSFORM_WIDTH: f32 = 440.0;
+
 /// The Control bar (Window → Control), context-sensitive like Illustrator's.
 pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -125,9 +197,9 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let sel = st.selection.objects.clone();
                 let units = app.session.general_unit();
                 let first = sel.first().and_then(|id| st.doc.node(*id)).cloned();
-                let anchor_mode = !st.selection.anchors.is_empty();
+                let anchors = anchor_controls(app);
                 let label = match &first {
-                    Some(_) if sel.len() == 1 && anchor_mode => tl!("Anchor Point"),
+                    Some(_) if sel.len() == 1 && anchors != AnchorControls::None => tl!("Anchor Point"),
                     Some(vectorcraft_doc::Node { kind: NodeKind::Image(im), .. }) if sel.len() == 1 => {
                         if im.link.is_some() {
                             tl!("Linked File")
@@ -135,29 +207,35 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                             tl!("Embedded")
                         }
                     }
+                    Some(n) if sel.len() == 1 && crate::panels::image_trace::is_trace(n) => tl!("Image Tracing"),
                     _ => tl!(crate::panels::appearance::object_label(app)),
                 };
                 ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
+                if anchors != AnchorControls::None {
+                    anchor_buttons(app, ui, anchors);
+                }
                 ui.add_space(6.0);
-                crate::place::control_bar_details(app, ui);
+                // An image or an Image Trace object shows its own controls in place of Fill and Stroke.
+                let image = crate::place::control_bar_details(app, ui) || crate::panels::image_trace::control_bar(app, ui);
                 crate::toolbar::control_bar_options(app, ui);
                 crate::dialogs::envelope::control_bar(app, ui);
-                let shown_stroke = crate::panels::current_stroke(app);
-                let mixed = crate::panels::stroke_mixed(app, ui.ctx());
-                let weight = stroke_panel::shown_weight(app, shown_stroke.as_ref(), &mixed);
                 let opacity = if first.is_some() { crate::panels::current_transparency(app).map_or(1.0, |t| t.0) } else { 1.0 };
-                crate::panels::paint_chip(app, ui, false, 22.0, true);
-                crate::panels::paint_chip(app, ui, true, 22.0, true);
-                // The link opens the Stroke panel as a popover under it; then the weight spinner
-                // (with presets) and the width profile.
-                let link = ui.link(egui::RichText::new(tl!("Stroke:")).size(12.0).color(t.text).underline()).on_hover_text(tl!("Stroke options"));
-                stroke_panel::popover(app, &link);
-                stroke_panel::weight_field(app, ui, "cb-stroke", weight, 100.0);
-                if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
-                    app.run("stroke.set", json!({"profile": id})).ok();
+                if !image {
+                    let shown_stroke = crate::panels::current_stroke(app);
+                    let mixed = crate::panels::stroke_mixed(app, ui.ctx());
+                    let weight = stroke_panel::shown_weight(app, shown_stroke.as_ref(), &mixed);
+                    crate::panels::paint_chip(app, ui, false, 22.0, true);
+                    crate::panels::paint_chip(app, ui, true, 22.0, true);
+                    // The link opens the Stroke panel as a popover under it; then the weight spinner
+                    // (with presets) and the width profile.
+                    stroke_panel::link(app, ui, tl!("Stroke:"));
+                    stroke_panel::weight_field(app, ui, "cb-stroke", weight, 100.0);
+                    if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
+                        app.run("stroke.set", json!({"profile": id})).ok();
+                    }
+                    ui.add_space(4.0);
+                    ui.separator();
                 }
-                ui.add_space(4.0);
-                ui.separator();
                 if ui.link(egui::RichText::new(tl!("Opacity:")).size(12.0).color(t.text).underline()).clicked() {
                     app.ui.open_panel = Some("transparency".into());
                 }
@@ -177,6 +255,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     egui::Popup::menu(&resp).show(|ui| crate::panels::graphic_styles::picker(app, ui));
                 }
                 ui.separator();
+                crate::panels::character::control_bar(app, ui);
                 if sel.is_empty() {
                     if widgets::flat_button(ui, tl!("Document Setup"), 112.0).clicked() {
                         app.run("file.documentSetup", json!({})).ok();
@@ -204,9 +283,13 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     }
                 }
                 ui.separator();
-                // Transform fields.
+                // The Transform link opens the whole Transform panel (reference point, rotate,
+                // shear, options) in a popover; X/Y/W/H follow inline while the bar has room.
+                crate::panels::transform::link(app, ui);
                 // The bounding box, rotated with rotated objects: its centre and its own sides.
-                if let Some(b) = app.selection_box() {
+                if let Some(b) = app.selection_box()
+                    && ui.available_width() >= INLINE_TRANSFORM_WIDTH
+                {
                     let c = b.center();
                     let link = app.session.prefs.constrain_proportions;
                     for (k, lbl, v) in [("x", "X:", c.x), ("y", "Y:", c.y), ("width", "W:", b.rect.width()), ("height", "H:", b.rect.height())] {
@@ -214,7 +297,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         if k == "height" {
                             crate::panels::transform::constrain_link(app, ui);
                         }
-                        ui.label(egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
+                        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
                         if let Some(nv) = widgets::num_field(ui, ("cb", k), Some(v), units, 80.0) {
                             app.run("object.setBounds", json!({k: nv, "reference": 4, "proportional": link})).ok();
                         }
@@ -419,11 +502,13 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     // Background saves and exports in progress, else the last message.
                     if let Some(job) = app.background.jobs.first() {
                         let more = app.background.jobs.len() - 1;
-                        let text = if more > 0 { format!("{}… (+{more})", job.label) } else { format!("{}…", job.label) };
+                        let label = crate::i18n::msg(&job.label);
+                        let text = if more > 0 { format!("{label}… (+{more})") } else { format!("{label}…") };
                         ui.label(egui::RichText::new(text).size(11.0).color(t.text));
                         ui.add(egui::Spinner::new().size(12.0).color(t.accent));
                     } else if !app.ui.status.is_empty() {
-                        ui.label(egui::RichText::new(&app.ui.status).size(11.0).color(t.text));
+                        // The message stays English in `ui.status` (agents and tests read it).
+                        ui.label(egui::RichText::new(crate::i18n::msg(&app.ui.status)).size(11.0).color(t.text));
                     }
                 });
             });

@@ -16,10 +16,11 @@ use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::appearance::{AppearanceItem, FillLayer, StrokeLayer};
 use vectorcraft_doc::{Appearance, Document, Node, NodeId, NodeKind, Selection};
-use vectorcraft_geom::{FillRule, Point, Rect, Shape as _};
+use vectorcraft_geom::{FillRule, PathData, Point, Rect, SubPath};
 use vectorcraft_pathops as po;
 use vectorcraft_tools::builder::{
-    self as b, EDGE_NAME, FACE_NAME, LIVE_PAINT_NAME, SOURCES_NAME, edge_near, face_at, is_live_paint, sample_polyline, shapes_for, sorted_roots,
+    self as b, BuilderMap, EDGE_NAME, FACE_NAME, LIVE_PAINT_NAME, SOURCES_NAME, Touched, edge_near, face_at, is_live_paint, sample_polyline,
+    sorted_roots,
 };
 use vectorcraft_trace as tr;
 
@@ -38,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Builder",
             [],
             None,
-            "{ids?: [id…] (default: selection), points: [[x,y]…] (drag path; one point = click), erase?: bool (Alt-drag deletes the regions), fill?: \"#rrggbb\" | {color|swatch|gradient|none} (default: the fill of the object under the first point)} → {ids, merged, regions}",
+            "{ids?: [id…] (default: selection), points: [[x,y]…] (drag path; one point = click), erase?: bool (erase mode, Alt: deletes the regions touched, and the pieces of unfilled open paths and the edges (outline pieces between the points where paths meet; see shapeBuilder.regions) within tolerance; a deleted edge opens its path there, and edges bounding a deleted region go with it), tolerance?: pt (2, erase only), fill?: \"#rrggbb\" | {color|swatch|gradient|none} (default: the fill of the object under the first point; the current fill for an area only lines enclose)} → {ids, merged, regions, lines, edges} (counts deleted or merged)",
             has_selection_or_ids,
             sb_merge
         ),
@@ -47,7 +48,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Builder Regions",
             [],
             None,
-            "{ids?} → {regions: [{bounds: [x0,y0,x1,y1], area, sources: [id…]}]} faces of the planar arrangement",
+            "{ids?} → {regions: [{bounds: [x0,y0,x1,y1], area, sources: [id…]}], lines: [{bounds, source: id}], edges: [{bounds, source: id}]} faces of the planar arrangement (unfilled open paths cut them; sources is empty for an area only they enclose), the pieces of those open paths and the edges (the other paths' outlines cut where paths meet; source: the front-most path along it), which erasing deletes",
             has_selection_or_ids,
             sb_regions
         ),
@@ -224,47 +225,91 @@ fn sb_merge(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "points must be a non-empty list of finite [x,y]"));
     }
     let erase = bool_or(p, "erase", false);
+    // Line pieces and edges are only deleted (erase mode), never merged.
+    let piece_tol = erase.then(|| f64_or(p, "tolerance", 2.0).clamp(0.0, 1000.0));
     let fill = fill_param(s, p, C)?;
+    let current_fill = s.paint.fill.clone();
     let roots = root_ids(s, p)?;
     let label = if erase { "Shape Builder Delete" } else { "Shape Builder" };
-    let (ids, merged, count) = s.edit(label, |d, sel| {
-        let (shapes, leaves) = shapes_for(d, &roots);
+    let (ids, merged, touched) = s.edit(label, |d, sel| {
+        let (map, leaves) = BuilderMap::new(d, &roots, erase);
         let leaves: Vec<Node> = leaves.into_iter().cloned().collect();
-        if shapes.is_empty() {
+        if map.shapes.is_empty() {
             return Err(EngineError::Other("Shape Builder: select paths or compound paths".into()));
         }
-        let regs = po::regions(&shapes);
-        let shapes_r: Vec<(kurbo::BezPath, Rect)> = regs.iter().map(|r| (r.path.to_bezpath(), r.path.bounds().unwrap_or(Rect::ZERO))).collect();
         let step = (d.bounds_of(&roots, false).map(|r| r.width().max(r.height())).unwrap_or(100.0) / 2000.0).max(0.25);
-        let mut touched: Vec<usize> = vec![];
+        let mut touched = Touched::default();
         for q in sample_polyline(&pts, step) {
-            if let Some(i) = shapes_r.iter().position(|(bp, bb)| bb.contains(q) && bp.winding(q) != 0)
-                && !touched.contains(&i)
-            {
-                touched.push(i);
-            }
+            touched.add(map.hit(q, piece_tol));
         }
+        touched.edges = map.erased_edges(&touched);
         if touched.is_empty() {
             return Err(EngineError::Other("Shape Builder: no region under the pointer".into()));
         }
-        let picked: Vec<&po::Region> = touched.iter().map(|&i| &regs[i]).collect();
-        let union = po::merge_regions(&picked);
-        let affected: Vec<bool> = (0..shapes.len()).map(|i| picked.iter().any(|r| r.sources.contains(&i))).collect();
-        let style_src = regs[touched[0]].top();
+        let cuts: Vec<&SubPath> = touched.edges.iter().filter_map(|&k| map.edges.get(k)?.0.path.subpaths.first()).collect();
+        // Edges come back from the planar map within a few hundredths of the outlines they follow.
+        let cut_tol = step * 0.2;
+        let picked: Vec<&po::Region> = touched.regions.iter().filter_map(|&i| map.regions.get(i).map(|r| &r.0)).collect();
+        let faces = po::FaceMerger::new(&map.shapes);
+        let union = if picked.is_empty() { PathData::default() } else { faces.merge(&picked) };
+        // The merged shape takes the look of the front-most object over the first region, or (for an
+        // area only lines enclose) of the front-most object and the current fill.
+        let covered = picked.iter().find_map(|r| r.top());
+        let style_src = covered.or(map.shapes.len().checked_sub(1));
+        let merged_fill = fill.or_else(|| covered.is_none().then_some(current_fill));
         let mut new_nodes: Vec<Node> = vec![];
         let mut merged_id = None;
-        for (i, (sh, leaf)) in shapes.iter().zip(&leaves).enumerate() {
-            if !affected[i] {
-                new_nodes.push(d.reid(leaf));
+        for (i, (sh, leaf)) in map.shapes.iter().zip(&leaves).enumerate() {
+            let pieces: Vec<usize> = map.lines.iter().enumerate().filter(|(_, (l, _))| l.key == i as u64).map(|(k, _)| k).collect();
+            if !pieces.is_empty() {
+                // An open path loses the pieces deleted and those between merged (or deleted) regions.
+                let keep: Vec<usize> =
+                    pieces.iter().copied().filter(|k| !touched.lines.contains(k) && !map.line_between(*k, &touched.regions)).collect();
+                if keep.len() == pieces.len() {
+                    new_nodes.push(d.reid(leaf));
+                } else {
+                    for k in keep {
+                        if let Some((l, _)) = map.lines.get(k) {
+                            new_nodes.push(shape_node(d, l.path.clone(), Some(leaf)));
+                        }
+                    }
+                }
             } else {
-                let rest = po::boolean(&sh.path, sh.rule, &union, FillRule::NonZero, po::BoolOp::Difference);
-                if !rest.is_empty() {
+                // A shape loses the regions deleted or merged, then the edges deleted (each one on
+                // its outline, shared edges from every shape along them).
+                let in_union = picked.iter().any(|r| r.sources.contains(&i));
+                let mut rest = if in_union {
+                    // What is left of it: its faces not merged or deleted, united. They share their
+                    // edges with the merged faces exactly, where subtracting the merged shape left
+                    // slivers of the outline along them (#569).
+                    let kept: Vec<&po::Region> = map
+                        .regions
+                        .iter()
+                        .enumerate()
+                        .filter(|(k, (r, ..))| r.sources.contains(&i) && !touched.regions.contains(k))
+                        .map(|(_, (r, ..))| r)
+                        .collect();
+                    if kept.is_empty() { PathData::default() } else { faces.merge(&kept) }
+                } else {
+                    b::node_outline(leaf).map_or_else(|| sh.path.clone(), |o| o.0)
+                };
+                let fill_closes = !leaf.appearance.fill_paint().is_none();
+                let mut cut = false;
+                for piece in &cuts {
+                    if let Some(r) = po::cut_out(&rest, piece, fill_closes, cut_tol) {
+                        rest = r;
+                        cut = true;
+                    }
+                }
+                if !in_union && !cut {
+                    new_nodes.push(d.reid(leaf));
+                } else if !rest.is_empty() {
                     new_nodes.push(shape_node(d, rest, Some(leaf)));
                 }
             }
-            if !erase && Some(i) == style_src {
+            if !erase && !union.is_empty() && Some(i) == style_src {
                 let mut m = shape_node(d, union.clone(), Some(leaf));
-                if let Some(f) = &fill {
+                if let Some(f) = &merged_fill {
                     m.appearance.set_fill(f.clone());
                 }
                 merged_id = Some(m.id);
@@ -273,9 +318,15 @@ fn sb_merge(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let new_ids = replace_roots(d, &roots, new_nodes)?;
         sel.set(new_ids.iter().copied());
-        Ok((new_ids, merged_id, touched.len()))
+        Ok((new_ids, merged_id, touched))
     })?;
-    Ok(json!({ "ids": ids_json(&ids), "merged": merged.map(|m| m.0), "regions": count }))
+    Ok(json!({
+        "ids": ids_json(&ids),
+        "merged": merged.map(|m| m.0),
+        "regions": touched.regions.len(),
+        "lines": touched.lines.len(),
+        "edges": touched.edges.len(),
+    }))
 }
 
 /// Remove the roots and insert `nodes` where the front-most root was. Returns the new ids.
@@ -300,20 +351,23 @@ fn replace_roots(d: &mut Document, roots: &[NodeId], nodes: Vec<Node>) -> Result
 fn sb_regions(s: &mut Session, p: &Value) -> Result<Value> {
     let roots = root_ids(s, p)?;
     let d = &s.doc()?.doc;
-    let (shapes, leaves) = shapes_for(d, &roots);
-    let regs = po::regions(&shapes);
-    let out: Vec<Value> = regs
+    let (map, leaves) = BuilderMap::new(d, &roots, true);
+    let id_of = |i: usize| leaves.get(i).map(|n| n.id.0);
+    let regions: Vec<Value> = map
+        .regions
         .iter()
-        .filter_map(|r| {
-            let bb = r.path.bounds()?;
-            Some(json!({
+        .map(|(r, _, bb)| {
+            json!({
                 "bounds": [bb.x0, bb.y0, bb.x1, bb.y1],
                 "area": po::area(&r.path, FillRule::NonZero),
-                "sources": r.sources.iter().map(|&i| leaves[i].id.0).collect::<Vec<_>>(),
-            }))
+                "sources": r.sources.iter().filter_map(|&i| id_of(i)).collect::<Vec<_>>(),
+            })
         })
         .collect();
-    Ok(json!({ "regions": out }))
+    let pieces = |list: &[(po::Shape, Rect)]| -> Vec<Value> {
+        list.iter().map(|(l, bb)| json!({ "bounds": [bb.x0, bb.y0, bb.x1, bb.y1], "source": id_of(l.key as usize) })).collect()
+    };
+    Ok(json!({ "regions": regions, "lines": pieces(&map.lines), "edges": pieces(&map.edges) }))
 }
 
 // ---------- Live Paint ----------
@@ -597,6 +651,11 @@ fn trace_params(p: &Value) -> Result<tr::TraceParams> {
     serde_json::from_value(v).map_err(|e| bad("imageTrace.make", e.to_string()))
 }
 
+/// The most anchor points an Image Trace may make: a photo traced at high fidelity can make
+/// millions, more than the canvas draws smoothly or a laptop has memory for, so the trace is
+/// refused with advice instead (#525).
+pub const MAX_TRACE_ANCHORS: usize = 2_000_000;
+
 fn trace_make(s: &mut Session, p: &Value, expand: bool) -> Result<Value> {
     const C: &str = "imageTrace.make";
     let params = trace_params(p)?;
@@ -628,7 +687,7 @@ fn trace_make(s: &mut Session, p: &Value, expand: bool) -> Result<Value> {
     };
     let blob = s.doc()?.doc.images.get(&img.key).ok_or_else(|| EngineError::Other(format!("image data `{}` is missing", img.key)))?;
     let raster = tr::Raster::decode(&blob.bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-    let res = tr::trace(&raster, &params);
+    let res = tr::trace_within(&raster, &params, MAX_TRACE_ANCHORS).map_err(|e| EngineError::Other(e.to_string()))?;
     // Pixel space of the decoded raster → the image object's pixel space → document.
     let sx = img.width.max(1) as f64 / raster.width.max(1) as f64;
     let sy = img.height.max(1) as f64 / raster.height.max(1) as f64;

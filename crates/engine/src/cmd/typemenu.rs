@@ -3,7 +3,7 @@
 //! commands of the Edit menu (Find and Replace, Find Next, Paste without Formatting).
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{CharStyle, Document, Justify, NodeId, NodeKind, Quotes, TextKind, TextRun};
+use vectorcraft_doc::{CharStyle, Document, Justify, NodeId, NodeKind, Quotes, TextKind, TextObject, TextRun};
 use vectorcraft_geom::{Affine, Rect, shapes};
 
 use super::typecmd::refresh_bounds;
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Type on a Path Options…",
             ["Type", "Type on a Path"],
             None,
-            "{start?: 0..1 (fraction of the path length), flip?: bool (reverse the path), effect?: rainbow|skew|3dRibbon|stairStep|gravity, ids?}",
+            "{ids?, start?: 0..1, end?: 0..1|null, flip?: bool, effect?: rainbow|skew|3dRibbon|stairStep|gravity, alignToPath?: ascender|descender|center|baseline, spacing?: pt} set the selected type on a path's options: start and end place its start and end brackets as fractions of the path's length (end null: the end of the path, or once round a closed path), and flip then turns the type to the other side of its path (the path runs the other way, the brackets swap ends); none given: query → the first object's {start, end, flip: false, effect, alignToPath, spacing}",
             has_selection,
             path_options
         ),
@@ -140,7 +140,8 @@ fn edit_runs<S: Default>(s: &mut Session, label: &str, ids: &[NodeId], f: impl F
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
             let mut st = S::default();
             let mut any = false;
-            for r in &mut t.runs {
+            // Inline graphics are art, not characters to rewrite.
+            for r in t.runs.iter_mut().filter(|r| r.inline.is_none()) {
                 let n = f(&r.text, &mut st);
                 if n != r.text {
                     r.text = n;
@@ -272,9 +273,10 @@ fn to_area(s: &mut Session, p: &Value) -> Result<Value> {
             let top = lay.lines.first().map(|l| l.baseline - l.ascent).unwrap_or(b.y0).min(b.y0);
             let slack = size * 0.5;
             // Slack goes where the alignment leaves room, so the text doesn't move or rewrap.
-            let (sl, sr) = match t.para.justify {
+            let (sl, sr) = match t.para_at(0).justify {
                 Justify::Center | Justify::JustifyCenter => (slack * 0.5, slack * 0.5),
                 Justify::Right | Justify::JustifyRight => (slack, 0.0),
+                Justify::Auto if lay.lines.first().is_some_and(|l| l.rtl) => (slack, 0.0),
                 _ => (0.0, slack),
             };
             let frame = Rect::new(b.x0 - sl, top, b.x1 + sr, b.y1.max(top + 1.0));
@@ -314,22 +316,36 @@ fn to_point(s: &mut Session, p: &Value) -> Result<Value> {
             breaks.sort_unstable();
             breaks.dedup();
             for b in breaks.into_iter().rev() {
+                // Each wrapped line becomes a paragraph with its paragraph's attributes.
                 if plain.as_bytes().get(b - 1) == Some(&b' ') {
                     if let Some((ri, bi)) = locate(&t.runs, b - 1) {
+                        t.splice_paras(b - 1, b, "\n");
                         t.runs[ri].text.replace_range(bi..bi + 1, "\n");
                     }
                 } else if let Some((ri, bi)) = locate(&t.runs, b) {
-                    t.runs[ri].text.insert(bi, '\n');
+                    t.splice_paras(b, b, "\n");
+                    // Never inside an inline graphic's run: at the end of the run before it, or a
+                    // run of its own.
+                    match t.runs.get(ri) {
+                        Some(r) if r.inline.is_some() => match ri.checked_sub(1).and_then(|p| t.runs.get_mut(p)) {
+                            Some(prev) if prev.inline.is_none() => prev.text.push('\n'),
+                            _ => {
+                                let style = t.runs.get(ri).map(|r| r.style.clone()).unwrap_or_default();
+                                t.runs.insert(ri, TextRun::new("\n", style));
+                            }
+                        },
+                        _ => t.runs[ri].text.insert(bi, '\n'),
+                    }
                 }
             }
             // The point origin sits where the alignment anchors the first line.
-            let (x0, x1) = lay
-                .lines
-                .first()
-                .map_or((fb.x0, fb.x1), |l| (l.avail.0 - t.para.left_indent - t.para.first_line_indent, l.avail.1 + t.para.right_indent));
-            let ox = match t.para.justify {
+            let p0 = t.para_at(0);
+            let (x0, x1) =
+                lay.lines.first().map_or((fb.x0, fb.x1), |l| (l.avail.0 - p0.left_indent - p0.first_line_indent, l.avail.1 + p0.right_indent));
+            let ox = match p0.justify {
                 Justify::Center | Justify::JustifyCenter => (x0 + x1) * 0.5,
                 Justify::Right | Justify::JustifyRight => x1,
+                Justify::Auto if lay.lines.first().is_some_and(|l| l.rtl) => x1,
                 _ => x0,
             };
             t.kind = TextKind::Point;
@@ -341,38 +357,95 @@ fn to_point(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(ids_json(&ids))
 }
 
+/// The options `type.pathOptions` sets; with none of them given it queries.
+const PATH_OPTIONS: [&str; 6] = ["start", "end", "flip", "effect", "alignToPath", "spacing"];
+
+/// Type on a path's text, if `n` is type on a path.
+fn path_text(n: Option<&vectorcraft_doc::Node>) -> Option<&TextObject> {
+    match n.map(|n| &n.kind) {
+        Some(NodeKind::Text(t)) if matches!(t.kind, TextKind::OnPath { .. }) => Some(t),
+        _ => None,
+    }
+}
+
+/// Type on a Path Options of `t`, as `type.pathOptions` takes them (`flip` is an action: false).
+fn path_options_of(t: &TextObject) -> Value {
+    let (start, end) = match &t.kind {
+        TextKind::OnPath { start, end, .. } => (*start, *end),
+        _ => (0.0, None),
+    };
+    json!({
+        "start": start,
+        "end": end,
+        "flip": false,
+        "effect": t.path_effect.id(),
+        "alignToPath": t.path_align.id(),
+        "spacing": t.path_spacing,
+    })
+}
+
 fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "type.pathOptions";
-    let ids = texts(s, p, C)?;
-    let start = p.get("start").and_then(Value::as_f64);
+    let ids: Vec<NodeId> = {
+        let d = &s.doc()?.doc;
+        texts(s, p, C)?.into_iter().filter(|i| path_text(d.node(*i)).is_some()).collect()
+    };
+    let first = *ids.first().ok_or_else(|| bad(C, "select type on a path"))?;
+    let options = |s: &Session| -> Result<Value> {
+        let t = path_text(s.doc()?.doc.node(first)).ok_or_else(|| bad(C, "select type on a path"))?;
+        Ok(path_options_of(t))
+    };
+    if !PATH_OPTIONS.iter().any(|k| p.get(k).is_some()) {
+        return options(s);
+    }
+    // A bracket: a fraction of the path's length.
+    let fraction = |k: &str| -> Result<Option<f64>> {
+        match p.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => v.as_f64().filter(|x| x.is_finite()).map(|x| Some(x.clamp(0.0, 1.0))).ok_or_else(|| bad(C, format!("`{k}` is a number 0..1"))),
+        }
+    };
+    let start = fraction("start")?;
+    // `end: null` puts the end bracket back at the end of the path.
+    let end = p.get("end").map(|_| fraction("end")).transpose()?;
     let flip = bool_or(p, "flip", false);
     let effect = match str_param(p, "effect") {
         Some(e) => Some(vectorcraft_doc::PathEffect::parse(e).ok_or_else(|| bad(C, format!("unknown effect `{e}`")))?),
         None => None,
     };
-    let n = s.edit("Type on a Path Options", |d, _| {
-        let mut n = 0;
+    let align = match str_param(p, "alignToPath") {
+        Some(a) => Some(vectorcraft_doc::PathAlign::parse(a).ok_or_else(|| bad(C, format!("unknown alignToPath `{a}`")))?),
+        None => None,
+    };
+    let spacing = p.get("spacing").and_then(Value::as_f64).filter(|x| x.is_finite()).map(|x| x.clamp(-1000.0, 1000.0));
+    s.edit("Type on a Path Options", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
-            let TextKind::OnPath { path, start: st } = &mut t.kind else { continue };
+            let TextKind::OnPath { start: st, end: en, .. } = &mut t.kind else { continue };
             if let Some(v) = start {
-                *st = v.clamp(0.0, 1.0);
+                *st = v;
             }
+            if let Some(v) = end {
+                *en = v;
+            }
+            // After the brackets: they are given on the path as it runs before the flip.
             if flip {
-                path.reverse();
+                t.flip_on_path();
             }
             if let Some(e) = effect {
                 t.path_effect = e;
             }
-            n += 1;
+            if let Some(a) = align {
+                t.path_align = a;
+            }
+            if let Some(v) = spacing {
+                t.path_spacing = v;
+            }
             refresh_bounds(t);
         }
-        if n == 0 {
-            return Err(bad(C, "select type on a path"));
-        }
-        Ok(n)
+        Ok(())
     })?;
-    Ok(json!({ "changed": n }))
+    options(s)
 }
 
 // ---------- placeholder / insert ----------
@@ -386,34 +459,42 @@ fn fill_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = texts(s, p, "type.fillPlaceholder")?;
     s.edit("Fill with Placeholder Text", |d, _| {
         for id in &ids {
-            let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
-            let style = t.first_style();
-            let text = match &t.kind {
-                TextKind::Area { frame } => {
-                    let b = frame.bounds().unwrap_or_default();
-                    let chars_per_line = (b.width() / (style.size * 0.5)).max(1.0);
-                    let lines = (b.height() / style.effective_leading()).max(1.0);
-                    let want = (chars_per_line * lines) as usize;
-                    let mut out = String::new();
-                    let words: Vec<&str> = PLACEHOLDER.split(' ').collect();
-                    let mut i = 0;
-                    while out.len() < want && i < 10_000 {
-                        if !out.is_empty() {
-                            out.push(' ');
-                        }
-                        out.push_str(words[i % words.len()]);
-                        i += 1;
-                    }
-                    out
-                }
-                _ => PLACEHOLDER.split(". ").next().unwrap_or(PLACEHOLDER).to_string() + ".",
-            };
-            t.runs = vec![TextRun { text, style }];
-            refresh_bounds(t);
+            if let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) {
+                fill_with_placeholder(t);
+            }
         }
         Ok(())
     })?;
     Ok(ids_json(&ids))
+}
+
+/// Replace `t`'s text with placeholder text in its first style: area type is filled to its frame,
+/// other type gets a sentence (Type › Fill with Placeholder Text, and new type with Preferences ›
+/// Type › Fill New Type Objects With Placeholder Text).
+pub(crate) fn fill_with_placeholder(t: &mut TextObject) {
+    let style = t.first_style();
+    let text = match &t.kind {
+        TextKind::Area { frame } => {
+            let b = frame.bounds().unwrap_or_default();
+            let chars_per_line = (b.width() / (style.size * 0.5)).max(1.0);
+            let lines = (b.height() / style.effective_leading()).max(1.0);
+            let want = (chars_per_line * lines) as usize;
+            let mut out = String::new();
+            for (i, w) in PLACEHOLDER.split(' ').cycle().enumerate() {
+                if out.len() >= want || i >= 10_000 {
+                    break;
+                }
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(w);
+            }
+            out
+        }
+        _ => PLACEHOLDER.split(". ").next().unwrap_or(PLACEHOLDER).to_string() + ".",
+    };
+    t.runs = vec![TextRun { text, style, inline: None }];
+    refresh_bounds(t);
 }
 
 pub(crate) fn special_char(name: &str) -> Option<&'static str> {
@@ -462,8 +543,13 @@ fn insert_char(s: &mut Session, p: &Value) -> Result<Value> {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
             match t.runs.last_mut() {
-                Some(r) => r.text.push_str(&text),
-                None => t.runs.push(TextRun { text: text.clone(), style: CharStyle::default() }),
+                Some(r) if r.inline.is_none() => r.text.push_str(&text),
+                // After an inline graphic: a run of its own, in its style.
+                Some(r) => {
+                    let style = r.style.clone();
+                    t.runs.push(TextRun::new(text.clone(), style));
+                }
+                None => t.runs.push(TextRun { text: text.clone(), style: CharStyle::default(), inline: None }),
             }
             refresh_bounds(t);
         }
@@ -578,8 +664,8 @@ fn find_next(s: &mut Session, p: &Value) -> Result<Value> {
 fn strip_formatting(n: &mut vectorcraft_doc::Node) {
     if let NodeKind::Text(t) = &mut n.kind {
         let text = t.plain_text();
-        t.runs = vec![TextRun { text, style: CharStyle::default() }];
-        t.para = Default::default();
+        t.runs = vec![TextRun { text, style: CharStyle::default(), inline: None }];
+        t.set_all_paras(Default::default());
         refresh_bounds(t);
     }
     if let Some(ch) = n.children_mut() {

@@ -1,5 +1,5 @@
 //! Object menu long tail: Lock/Hide All Artwork Above & Other Layers, Transform Each, Reset
-//! Bounding Box, Rasterize, Crop Image, Create Trim Marks, Convert to Shape and
+//! Bounding Box, Rasterize, Crop Image, Mask (an image), Create Trim Marks, Convert to Shape and
 //! Artboards → Convert / Rearrange. (Live blends are in `live.rs`.)
 
 use std::sync::Arc;
@@ -18,8 +18,6 @@ use super::*;
 /// Session-level (not saved) state owned by the menu commands.
 #[derive(Clone, Debug, Default)]
 pub struct MenuState {
-    /// Saved selections: (document title, name, object ids).
-    pub saved_selections: Vec<(String, String, Vec<NodeId>)>,
     /// View → Guides → Lock Guides.
     pub guides_locked: bool,
     /// Transparency panel menu: "New Opacity Masks Are Clipping" turned off.
@@ -77,7 +75,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform Each…",
             ["Object", "Transform"],
             Some("Cmd+Alt+Shift+D"),
-            "{scaleH?: % (100), scaleV?: % (100), moveH?: pt, moveV?: pt (down = +), rotate?: deg (counter-clockwise), reflectX?: bool (flip vertically), reflectY?: bool (flip horizontally), random?: bool, seed?: n, reference?: 0..8 (9-point grid, 4 = centre), copy?: bool, strokes?: bool (Scale Strokes & Effects), corners?: bool (Scale Corners; both default to the preferences)} transform every selected object about its own reference point → {ids}",
+            "{scaleH?: % (100), scaleV?: % (100), moveH?: pt, moveV?: pt (down = +), rotate?: deg (counter-clockwise), reflectX?: bool (flip vertically), reflectY?: bool (flip horizontally), random?: bool, seed?: n, reference?: 0..8 (9-point grid, 4 = centre), copy?: bool, strokes?: bool (Scale Strokes & Effects), corners?: bool (Scale Corners; both default to the preferences), patterns?: bool (Transform Patterns; default: prefs transformPatternTiles)} transform every selected object about its own reference point → {ids}",
             has_selection,
             transform_each
         ),
@@ -118,6 +116,15 @@ pub fn specs() -> Vec<CommandSpec> {
             crop_image
         ),
         cmd!(
+            "object.maskImage",
+            "Mask",
+            [],
+            None,
+            "{} clip the selected image with a rectangle around it (its own outline, rotated with it) and select that clipping path, whose handles then crop it; one undo step → {id: the clip group, path: the clipping path}",
+            has_image,
+            mask_image
+        ),
+        cmd!(
             "object.createTrimMarks",
             "Create Trim Marks",
             ["Object"],
@@ -149,7 +156,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Rearrange All Artboards…",
             ["Object", "Artboards"],
             None,
-            "{columns?: n (2), spacing?: pt (20), byColumn?: false, moveArtwork?: true} lay artboards out in a grid",
+            "{columns?: n (2), spacing?: pt (20), byColumn?: false, moveArtwork?: true (locked and hidden art only with prefs moveLockedWithArtboard)} lay artboards out in a grid",
             has_doc,
             rearrange_artboards
         ),
@@ -290,7 +297,8 @@ fn transform_each(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("object.transformEach", "scale must be non-zero"));
     }
     let mut rng = Rng(p.get("seed").and_then(Value::as_u64).unwrap_or(0x9E37_79B9_7F4A_7C15).max(1));
-    let sc = if sh != 100.0 || sv != 100.0 { super::object::scaling(s, p) } else { Default::default() };
+    let mut sc = if sh != 100.0 || sv != 100.0 { super::object::scaling(s, p) } else { Default::default() };
+    sc.patterns = super::object::transform_patterns(s, p, &roots)?;
     let ids = s.edit("Transform Each", |d, sel| {
         let targets = if copy { duplicate_in(d, sel, &roots, Affine::IDENTITY)? } else { roots.clone() };
         for id in &targets {
@@ -586,6 +594,36 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "id": id.0, "width": w, "height": h }))
 }
 
+/// The Control bar's Mask for an image: a clip group of the image and a clipping path on its
+/// outline, with that path selected so dragging its handles crops the image.
+fn mask_image(s: &mut Session, _: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let (id, outline) = st
+        .selection
+        .objects
+        .iter()
+        .find_map(|id| match st.doc.node(*id).map(|n| &n.kind) {
+            Some(NodeKind::Image(im)) => {
+                Some((*id, vectorcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, im.width as f64, im.height as f64)).transformed(im.xf)))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| bad("object.maskImage", "select an image"))?;
+    let (gid, pid) = s.edit("Mask", |d, sel| {
+        let mut clip = super::pathops::shape_node(d, outline, None);
+        super::object::as_clipping_path(&mut clip)?;
+        let pid = clip.id;
+        let (par, idx, _) = d.position(id).ok_or(EngineError::NoNode(id))?;
+        let gid = d.alloc_id();
+        d.insert(par, idx + 1, Node::new(gid, NodeKind::Group { children: vec![], clip: true }))?;
+        d.insert(Some(gid), 0, clip)?;
+        d.move_node(id, Some(gid), usize::MAX)?;
+        sel.set([pid]);
+        Ok((gid, pid))
+    })?;
+    Ok(json!({ "id": gid.0, "path": pid.0 }))
+}
+
 // ---------- Trim marks ----------
 
 impl Session {
@@ -660,7 +698,7 @@ pub(crate) fn detect_shape(path: &PathData) -> Option<LiveShape> {
         }
         let rot = Affine::rotate(e0.y.atan2(e0.x));
         let flip = if e0.cross(e1) < 0.0 { Affine::scale_non_uniform(1.0, -1.0) } else { Affine::IDENTITY };
-        return Some(LiveShape::Rectangle { w, h, radii: [0.0; 4], xf: Affine::translate(a[0].p.to_vec2()) * rot * flip });
+        return Some(LiveShape::Rectangle { w, h, radii: [0.0; 4], kinds: Default::default(), xf: Affine::translate(a[0].p.to_vec2()) * rot * flip });
     }
     let b = path.bounds()?;
     let c = b.center();
@@ -744,6 +782,7 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
     let spacing = f64_or(p, "spacing", 20.0).clamp(-1.0e5, 1.0e5);
     let by_col = bool_or(p, "byColumn", false);
     let move_art = bool_or(p, "moveArtwork", true);
+    let locked_and_hidden = s.prefs.move_locked_with_artboard;
     let scale_strokes = false;
     s.edit("Rearrange Artboards", |d, _| {
         let rects: Vec<Rect> = d.artboards.iter().map(|a| a.rect).collect();
@@ -755,7 +794,9 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
             let tops: Vec<(NodeId, Point)> = d
                 .layers
                 .iter()
+                .filter(|l| l.rides_with_artboard(locked_and_hidden))
                 .flat_map(|l| l.children().into_iter().flatten())
+                .filter(|n| n.rides_with_artboard(locked_and_hidden))
                 .filter_map(|n| Some((n.id, n.geometric_bounds()?.center())))
                 .collect();
             for (id, c) in tops {
@@ -767,8 +808,13 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
         }
+        let mut moved = vec![];
         for (a, dl) in d.artboards.iter_mut().zip(&deltas) {
             a.rect = a.rect + *dl;
+            moved.push((a.id, *dl));
+        }
+        for (id, dl) in moved {
+            d.move_artboard_guides(id, dl);
         }
         Ok(())
     })?;

@@ -27,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Character",
             [],
             None,
-            "{id, start?: byte, end?: byte (default: all text), font?, style?, size?: pt, leading?: pt|\"auto\", tracking?, kerning?: 1/1000 em|\"auto\", baselineShift?: pt, hScale?: %, vScale?: %, rotation?: deg, fill?: colour|\"none\", stroke?: colour|\"none\", strokeWidth?: pt, strokeOptions?: {weight?, cap?, join?, miterLimit?, dash?, dashOffset?, alignDashes?} (as stroke.set: the character stroke), underline?, strikethrough?, allCaps?: bool, smallCaps?: bool, position?: \"normal\"|\"superscript\"|\"subscript\" (sizes from Document Setup), features?: [\"dlig\", \"-liga\", …]} style a character range (runs are split at the range ends) → {id, runs}",
+            "{id, start?: byte, end?: byte (default: all text), font?, style?, size?: pt, leading?: pt|\"auto\", tracking?, kerning?: 1/1000 em|\"auto\", baselineShift?: pt, hScale?: %, vScale?: %, rotation?: deg, fill?: colour|\"none\", stroke?: colour|\"none\", strokeWidth?: pt, strokeOptions?: {weight?, cap?, join?, miterLimit?, dash?, dashOffset?, alignDashes?} (as stroke.set: the character stroke), underline?, strikethrough?, allCaps?: bool, smallCaps?: bool, position?: \"normal\"|\"superscript\"|\"subscript\" (sizes from Document Setup), features?: [\"dlig\", \"-liga\", …], charAlign?: \"romanBaseline\"|\"emBoxTop\"|\"emBoxCenter\"|\"emBoxBottom\"|\"icfTop\"|\"icfBottom\"} style a character range (runs are split at the range ends) → {id, runs}",
             has_doc,
             set_range_style
         ),
@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Area / Path Type",
             [],
             None,
-            "{path: id, mode: \"area\"|\"onPath\", text?: \"\", vertical?: bool = false, at?: [x, y] (on-path start: nearest point), size?, font?} turn a path into an area-type frame or a type-on-a-path baseline (the path's paint is dropped) → {id}",
+            "{path: id, mode: \"area\"|\"onPath\", text?: \"\", vertical?: bool = false, at?: [x, y] (on-path start: nearest point), size?, font?, fit?: none|autoHeight|shrinkText, fitMinPercent? (area: as text.areaOptions; default autoHeight when the autoSizeAreaType preference is on), placeholder?: bool (placeholder text instead, as text.create), leadingModel?, charAlign? (as text.create)} turn a path into an area-type frame or a type-on-a-path baseline (the path's paint is dropped) → {id}",
             has_doc,
             create_in_path
         ),
@@ -57,6 +57,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?} track the first line of area type so it fills the frame width → {ids, tracking}",
             has_selection,
             fit_headline
+        ),
+        cmd!(
+            "type.step",
+            "Step Type",
+            [],
+            None,
+            "{attribute: \"size\"|\"leading\"|\"tracking\"|\"kerning\"|\"baselineShift\", by?: steps (1; negative steps down), id?, start?: byte, end?: byte} step type by the Preferences › Type increments (size and leading: typeSizeIncrement, pt; tracking and kerning: trackingIncrement, 1/1000 em; baseline shift: baselineShiftIncrement, pt), what the Type tool's Alt+arrows do (Cmd/Ctrl too: five steps; ←/→ kerning at the caret or tracking of the selection, ↑/↓ leading, Shift+↑/↓ baseline shift). The range of `id`, else the text the Type tool has selected (at a caret: kerning steps the character before it, leading its paragraph), else every selected type object → {ids}",
+            has_doc,
+            type_step
+        ),
+        cmd!(
+            "type.size.increase",
+            "Increase Font Size",
+            [],
+            Some("Cmd+Shift+."),
+            "{by?: steps (1)} type.step {attribute: size}",
+            has_selection,
+            |s, p| type_step(s, &json!({"attribute": "size", "by": f64_or(p, "by", 1.0)}))
+        ),
+        cmd!(
+            "type.size.decrease",
+            "Decrease Font Size",
+            [],
+            Some("Cmd+Shift+,"),
+            "{by?: steps (1)} type.step {attribute: size, by: -by}",
+            has_selection,
+            |s, p| type_step(s, &json!({"attribute": "size", "by": -f64_or(p, "by", 1.0)}))
         ),
         cmd!(
             "text.discardEmpty",
@@ -108,6 +135,13 @@ fn edit_range(s: &mut Session, p: &Value) -> Result<Value> {
     let insert = str_param(p, "insert").unwrap_or("").to_string();
     let caret = s.edit("Typing", |d, _| {
         let t = text_mut(d, id).ok_or(EngineError::NoNode(id))?;
+        // Paragraph styles follow the edit: a split paragraph's new one continues its style, a
+        // merge keeps the first paragraph's.
+        let inserted: String = match &styled {
+            Some(r) => r.iter().map(|r| r.text.as_str()).collect(),
+            None => insert.clone(),
+        };
+        t.splice_paras(a, b, &inserted);
         let caret = match &styled {
             Some(r) => edit::replace_range_styled(&mut t.runs, a, b, r),
             None => edit::replace_range(&mut t.runs, a, b, &insert),
@@ -151,6 +185,7 @@ pub(crate) struct CharChange {
     features: Option<Vec<String>>,
     position: Option<vectorcraft_doc::CharPosition>,
     small_caps: Option<Option<f64>>,
+    char_align: Option<vectorcraft_doc::CharAlign>,
 }
 
 /// `features: ["dlig", "-liga", …]` → the canonical tag list (differences from the defaults).
@@ -161,6 +196,26 @@ pub(crate) fn features_param(p: &Value, cmd: &str) -> Result<Option<Vec<String>>
         return Err(bad(cmd, format!("unknown OpenType feature `{t}` (liga, calt, dlig, smcp, frac, onum, tnum, ordn, swsh; prefix - to turn off)")));
     }
     Ok(Some(vectorcraft_text::OtFeatures::default().with_tags(tags).to_tags()))
+}
+
+/// `charAlign: "romanBaseline"|"emBoxTop"|"emBoxCenter"|"emBoxBottom"|"icfTop"|"icfBottom"` (Character Alignment).
+pub(crate) fn char_align_param(p: &Value, cmd: &str) -> Result<Option<vectorcraft_doc::CharAlign>> {
+    use vectorcraft_doc::CharAlign;
+    let Some(v) = p.get("charAlign").filter(|v| !v.is_null()) else { return Ok(None) };
+    Ok(Some(match v.as_str() {
+        Some("romanBaseline") => CharAlign::RomanBaseline,
+        Some("emBoxTop") => CharAlign::EmBoxTop,
+        Some("emBoxCenter") => CharAlign::EmBoxCenter,
+        Some("emBoxBottom") => CharAlign::EmBoxBottom,
+        Some("icfTop") => CharAlign::IcfTop,
+        Some("icfBottom") => CharAlign::IcfBottom,
+        _ => {
+            return Err(bad(
+                cmd,
+                "`charAlign` must be \"romanBaseline\", \"emBoxTop\", \"emBoxCenter\", \"emBoxBottom\", \"icfTop\" or \"icfBottom\"",
+            ));
+        }
+    }))
 }
 
 fn paint_param(p: &Value, k: &str, cmd: &str) -> Result<Option<Paint>> {
@@ -213,6 +268,7 @@ impl CharChange {
             features: features_param(p, cmd)?,
             position,
             small_caps,
+            char_align: char_align_param(p, cmd)?,
         };
         if c.size.is_some_and(|v| v <= 0.0) {
             return Err(bad(cmd, "size must be positive"));
@@ -240,6 +296,7 @@ impl CharChange {
             && self.features.is_none()
             && self.position.is_none()
             && self.small_caps.is_none()
+            && self.char_align.is_none()
     }
 
     pub(crate) fn apply(&self, st: &mut CharStyle) {
@@ -310,6 +367,48 @@ impl CharChange {
         if let Some(v) = self.small_caps {
             st.small_caps = v;
         }
+        if let Some(v) = self.char_align {
+            st.char_align = v;
+        }
+    }
+}
+
+/// Type › Enable Missing Glyph Protection: after a font change, the characters of `runs` their new
+/// font has no glyph for, but their font `before` the change had, keep that font.
+pub(crate) fn protect_missing_glyphs(before: &[TextRun], runs: &mut Vec<TextRun>) {
+    fn chars(runs: &[TextRun]) -> impl Iterator<Item = (usize, char, &CharStyle)> {
+        runs.iter()
+            .scan(0, |at, r| {
+                let start = *at;
+                *at += r.text.len();
+                Some(r.text.char_indices().map(move |(i, c)| (start + i, c, &r.style)))
+            })
+            .flatten()
+    }
+    let db = vectorcraft_text::FontDb::global();
+    let mut faces = std::collections::HashMap::new();
+    let mut covers = |st: &CharStyle, c: char| {
+        let face = faces.entry((st.font_family.clone(), st.font_style.clone())).or_insert_with(|| db.face(&st.font_family, &st.font_style));
+        face.as_ref().map(|f| f.covers(c))
+    };
+    // Byte ranges that keep a font (family, style).
+    let mut keep: Vec<(usize, usize, &CharStyle)> = vec![];
+    for ((at, c, old), (_, _, new)) in chars(before).zip(chars(runs)) {
+        let changed = (&old.font_family, &old.font_style) != (&new.font_family, &new.font_style);
+        if !changed || c.is_whitespace() || c.is_control() || covers(new, c) != Some(false) || covers(old, c) != Some(true) {
+            continue;
+        }
+        let end = at + c.len_utf8();
+        match keep.last_mut() {
+            Some((_, e, st)) if *e == at && (&st.font_family, &st.font_style) == (&old.font_family, &old.font_style) => *e = end,
+            _ => keep.push((at, end, old)),
+        }
+    }
+    for (a, b, old) in keep {
+        edit::style_range(runs, a, b, |st| {
+            st.font_family.clone_from(&old.font_family);
+            st.font_style.clone_from(&old.font_style);
+        });
     }
 }
 
@@ -320,6 +419,7 @@ fn set_range_style(s: &mut Session, p: &Value) -> Result<Value> {
     if change.is_empty() {
         return Err(bad(C, "nothing to change"));
     }
+    let protect = s.prefs.missing_glyph_protection && (change.font.is_some() || change.style.is_some());
     let t = text_ref(s, id)?;
     let (a, b) = range_of(p, edit::runs_len(&t.runs));
     let n = s.edit("Character", |d, _| {
@@ -328,7 +428,11 @@ fn set_range_style(s: &mut Session, p: &Value) -> Result<Value> {
             // An empty range inside text styles nothing (Illustrator keeps it for the next typing).
             return Ok(t.runs.len());
         }
+        let before = protect.then(|| t.runs.clone());
         edit::style_range(&mut t.runs, a, b, |st| change.apply(st));
+        if let Some(before) = before {
+            protect_missing_glyphs(&before, &mut t.runs);
+        }
         refresh_bounds(t);
         Ok(t.runs.len())
     })?;
@@ -363,22 +467,34 @@ fn create_in_path(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let text = str_param(p, "text").unwrap_or("").to_string();
     let start = match point_param(p, "at") {
-        Some(at) if on_path => vectorcraft_text::path_fraction_at(&path.to_bezpath(), at).0,
+        Some(at) if on_path => vectorcraft_geom::ArcPath::new(path).fraction_at(at).unwrap_or(0.0),
         _ => 0.0,
     };
-    let kind = if on_path { TextKind::OnPath { path: path.clone(), start } } else { TextKind::Area { frame: path.clone() } };
+    let kind = if on_path { TextKind::OnPath { path: path.clone(), start, end: None } } else { TextKind::Area { frame: path.clone() } };
     let mut t = TextObject {
         vertical: p.get("vertical").and_then(Value::as_bool).unwrap_or(false),
         kind,
         xf: Affine::IDENTITY,
-        runs: vec![TextRun { text, style }],
-        para: Default::default(),
+        runs: vec![TextRun { text, style, inline: None }],
+        para: super::create::new_type_para(),
+        paras: Vec::new(),
         area: Default::default(),
         path_effect: Default::default(),
+        path_align: Default::default(),
+        path_spacing: 0.0,
         wrap: Vec::new(),
         cached_bounds: None,
+        cached_baselines: Vec::new(),
     };
-    refresh_bounds(&mut t);
+    super::create::new_type_alignment(s, p, C, &mut t)?;
+    if !on_path {
+        t.area.fit = super::create::new_area_fit(s, p, C)?;
+    }
+    if bool_or(p, "placeholder", false) {
+        super::typemenu::fill_with_placeholder(&mut t);
+    } else {
+        refresh_bounds(&mut t);
+    }
     let id = s.edit(if on_path { "Type on a Path" } else { "Area Type" }, |d, sel| {
         let (par, idx, _) = d.position(pid).ok_or(EngineError::NoNode(pid))?;
         d.remove(pid)?;
@@ -392,6 +508,95 @@ fn create_in_path(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(id)
     })?;
     Ok(json!({"id": id.0}))
+}
+
+/// What `type.step` changes.
+#[derive(Clone, Copy, PartialEq)]
+enum Step {
+    Size,
+    Leading,
+    Tracking,
+    Kerning,
+    BaselineShift,
+}
+
+/// The Type tool's selected text while it edits (its typing session ends first: one undo step).
+fn editing_range(s: &mut Session) -> Result<Option<(NodeId, usize, usize)>> {
+    let o = s.tool_options();
+    let Some(id) = o.get("editing").and_then(Value::as_u64).map(NodeId) else { return Ok(None) };
+    if super::edit::typing_in_progress(s) {
+        s.set_tool_option("commitTyping", &Value::Bool(true));
+        s.commit_interaction()?;
+    }
+    let at = |k: &str| byte_param(&o, k).unwrap_or(0);
+    Ok(Some((id, at("start"), at("end"))))
+}
+
+fn type_step(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "type.step";
+    let step = match str_param(p, "attribute") {
+        Some("size") => Step::Size,
+        Some("leading") => Step::Leading,
+        Some("tracking") => Step::Tracking,
+        Some("kerning") => Step::Kerning,
+        Some("baselineShift") => Step::BaselineShift,
+        _ => return Err(bad(C, "attribute must be size|leading|tracking|kerning|baselineShift")),
+    };
+    let by = f64_or(p, "by", 1.0);
+    if !by.is_finite() {
+        return Err(bad(C, "by must be a number"));
+    }
+    let prefs = &s.prefs;
+    let inc = by.clamp(-1000.0, 1000.0)
+        * match step {
+            Step::Size | Step::Leading => prefs.type_size_increment,
+            Step::Tracking | Step::Kerning => prefs.tracking_increment,
+            Step::BaselineShift => prefs.baseline_shift_increment,
+        };
+    // (text, its range; None: all of it).
+    let targets: Vec<(NodeId, Option<(usize, usize)>)> = match id_param(p, "id") {
+        Some(id) => vec![(id, Some(range_of(p, edit::runs_len(&text_ref(s, id)?.runs))))],
+        None => match editing_range(s)? {
+            Some((id, a, b)) => vec![(id, Some((a.min(b), a.max(b))))],
+            None => super::typecmd::text_targets(s, p, C)?.into_iter().map(|id| (id, None)).collect(),
+        },
+    };
+    // The ranges stepped. At a caret: kerning is the space after the character before it, leading
+    // the paragraph's; the rest wait for a selection.
+    let mut ranges = vec![];
+    for (id, range) in targets {
+        let text = text_ref(s, id)?.plain_text();
+        let (a, b) = range.map_or((0, text.len()), |(a, b)| (a.min(text.len()), b.min(text.len())));
+        let (a, b) = match step {
+            _ if a < b => (a, b),
+            Step::Kerning => (edit::prev_char(&text, a), a),
+            Step::Leading => {
+                let para = edit::paragraph_at(&text, a);
+                (para.start, para.end)
+            }
+            _ => continue,
+        };
+        if a < b {
+            ranges.push((id, a, b));
+        }
+    }
+    if !ranges.is_empty() {
+        s.edit("Character", |d, _| {
+            for &(id, a, b) in &ranges {
+                let t = text_mut(d, id).ok_or(EngineError::NoNode(id))?;
+                edit::style_range(&mut t.runs, a, b, |st| match step {
+                    Step::Size => st.size = (st.size + inc).clamp(0.1, 1296.0),
+                    Step::Leading => st.leading = Some((st.effective_leading() + inc).clamp(0.1, 5000.0)),
+                    Step::Tracking => st.tracking = (st.tracking + inc).clamp(-1000.0, 10000.0),
+                    Step::Kerning => st.kerning = Some((st.kerning.unwrap_or(0.0) + inc).clamp(-1000.0, 10000.0)),
+                    Step::BaselineShift => st.baseline_shift = (st.baseline_shift + inc).clamp(-1296.0, 1296.0),
+                });
+                refresh_bounds(t);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(json!({ "ids": ranges.iter().map(|(id, ..)| id.0).collect::<Vec<_>>() }))
 }
 
 /// Tracking (1/1000 em) that makes the first paragraph of `t` exactly `target` wide, if it fits
@@ -410,10 +615,14 @@ fn headline_tracking(t: &TextObject, target: f64) -> Option<f64> {
             xf: Affine::IDENTITY,
             runs: head.clone(),
             para: Default::default(),
+            paras: Vec::new(),
             area: Default::default(),
             path_effect: Default::default(),
+            path_align: Default::default(),
+            path_spacing: 0.0,
             wrap: Vec::new(),
             cached_bounds: None,
+            cached_baselines: Vec::new(),
         };
         for r in &mut h.runs {
             r.style.tracking = tr;

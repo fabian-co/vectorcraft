@@ -11,21 +11,21 @@ use crate::import::{Dsc, import};
 use crate::{EpsOptions, Level, Preview, Raster};
 
 /// `body` as an EPS file with a 100 × 100 pt bounding box.
-fn eps(body: &str) -> Vec<u8> {
+pub(super) fn eps(body: &str) -> Vec<u8> {
     format!("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\n%%EndComments\n{body}\nshowpage\n%%EOF\n").into_bytes()
 }
 
-fn read(body: &str) -> crate::Imported {
+pub(super) fn read(body: &str) -> crate::Imported {
     import(&eps(body)).unwrap()
 }
 
 /// The objects of the document's layer.
-fn objects(d: &Document) -> Vec<Arc<Node>> {
+pub(super) fn objects(d: &Document) -> Vec<Arc<Node>> {
     d.layers[0].children().unwrap().clone()
 }
 
 /// Every object, down through groups, in order.
-fn all(d: &Document) -> Vec<Arc<Node>> {
+pub(super) fn all(d: &Document) -> Vec<Arc<Node>> {
     fn walk(n: &Arc<Node>, out: &mut Vec<Arc<Node>>) {
         out.push(n.clone());
         for c in n.children().into_iter().flatten() {
@@ -39,25 +39,25 @@ fn all(d: &Document) -> Vec<Arc<Node>> {
     out
 }
 
-fn fill(n: &Node) -> Option<&Paint> {
+pub(super) fn fill(n: &Node) -> Option<&Paint> {
     n.appearance.items.iter().find_map(|i| match i {
         AppearanceItem::Fill(f) => Some(&f.paint),
         _ => None,
     })
 }
 
-fn stroke(n: &Node) -> Option<&vectorcraft_doc::StrokeLayer> {
+pub(super) fn stroke(n: &Node) -> Option<&vectorcraft_doc::StrokeLayer> {
     n.appearance.items.iter().find_map(|i| match i {
         AppearanceItem::Stroke(s) => Some(s),
         _ => None,
     })
 }
 
-fn bounds(n: &Node) -> Rect {
+pub(super) fn bounds(n: &Node) -> Rect {
     n.geometric_bounds().unwrap()
 }
 
-fn near(a: Rect, b: Rect) -> bool {
+pub(super) fn near(a: Rect, b: Rect) -> bool {
     [(a.x0, b.x0), (a.y0, b.y0), (a.x1, b.x1), (a.y1, b.y1)].iter().all(|(x, y)| (x - y).abs() < 0.05)
 }
 
@@ -193,6 +193,20 @@ fn clips_become_clipping_groups() {
     // eoclip of a path.
     let o = objects(&read("10 10 moveto 30 10 lineto 30 30 lineto closepath eoclip newpath 0 0 50 50 rectfill").document);
     assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }));
+}
+
+#[test]
+fn clips_nest_only_so_deep() {
+    // Each clip inside the last one used to nest a clipping group one level deeper, past the stack.
+    let r = read("1 1 200000 { pop 0 0 50 50 rectclip } for 1 1 5 5 rectfill");
+    let mut depth = 0;
+    let mut n = objects(&r.document)[0].clone();
+    while let NodeKind::Group { children, clip: true } = &n.kind {
+        depth += 1;
+        n = children.last().unwrap().clone();
+    }
+    assert_eq!(depth, vectorcraft_doc::clipnest::MAX_NEST);
+    assert!(r.warnings.iter().any(|w| w.contains("clips nested more than")), "{:?}", r.warnings);
 }
 
 #[test]
@@ -463,7 +477,7 @@ fn blue(body: &str) {
 }
 
 /// Check that PostScript `cond` leaves `true`.
-fn check(cond: &str) {
+pub(super) fn check(cond: &str) {
     blue(&format!("{cond} {{ 0 0 1 setrgbcolor }} {{ 1 0 0 setrgbcolor }} ifelse"));
 }
 
@@ -567,6 +581,74 @@ fn resourceforall_enumerates_matching_names() {
     // A scratch string too small for the names, as the prolog probes it.
     check(&format!("{define} {{ (*) {{ pop }} 2 string /ProcSet resourceforall }} stopped"));
     check("/n 0 def (Gen*) { pop /n n 1 add def } 16 string /Category resourceforall n 1 eq");
+}
+
+#[test]
+fn the_standard_dictionaries_are_dictionaries_in_systemdict() {
+    // The reference app's EPS prolog looks them up by name rather than running them.
+    check("systemdict /userdict get type /dicttype eq");
+    check("/globaldict where { /globaldict get begin currentdict globaldict eq end } { false } ifelse");
+    check("systemdict /systemdict get systemdict eq systemdict /statusdict known and");
+    check("userdict /x 5 put systemdict /userdict get /x get 5 eq");
+    check("/errordict load /handleerror known errordict $error eq and");
+    check("SharedFontDirectory type /dicttype eq");
+}
+
+#[test]
+fn dictstack_and_internaldict_answer() {
+    check("10 array dictstack length countdictstack eq");
+    check("userdict begin 10 array dictstack dup length 1 sub get userdict eq end");
+    check("{ 1 array dictstack } stopped");
+    check("1183615869 internaldict /k 1 put 1183615869 internaldict /k get 1 eq");
+    check("currentsystemparams /MaxPatternCache get type /integertype eq");
+    check("<< /MaxPatternItem currentsystemparams /MaxPatternCache get >> setuserparams currentuserparams /MaxFontItem known");
+}
+
+#[test]
+fn an_executable_filter_runs_its_data_as_a_program() {
+    // A string run as a program through a filter (0 and an empty string set no end of data).
+    check("(1 2 add) 0 () /SubFileDecode filter cvx exec 3 eq");
+    check("(1 2 add) 0 () /SubFileDecode filter dup xcheck not exch cvx xcheck and");
+    check("(abcd) 2 () /SubFileDecode filter 8 string readstring pop (ab) eq");
+    check("{ (1 add) 0 () /SubFileDecode filter cvx exec } stopped");
+    // The data following it in the file: `74727565` is `true`.
+    check("currentfile /ASCIIHexDecode filter cvx exec 74727565>");
+    // A literal file is only pushed.
+    check("(1 2 add) 0 () /SubFileDecode filter exec type /filetype eq");
+}
+
+#[test]
+fn flushfile_skips_the_data_of_a_filter() {
+    // Metadata that isn't PostScript, skipped up to its end marker.
+    blue("currentfile 0 (%%EndPacket) /SubFileDecode filter flushfile\n<?xml version=\"1.0\"?><x a=\"(\"/>\n%%EndPacket\n0 0 1 setrgbcolor");
+}
+
+/// Executable files are untrusted programs too: running one inside itself stops at the nesting
+/// limit, and the program's own file runs once. Type laid out in a loop (`cshow` on a long
+/// string, `stringwidth` in `loop`) counts against the operation budget like the loop itself.
+#[test]
+fn hostile_executable_files_and_type_loops_are_refused() {
+    let refused = |body: &str, why: &str| {
+        let e = import(&eps(body)).err().unwrap_or_default();
+        assert!(e.contains(why), "{body}: {e}");
+    };
+    refused("/p { (p) 0 () /SubFileDecode filter cvx exec } def p", "too deeply");
+    refused("/p { (p) 0 () /SubFileDecode filter cvx exec } def { p } stopped pop p", "too deeply");
+    refused("/a { (b) 0 () /SubFileDecode filter cvx exec } def /b { (a) 0 () /SubFileDecode filter cvx exec } def a", "too deeply");
+    refused("/Helvetica findfont 10 scalefont setfont { pop pop pop } 1000000 string cshow", "too long");
+    // The program's own file, made executable, is already running.
+    blue("currentfile cvx exec currentfile flushfile 0 0 1 setrgbcolor");
+}
+
+#[test]
+fn cshow_runs_its_procedure_for_each_character() {
+    check("/n 0 def { pop pop pop /n n 1 add def } (abc) cshow n 3 eq");
+    // Each call gets the character's code and width.
+    check("/c 0 def { pop pop /c exch def } (A) cshow c 65 eq");
+    check(
+        "/Helvetica findfont 10 scalefont setfont /w 0 def { pop w add /w exch def pop } (ab) cshow \
+         (ab) stringwidth pop w sub abs 0.001 lt",
+    );
 }
 
 /// A `w` × `h` 8-bit palette TIFF with an alpha sample (`ExtraSamples` [1]), uncompressed in

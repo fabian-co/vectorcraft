@@ -15,13 +15,16 @@ vectorcraft-effects = { workspace = true }
 vectorcraft-brush = { workspace = true }
 vectorcraft-color = { workspace = true }
 vectorcraft-text = { workspace = true }
+skrifa = { workspace = true }
 kurbo = { workspace = true }
 thiserror = { workspace = true }
 flate2 = { workspace = true }
 image = { workspace = true }
+# CMYK JPEGs (the image crate writes RGB and grey ones only).
+jpeg-encoder = { workspace = true }
 krilla = { workspace = true }
 hayro-syntax = "0.7.2"
-hayro-interpret = { version = "0.7.0", default-features = false, features = ["embed-fonts"] }
+hayro-interpret = { version = "0.7.0", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
 log = { workspace = true }
 smallvec = "1"
 serde = { workspace = true }
@@ -32,4 +35,6 @@ sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 vectorcraft-testkit = { workspace = true }
+# A variable font built in code (no font file is committed).
+vectorcraft-text = { workspace = true, features = ["test-fonts"] }
 serde_json = { workspace = true }

@@ -29,7 +29,9 @@ pub(crate) mod gradient;
 pub(crate) mod graph;
 mod halftone;
 pub mod help;
+pub(crate) mod inline;
 mod layer;
+mod layerpanel;
 pub mod links;
 mod live;
 pub(crate) mod maskedit;
@@ -47,7 +49,7 @@ mod pathops;
 mod patterncmds;
 pub mod pdfcmds;
 pub mod perspgrid;
-mod place;
+pub(crate) mod place;
 pub mod plugin;
 pub mod prefscmds;
 pub mod print;
@@ -58,6 +60,7 @@ pub mod rasterfx;
 mod recolor;
 pub mod recovery;
 mod select;
+pub(crate) mod shaper;
 pub(crate) mod slices;
 mod stroke;
 mod style;
@@ -143,6 +146,19 @@ pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
     let st = s.active().ok_or("no document open")?;
     if st.selection.is_empty() { Err("nothing selected".into()) } else { Ok(()) }
 }
+/// Objects are selected, or the Artboard tool is chosen (Copy and Cut take its artboard).
+pub fn has_selection_or_artboard_tool(s: &Session) -> std::result::Result<(), String> {
+    if s.tool_id() == "artboard" { has_doc(s) } else { has_selection(s) }
+}
+/// Objects or ruler guides are selected (what Delete and the arrow keys act on).
+pub fn has_selection_or_guides(s: &Session) -> std::result::Result<(), String> {
+    let st = s.active().ok_or("no document open")?;
+    if st.selection.has_objects_or_guides() { Ok(()) } else { Err("nothing selected".into()) }
+}
+pub fn has_anchors(s: &Session) -> std::result::Result<(), String> {
+    let st = s.active().ok_or("no document open")?;
+    if st.selection.anchors.values().all(|a| a.is_empty()) { Err("no anchor points selected".into()) } else { Ok(()) }
+}
 pub fn has_multi(s: &Session) -> std::result::Result<(), String> {
     let st = s.active().ok_or("no document open")?;
     if st.selection.len() < 2 { Err("select at least two objects".into()) } else { Ok(()) }
@@ -191,6 +207,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(gradient::specs());
         v.extend(opacitymask::specs());
         v.extend(layer::specs());
+        v.extend(layerpanel::specs());
         v.extend(draw2::specs());
         v.extend(xform::specs());
         v.extend(effectcmd::specs());
@@ -202,6 +219,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(colormgmt::specs());
         v.extend(typemenu::specs());
         v.extend(textedit::specs());
+        v.extend(inline::specs());
         v.extend(textstyles::specs());
         v.extend(fonts::specs());
         v.extend(help::specs());
@@ -216,6 +234,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(docinfo::specs());
         v.extend(panelcmds::specs());
         v.extend(buildcmds::specs());
+        v.extend(shaper::specs());
         v.extend(brushsym::specs());
         v.extend(patterncmds::specs());
         v.extend(prefscmds::specs());

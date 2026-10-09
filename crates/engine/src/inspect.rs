@@ -1,7 +1,7 @@
 //! Agent-friendly document summaries and view-models for panels.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{ArrowAlign, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, WidthProfile};
+use vectorcraft_doc::{ArrowAlign, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, WidthProfile};
 
 use crate::Session;
 
@@ -12,8 +12,23 @@ fn rect_json(r: Option<vectorcraft_geom::Rect>) -> Value {
     }
 }
 
-/// Compact tree summary of a node (for `document.inspect`).
+/// How much of the subtree a node summary carries.
+#[derive(Clone, Copy, Default)]
+pub struct SummaryOpts {
+    /// Child levels to include (`None`: the whole subtree). `0` is the node alone.
+    pub depth: Option<u64>,
+    /// Children shown per node (`None`: all, top of the stack first). A level that shows
+    /// fewer children than it has reports `childCount`, so truncation is never silent.
+    pub child_limit: Option<u64>,
+}
+
+/// Compact tree summary of a node (for `document.inspect`): the whole subtree.
 pub fn node_summary(n: &Node) -> Value {
+    node_summary_opts(n, SummaryOpts::default())
+}
+
+/// The same summary with [`SummaryOpts`] applied.
+pub fn node_summary_opts(n: &Node, opts: SummaryOpts) -> Value {
     let mut v = json!({
         "id": n.id.0,
         "name": n.display_name(),
@@ -52,20 +67,55 @@ pub fn node_summary(n: &Node) -> Value {
         v["strokeOptions"] = stroke_options(&st);
     }
     match &n.kind {
+        NodeKind::Layer { color, template, printable, preview, dim_images, clip, .. } => {
+            let [r, g, b] = color.rgb();
+            v["color"] = json!(format!("#{r:02x}{g:02x}{b:02x}"));
+            v["template"] = json!(template);
+            v["printable"] = json!(printable);
+            v["preview"] = json!(preview);
+            v["dimImages"] = json!(dim_images);
+            v["clip"] = json!(clip);
+        }
         NodeKind::Path { path, .. } => {
             v["anchors"] = json!(path.anchor_count());
             v["closed"] = json!(path.is_closed());
         }
-        NodeKind::Text(t) => v["text"] = json!(t.plain_text()),
+        NodeKind::Text(t) => {
+            v["text"] = json!(t.plain_text());
+            // Area type and type on a path: does the text fit (the red overflow "+")? Area type
+            // also reports its fit and Shrink Text's factor (1 unshrunk).
+            if !matches!(t.kind, vectorcraft_doc::TextKind::Point) {
+                let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+                v["overflow"] = json!(lay.overflow);
+                if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }) {
+                    v["fit"] = json!(t.area.fit.id());
+                    v["fitScale"] = json!(lay.fit_scale);
+                }
+            }
+        }
         _ => {}
     }
     if let Some(ch) = n.children() {
-        v["children"] = Value::Array(ch.iter().rev().map(|c| node_summary(c)).collect());
+        let total = ch.len();
+        let take_n = opts.child_limit.map_or(total, |l| l.min(total as u64) as usize);
+        if opts.depth.is_none_or(|d| d > 0) {
+            let next = SummaryOpts { depth: opts.depth.map(|d| d.saturating_sub(1)), child_limit: opts.child_limit };
+            v["children"] = Value::Array(ch.iter().rev().take(take_n).map(|c| node_summary_opts(c, next)).collect());
+        }
+        if take_n < total || v.get("children").is_none() {
+            v["childCount"] = json!(total);
+        }
     }
     v
 }
 
 pub fn document(s: &Session) -> Value {
+    document_opts(s, SummaryOpts::default())
+}
+
+/// The same summary with [`SummaryOpts`] applied to the layer tree (artboards and
+/// the rest always come whole): `depth: 0` is the skeleton — top layers with counts.
+pub fn document_opts(s: &Session, opts: SummaryOpts) -> Value {
     let Some(st) = s.active() else { return Value::Null };
     let d = &st.doc;
     json!({
@@ -77,8 +127,10 @@ pub fn document(s: &Session) -> Value {
         "colorMode": format!("{:?}", d.color_mode),
         "artboards": d.artboards.iter().map(|a| json!({"name": a.name, "x": a.rect.x0, "y": a.rect.y0, "width": a.rect.width(), "height": a.rect.height()})).collect::<Vec<_>>(),
         // Top of the stack first, like the Layers panel.
-        "layers": d.layers.iter().rev().map(|l| node_summary(l)).collect::<Vec<_>>(),
+        "layers": d.layers.iter().rev().map(|l| node_summary_opts(l, opts)).collect::<Vec<_>>(),
         "currentLayer": st.active_layer.map(|l| l.0),
+        // The rows highlighted in the Layers panel (`layer.setCurrent`, `layer.highlight`).
+        "layerRows": st.highlighted_rows().iter().map(|i| i.0).collect::<Vec<_>>(),
         "isolation": st.isolation.map(|l| l.0),
         "selection": st.selection.objects.iter().map(|i| i.0).collect::<Vec<_>>(),
         "selectionBounds": rect_json(d.bounds_of(&st.selection.objects, false)),
@@ -93,6 +145,69 @@ pub fn document(s: &Session) -> Value {
         "paint": {"fill": s.paint.fill.label(), "stroke": s.paint.stroke.label(), "strokeWidth": s.paint.stroke_width, "fillActive": s.fill_active, "appearanceItem": s.appearance_item()},
         "pasteRemembersLayers": d.paste_remembers_layers,
     })
+}
+
+/// What `document.find` matches: every given filter must hit (AND). All matching is
+/// case-insensitive; `name` and `text` are substrings, `kind` is the exact panel label
+/// (`Layer`, `Group`, `Path`, `Type`, `Image`, ...).
+pub struct FindFilter {
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub text: Option<String>,
+}
+
+impl FindFilter {
+    /// True when no effective filter was given (empty strings count as absent).
+    pub fn is_empty(&self) -> bool {
+        [self.name.as_ref(), self.kind.as_ref(), self.text.as_ref()].iter().all(|f| f.is_none())
+    }
+
+    fn hits(&self, n: &Node) -> bool {
+        if let Some(needle) = &self.name
+            && !n.display_name().to_lowercase().contains(needle)
+        {
+            return false;
+        }
+        if let Some(kind) = &self.kind
+            && !n.kind_label().eq_ignore_ascii_case(kind)
+        {
+            return false;
+        }
+        if let Some(needle) = &self.text {
+            let NodeKind::Text(t) = &n.kind else { return false };
+            if !t.plain_text().to_lowercase().contains(needle) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Search the whole layer tree, top of the stack first like the Layers panel.
+/// Returns at most `limit` hits as `{id, name, kind, path}` (`path` is the ancestor
+/// chain, layer first) plus the total hit count, so a capped reply stays explicit.
+pub fn find_nodes(doc: &Document, filter: &FindFilter, limit: u64) -> (Vec<Value>, u64) {
+    use std::sync::Arc;
+    let mut out = Vec::new();
+    let mut total = 0u64;
+    let mut ancestors: Vec<u64> = Vec::new();
+    fn walk(nodes: &[Arc<Node>], ancestors: &mut Vec<u64>, filter: &FindFilter, limit: u64, out: &mut Vec<Value>, total: &mut u64) {
+        for n in nodes.iter().rev() {
+            if filter.hits(n) {
+                *total += 1;
+                if (out.len() as u64) < limit {
+                    out.push(json!({"id": n.id.0, "name": n.display_name(), "kind": n.kind_label(), "path": ancestors}));
+                }
+            }
+            if let Some(ch) = n.children() {
+                ancestors.push(n.id.0);
+                walk(ch, ancestors, filter, limit, out, total);
+                ancestors.pop();
+            }
+        }
+    }
+    walk(&doc.layers, &mut ancestors, filter, limit, &mut out, &mut total);
+    (out, total)
 }
 
 /// Cap names as `stroke.set` takes them.
