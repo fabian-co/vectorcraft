@@ -11,7 +11,12 @@
 //! - Gaussian Blur: the object painted inside a Gaussian filter layer;
 //! - Feather: like Gaussian Blur but clipped to the shape, so the edge fades inward;
 //! - Inner Glow: a blurred inverse silhouette (Edge) or the blurred silhouette (Center), clipped
-//!   to the shape and painted above it.
+//!   to the shape and painted above it;
+//! - Photoshop-style filters (Radial Blur, Smart Blur, Unsharp Mask…): the content is rendered
+//!   offscreen and its pixels run through the content-changing effects in stack order (those
+//!   filters, Gaussian Blur and Feather, see [`effects::pixel`]), then drawn back
+//!   ([`Renderer::pixel_content`]). The result is cached per object while it and the zoom don't
+//!   change.
 //!
 //! The same applies to one fill or stroke's own raster effects (around that item alone) and to
 //! type, images, symbol instances and live objects ([`Renderer::draw_object_fx`]): their art is
@@ -56,6 +61,7 @@ pub(crate) fn has_object_fx(n: &Node) -> bool {
         || effects::has_container_appearance(n)
         || effects::has_crop_marks(n)
         || effects::has_adjustment(n)
+        || effects::has_revolve(n)
 }
 
 /// Is `n` a group or layer (whose evaluated art keeps its knockout setting)?
@@ -118,6 +124,12 @@ fn item_effects(item: &AppearanceItem) -> &[Effect] {
 
 /// Visual bounds including geometry effects, stroke outsets and shadows/glows.
 pub(crate) fn visual_bounds(n: &Node) -> Option<Rect> {
+    if let Some(art) = effects::revolve_art(n) {
+        return cull_bounds(&art).map(|b| {
+            let o = effects::outset(&n.appearance.effects, b);
+            b.inflate(o, o)
+        });
+    }
     let bp = node_bezpath(n)?;
     let ctx = GeomContext::of(n);
     let g = effected_path(n, &bp);
@@ -132,8 +144,12 @@ pub(crate) fn visual_bounds(n: &Node) -> Option<Rect> {
             }
         }
     }
-    let o = n.appearance.outset() + effects::outset(&n.appearance.effects);
-    r.map(|r| r.inflate(o, o))
+    let s = n.appearance.outset();
+    r.map(|r| {
+        let r = r.inflate(s, s);
+        let o = effects::outset(&n.appearance.effects, r);
+        r.inflate(o, o)
+    })
 }
 
 /// Bounds used for culling: like `Node::visual_bounds`, but aware of live effects anywhere in
@@ -151,7 +167,7 @@ pub(crate) fn cull_bounds(n: &Node) -> Option<Rect> {
             } else {
                 art.children()?.iter().fold(None, |acc, c| vectorcraft_geom::union_opt(acc, cull_bounds(c)))
             }?;
-            let o = effects::outset(&n.appearance.effects);
+            let o = effects::outset(&n.appearance.effects, b);
             Some(b.inflate(o, o))
         }
         NodeKind::Layer { children, clip: false, .. } | NodeKind::Group { children, clip: false } => {
@@ -161,7 +177,7 @@ pub(crate) fn cull_bounds(n: &Node) -> Option<Rect> {
         // The reshaped art (a symbol's art needs the document: its instance box stands in).
         _ if has_object_fx(n) => {
             let b = effects::reshape(n, None).and_then(|r| r.visual_bounds()).or_else(|| n.visual_bounds())?;
-            let o = effects::outset(&n.appearance.effects);
+            let o = effects::outset(&n.appearance.effects, b);
             Some(b.inflate(o, o))
         }
         _ => n.visual_bounds(),
@@ -178,13 +194,59 @@ fn shadow_filter(dx: f64, dy: f64, blur: f64, color: peniko::Color) -> Filter {
     })
 }
 
-fn blur_filter(sigma: f64) -> Filter {
-    Filter::from_primitive(FilterPrimitive::GaussianBlur { std_deviation: sigma.max(0.0) as f32, edge_mode: EdgeMode::None })
-}
-
 fn pcolor(ink: Ink, c: &vectorcraft_doc::color::Color) -> peniko::Color {
     let [r, g, b] = ink.rgb(c);
     peniko::Color::new([r, g, b, 1.0])
+}
+
+/// Most pixels the raster of [`Renderer::pixel_content`] holds (a 4K screen's): larger content is
+/// cropped to the view when its effects only look nearby, else rendered at a lower resolution.
+const PIXEL_BUDGET: f64 = 8.4e6;
+
+/// The effects [`Renderer::pixel_content`] runs on the content's pixels (those changing the
+/// content itself), in stack order.
+fn content_changing(fx: &&RasterFx) -> bool {
+    matches!(fx, RasterFx::Feather { .. } | RasterFx::GaussianBlur { .. } | RasterFx::Pixel(_))
+}
+
+/// How far (document units) from a pixel the content deciding it after `fx` lies; `None` when
+/// anywhere in the object.
+fn looks_around(fx: &RasterFx) -> Option<f64> {
+    match fx {
+        RasterFx::Feather { radius } | RasterFx::GaussianBlur { radius } => Some(1.5 * radius),
+        RasterFx::Pixel(p) => p.reach(),
+        _ => Some(0.0),
+    }
+}
+
+/// The content of an object with Photoshop-style effects as filtered pixels, drawn at
+/// (`anchor`'s view position + `rel`) scaled by 1 / `k` (see [`Renderer::pixel_content`]).
+pub(crate) struct PixelEntry {
+    node: Node,
+    linear: [u64; 4],
+    anchor: vectorcraft_geom::Point,
+    rel: (f64, f64),
+    k: f64,
+    image: std::sync::Arc<vello_cpu::Pixmap>,
+    pub(crate) stamp: u64,
+}
+
+/// The four linear coefficients of `view` (zoom and rotation, not the pan), as cache keys.
+fn linear_key(view: Affine) -> [u64; 4] {
+    let c = view.as_coeffs();
+    [c[0].to_bits(), c[1].to_bits(), c[2].to_bits(), c[3].to_bits()]
+}
+
+/// Draw `image` with its top-left at (`x`, `y`) device pixels, `1 / k` device pixels a pixel.
+fn draw_scaled(ctx: &mut RenderContext, image: std::sync::Arc<vello_cpu::Pixmap>, (x, y): (f64, f64), k: f64) {
+    let (w, h) = (image.width() as f64, image.height() as f64);
+    ctx.set_transform(Affine::translate((x, y)) * Affine::scale(1.0 / k));
+    // On whole pixels at full size the cheapest sampler is exact.
+    let quality = if k < 1.0 { peniko::ImageQuality::Medium } else { peniko::ImageQuality::Low };
+    let sampler = peniko::ImageSampler { quality, ..Default::default() };
+    ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(image), sampler });
+    ctx.fill_rect(&Rect::new(0.0, 0.0, w, h));
+    ctx.set_transform(Affine::IDENTITY);
 }
 
 /// A cached shadow / glow raster: premultiplied, already tinted and faded, positioned relative to
@@ -197,73 +259,6 @@ pub(crate) struct ShadowEntry {
     rel: (f64, f64),
     image: std::sync::Arc<vello_cpu::Pixmap>,
     pub(crate) stamp: u64,
-}
-
-/// Box sizes approximating a Gaussian of `sigma` with three box blurs.
-fn gauss_boxes(sigma: f64) -> [usize; 3] {
-    let n = 3.0;
-    let w_ideal = (12.0 * sigma * sigma / n + 1.0).sqrt();
-    let mut wl = w_ideal.floor() as i64;
-    if wl % 2 == 0 {
-        wl -= 1;
-    }
-    let wu = wl + 2;
-    let m_ideal = (12.0 * sigma * sigma - n * (wl * wl) as f64 - 4.0 * n * wl as f64 - 3.0 * n) / (-4.0 * wl as f64 - 4.0);
-    let m = m_ideal.round() as i64;
-    let r = |i: i64| (((if i < m { wl } else { wu }) - 1) / 2).max(0) as usize;
-    [r(0), r(1), r(2)]
-}
-
-/// One horizontal box-blur pass of radius `r` over rows of `w` (running sum, edges as zero).
-fn box_blur_h(src: &[f32], dst: &mut [f32], w: usize, h: usize, r: usize) {
-    if r == 0 {
-        dst.copy_from_slice(src);
-        return;
-    }
-    let norm = 1.0 / (2 * r + 1) as f32;
-    for y in 0..h {
-        let row = &src[y * w..(y + 1) * w];
-        let out = &mut dst[y * w..(y + 1) * w];
-        let mut acc: f32 = row.iter().take(r + 1).sum();
-        for x in 0..w {
-            out[x] = acc * norm;
-            if x + r + 1 < w {
-                acc += row[x + r + 1];
-            }
-            if x >= r {
-                acc -= row[x - r];
-            }
-        }
-    }
-}
-
-fn transpose(src: &[f32], dst: &mut [f32], w: usize, h: usize) {
-    for y in 0..h {
-        for x in 0..w {
-            dst[x * h + y] = src[y * w + x];
-        }
-    }
-}
-
-/// Gaussian-blur an alpha plane in place (three box passes per axis).
-fn blur_alpha(a: &mut Vec<f32>, w: usize, h: usize, sigma: f64) {
-    if sigma < 0.2 {
-        return;
-    }
-    let boxes = gauss_boxes(sigma);
-    let mut tmp = vec![0.0; a.len()];
-    for r in boxes {
-        box_blur_h(a, &mut tmp, w, h, r);
-        std::mem::swap(a, &mut tmp);
-    }
-    transpose(a, &mut tmp, w, h);
-    std::mem::swap(a, &mut tmp);
-    for r in boxes {
-        box_blur_h(a, &mut tmp, h, w, r);
-        std::mem::swap(a, &mut tmp);
-    }
-    transpose(a, &mut tmp, h, w);
-    std::mem::swap(a, &mut tmp);
 }
 
 impl Renderer {
@@ -287,8 +282,7 @@ impl Renderer {
             RasterFx::OuterGlow { mode, opacity, blur, color } => (*mode, *opacity, 0.0, 0.0, *blur, *color),
             _ => return false,
         };
-        let c = f.view.as_coeffs();
-        let linear = [c[0].to_bits(), c[1].to_bits(), c[2].to_bits(), c[3].to_bits()];
+        let linear = linear_key(f.view);
         let key = (n as *const Node as usize, i, f.ink);
         let stamp = self.stamp;
         let hit = self.shadows.get_mut(&key).filter(|e| e.linear == linear && e.node == *n);
@@ -317,7 +311,7 @@ impl Renderer {
                 off.render(&mut pm, &mut self.resources);
                 let (wu, hu) = (w as usize, h as usize);
                 let mut a: Vec<f32> = pm.data().iter().map(|p| p.a as f32).collect();
-                blur_alpha(&mut a, wu, hu, blur / 2.0 / f.px);
+                effects::pixel::blur_plane(&mut a, wu, hu, blur / 2.0 / f.px);
                 let [cr, cg, cb] = f.ink.rgb(&color);
                 let tint = |v: f32, ch: f32| (v * ch).round().clamp(0.0, 255.0) as u8;
                 for (px, av) in pm.data_mut().iter_mut().zip(&a) {
@@ -421,12 +415,13 @@ impl Renderer {
             _ => None,
         };
         let container = is_container(a);
-        let art = match effects::crop_marks_art(a).or_else(|| effects::reshape(a, symbol.as_ref())) {
+        let art = match effects::crop_marks_art(a).or_else(|| effects::revolve_art(a)).or_else(|| effects::reshape(a, symbol.as_ref())) {
             Some(r) => r,
             None if container => effects::evaluate_container(a).unwrap_or_else(|| (**a).clone()),
             None if matches!(a.kind, NodeKind::Text(_) | NodeKind::Image(_) | NodeKind::Path { .. } | NodeKind::Compound { .. }) => (**a).clone(),
             None => effects::outline_art(a, symbol.as_ref()).unwrap_or_else(|| Node::group(a.id, vec![])),
         };
+        let art = if effects::has_revolve(a) { effects::evaluate_container(&art).unwrap_or(art) } else { art };
         let mut art = self.adjusted_art(doc, art, effects::color_map(&a.appearance.effects).as_ref());
         // A path's geometry effects still apply when it is drawn.
         let path = matches!(art.kind, NodeKind::Path { .. } | NodeKind::Compound { .. });
@@ -504,42 +499,12 @@ impl Renderer {
                 c.pop_layer();
             });
         }
-        // The content itself (blurred / feathered).
-        let blur: f64 = rfx
-            .iter()
-            .map(|fx| match fx {
-                RasterFx::Feather { radius } | RasterFx::GaussianBlur { radius } => radius.max(0.0),
-                _ => 0.0,
-            })
-            .sum();
-        if blur > 0.0 {
-            self.with_filters(ctx, f, reach, blur, None, |r, c, fr, _| {
-                let mut layers = 0;
-                for fx in rfx {
-                    match fx {
-                        RasterFx::Feather { radius } if *radius > 0.0 => {
-                            c.set_transform(fr.view);
-                            if let Some((g, rule)) = content.outline {
-                                c.set_fill_rule(fill_rule(rule));
-                                c.push_clip_layer(g);
-                                layers += 1;
-                            }
-                            c.push_layer(None, None, None, None, Some(blur_filter(radius / 2.0)));
-                            layers += 1;
-                        }
-                        RasterFx::GaussianBlur { radius } if *radius > 0.0 => {
-                            c.set_transform(fr.view);
-                            c.push_layer(None, None, None, None, Some(blur_filter(radius / 2.0)));
-                            layers += 1;
-                        }
-                        _ => {}
-                    }
-                }
-                paint(r, c, fr);
-                for _ in 0..layers {
-                    c.pop_layer();
-                }
-            });
+        // The content itself (blurred / feathered / filtered), on its pixels: a filter layer's blur
+        // works on a coarser grid tied to the canvas, so the blurred art shifted by up to a pixel
+        // and looked blocky as the view moved by parts of a pixel (#755).
+        let blurs = rfx.iter().any(|fx| matches!(fx, RasterFx::Feather { radius } | RasterFx::GaussianBlur { radius } if *radius > 0.0));
+        if blurs || rfx.iter().any(|fx| matches!(fx, RasterFx::Pixel(_))) {
+            self.pixel_content(ctx, f, content, rfx, paint);
         } else {
             paint(self, ctx, f);
         }
@@ -577,6 +542,114 @@ impl Renderer {
                     c.pop_layer();
                 }
             });
+        }
+    }
+
+    /// Paint `content` through the content-changing effects of `rfx` (Gaussian Blur, Feather and the
+    /// Photoshop-style filters) in stack order on its pixels: rendered offscreen over all it can
+    /// reach, filtered on the CPU and drawn back. The raster holds at most [`PIXEL_BUDGET`] pixels:
+    /// larger content is cropped to the view when every effect only looks nearby, else rendered
+    /// at a lower resolution. A whole raster at full resolution is cached while the object and the
+    /// zoom stay the same (panning only moves it).
+    fn pixel_content(
+        &mut self,
+        ctx: &mut RenderContext,
+        f: &Frame,
+        content: &Content,
+        rfx: &[RasterFx],
+        paint: &mut dyn FnMut(&mut Self, &mut RenderContext, &Frame),
+    ) {
+        let chain: Vec<&RasterFx> = rfx.iter().filter(content_changing).collect();
+        // Where the result can paint: each effect spreads what the ones before it painted.
+        let reach = chain.iter().fold(content.reach, |r, fx| {
+            let o = fx.outset(r);
+            r.inflate(o, o)
+        });
+        let full = f.view.transform_rect_bbox(reach).inflate(2.0, 2.0);
+        let (sw, sh) = (ctx.width() as f64, ctx.height() as f64);
+        if !(full.area().is_finite() && full.x1 > 0.0 && full.y1 > 0.0 && full.x0 < sw && full.y0 < sh) {
+            return;
+        }
+        let fits = full.area() <= PIXEL_BUDGET;
+        // Device pixels from a pixel to the content deciding it (`None`: anywhere).
+        let margin = chain.iter().try_fold(2.0, |m, fx| looks_around(fx).map(|d| m + d / f.px));
+        let region = match margin {
+            Some(m) if !fits => full.intersect(Rect::new(0.0, 0.0, sw, sh).inflate(m, m)),
+            _ => full,
+        };
+        let (x0, y0) = (region.x0.floor(), region.y0.floor());
+        let (rw, rh) = ((region.x1 - x0).max(1.0), (region.y1 - y0).max(1.0));
+        let side = u16::MAX as f64;
+        let k = (PIXEL_BUDGET / (rw * rh)).sqrt().min(side / rw).min(side / rh).min(1.0);
+        let (w, h) = ((rw * k).ceil().clamp(1.0, side), (rh * k).ceil().clamp(1.0, side));
+        // The cached raster, when the whole content was rendered at full size at this zoom.
+        let linear = linear_key(f.view);
+        let key = content.cache.filter(|_| fits && k >= 1.0).map(|slot| (content.node as *const Node as usize, slot, f.ink));
+        let stamp = self.stamp;
+        if let Some(e) = key.and_then(|key| self.pixel_fx.get_mut(&key)).filter(|e| e.linear == linear && e.node == *content.node) {
+            e.stamp = stamp;
+            let p = f.view * e.anchor;
+            let (image, at, k) = (e.image.clone(), ((p.x + e.rel.0).round(), (p.y + e.rel.1).round()), e.k);
+            draw_scaled(ctx, image, at, k);
+            return;
+        }
+        let (wu, hu) = (w as u16, h as u16);
+        let view = Affine::scale(k) * Affine::translate((-x0, -y0)) * f.view;
+        let to_doc = view.inverse();
+        let px = f.px / k;
+        let frame = Frame { mt: false, view, visible: to_doc.transform_rect_bbox(Rect::new(0.0, 0.0, w, h)), px, ..*f };
+        let mut off = f.offscreen_context(wu, hu);
+        self.inside_layer(|r| paint(r, &mut off, &frame));
+        off.flush();
+        let mut pm = vello_cpu::Pixmap::new(wu, hu);
+        off.render(&mut pm, &mut self.resources);
+        let channels = match f.ink {
+            Ink::Cmy => effects::pixel::Channels::CmyPlane,
+            Ink::K => effects::pixel::Channels::KPlane,
+            Ink::Display if f.doc.color_mode == vectorcraft_doc::ColorMode::Cmyk => effects::pixel::Channels::Cmyk,
+            Ink::Display => effects::pixel::Channels::Rgb,
+        };
+        // De-Interlace's field lines: the rows of the document's raster grid (1 to 2400 ppi).
+        let ppi = Some(f.doc.raster_effects_ppi).filter(|v| v.is_finite()).unwrap_or(72.0).clamp(1.0, 2400.0);
+        let (center, extent) = (content.reach.center(), 0.5 * content.reach.width().hypot(content.reach.height()));
+        let space = effects::PixelSpace { to_doc, px, center, channels, line: 72.0 / ppi, extent };
+        let (wz, hz) = (wu as usize, hu as usize);
+        for fx in chain {
+            match fx {
+                RasterFx::GaussianBlur { radius } => effects::pixel::gaussian_rgba(pm.data_as_u8_slice_mut(), wz, hz, radius / 2.0 / px),
+                RasterFx::Feather { radius } => {
+                    effects::pixel::gaussian_rgba(pm.data_as_u8_slice_mut(), wz, hz, radius / 2.0 / px);
+                    if let Some((g, rule)) = content.outline {
+                        self.clip_pixels(&mut pm, &frame, g, rule);
+                    }
+                }
+                RasterFx::Pixel(p) => p.apply(pm.data_as_u8_slice_mut(), wz, hz, &space),
+                _ => {}
+            }
+        }
+        let image = std::sync::Arc::new(pm);
+        if let Some(key) = key {
+            let anchor = content.reach.origin();
+            let p = f.view * anchor;
+            let rel = (x0 - p.x, y0 - p.y);
+            self.pixel_fx.insert(key, PixelEntry { node: content.node.clone(), linear, anchor, rel, k, image: image.clone(), stamp });
+        }
+        draw_scaled(ctx, image, (x0, y0), k);
+    }
+
+    /// Keep `pm`'s pixels only inside `g` filled by `rule` as `frame` draws it (Feather's clip).
+    fn clip_pixels(&mut self, pm: &mut vello_cpu::Pixmap, frame: &Frame, g: &BezPath, rule: FillRule) {
+        let mut m = frame.offscreen_context(pm.width(), pm.height());
+        m.set_transform(frame.view);
+        m.set_fill_rule(fill_rule(rule));
+        m.set_paint(peniko::Color::BLACK);
+        m.fill_path(g);
+        m.flush();
+        let mut mask = vello_cpu::Pixmap::new(pm.width(), pm.height());
+        m.render(&mut mask, &mut self.resources);
+        for (p, c) in pm.data_mut().iter_mut().zip(mask.data()) {
+            let keep = |v: u8| ((v as u32 * c.a as u32 + 127) / 255) as u8;
+            *p = vello_cpu::color::PremulRgba8 { r: keep(p.r), g: keep(p.g), b: keep(p.b), a: keep(p.a) };
         }
     }
 
@@ -883,6 +956,40 @@ mod tests {
             let worst = a.pixels.iter().zip(&b.pixels).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
             // The offscreen pass adds one 8-bit premultiplied round trip: a few levels of rounding.
             assert!(worst <= 4, "{name}: max channel difference {worst}");
+        }
+    }
+
+    #[test]
+    fn photoshop_filters_draw_and_follow_a_pan_from_the_cache() {
+        let d = doc_with(Rect::new(30.0, 30.0, 70.0, 70.0), Color::BLACK, vec![("blur.radial", json!({"amount": 40, "quality": "draft"}))]);
+        let opts = RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() };
+        let mut r = Renderer::new();
+        let a = r.render(&d, 100, 100, Affine::IDENTITY, &opts);
+        assert!(lum(a.pixel(31, 31)) > 60, "the spin softens the corners: {:?}", a.pixel(31, 31));
+        assert_eq!(lum(a.pixel(50, 50)), 0, "the centre stays");
+        assert!(lum(a.pixel(50, 28)) < WHITE, "turned corners reach past the sides");
+        // Panned: the cached raster moves with the view.
+        let b = r.render(&d, 100, 100, Affine::translate((10.0, 3.0)), &opts);
+        for (x, y) in [(31, 31), (50, 28), (69, 50), (40, 66)] {
+            assert_eq!(a.pixel(x, y), b.pixel(x + 10, y + 3), "({x}, {y})");
+        }
+        // A fresh renderer draws the panned view the same.
+        let c = Renderer::new().render(&d, 100, 100, Affine::translate((10.0, 3.0)), &opts);
+        assert_eq!(b.pixels, c.pixels);
+    }
+
+    #[test]
+    fn photoshop_filters_on_content_larger_than_the_budget() {
+        // Zoomed in 200×: the 40 pt square covers 8000 × 8000 px around a 200 × 200 view.
+        let opts = RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() };
+        let view = Affine::translate((100.0, 100.0)) * Affine::scale(200.0) * Affine::translate((-70.0, -50.0));
+        for (id, p) in [("sharpen.unsharpMask", json!({"amount": 200})), ("blur.smart", json!({})), ("blur.radial", json!({"quality": "draft"}))] {
+            let d = doc_with(Rect::new(30.0, 30.0, 70.0, 70.0), Color::rgb(0.2, 0.4, 0.8), vec![(id, p)]);
+            let img = Renderer::new().render(&d, 200, 200, view, &opts);
+            // The view shows the square's right side half way down: inside left, outside right.
+            assert!(lum(img.pixel(40, 100)) < 600, "{id}: inside {:?}", img.pixel(40, 100));
+            // (Smart Blur's wide samples read a blurred copy: a faint fringe under its threshold.)
+            assert!(lum(img.pixel(190, 100)) >= WHITE - 3 * 25, "{id}: outside {:?}", img.pixel(190, 100));
         }
     }
 }

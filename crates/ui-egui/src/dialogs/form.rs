@@ -67,6 +67,7 @@ fn order(kind: &str) -> &'static [&'static str] {
     match kind {
         "offsetPath" => &["offset", "joins", "miterLimit"],
         "splitIntoGrid" => &["rows", "columns", "gutter"],
+        "artboardOptions" => &["name", "width", "height"],
         _ => &[],
     }
 }
@@ -128,11 +129,11 @@ pub(super) fn text_area(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32
     r.inner
 }
 
-/// A checkbox bound to `d.fields[key]`.
+/// A checkbox bound to `d.fields[key]` (its box shows while unchecked too).
 pub(super) fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
-    let mut b = d.bool(key);
-    if ui.checkbox(&mut b, tl!(label)).changed() {
-        d.fields.insert(key.into(), Value::Bool(b));
+    let b = d.bool(key);
+    if crate::widgets::check(ui, label, b, true) {
+        d.fields.insert(key.into(), Value::Bool(!b));
     }
 }
 
@@ -197,21 +198,26 @@ pub(super) type Choices = &'static [(&'static str, &'static str)];
 
 /// Generic editor for command/effect parameters: numbers, booleans, strings and colours; the
 /// parameters `is_length` names are distances shown and typed in `unit`, those `choices` gives
-/// choices for are dropdowns. Returns true when a value changed.
+/// choices for are dropdowns. Fields come in `rank` order (by name among equals). Returns true when
+/// a value changed.
 pub(super) fn param_fields(
     ui: &mut egui::Ui,
     d: &mut Dialog,
     is_length: &dyn Fn(&str) -> bool,
     choices: &dyn Fn(&str) -> Option<Choices>,
+    rank: &dyn Fn(&str) -> usize,
     unit: Unit,
 ) -> bool {
     let t = Tokens::get(ui.ctx());
     let mut changed = false;
     egui::Grid::new("fxgrid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        let keys: Vec<(String, Value)> =
+        let mut keys: Vec<(String, Value)> =
             d.fields.iter().filter(|(k, _)| !k.starts_with("__") && k.as_str() != "preview").map(|(k, v)| (k.clone(), v.clone())).collect();
+        keys.sort_by_key(|(k, _)| rank(k));
         for (k, v) in keys {
-            ui.label(egui::RichText::new(humanized(&k)).color(t.text));
+            // A size's Relative / Absolute pair (Roughen, Zig Zag, Tweak) is its own label.
+            let relative = k == "relative" && v.is_boolean();
+            ui.label(egui::RichText::new(if relative { String::new() } else { humanized(&k) }).color(t.text));
             if let Some(cur) = crate::widgets::blend_param(&k, &v) {
                 if let Some(m) = crate::widgets::blend_param_dropdown(ui, ("fx-blend", &k), cur) {
                     d.fields.insert(k, m);
@@ -226,10 +232,13 @@ pub(super) fn param_fields(
                 continue;
             }
             if let Some(options) = choices(&k) {
+                // In the "effect" context: some languages read the plain Soft, Horizontal and
+                // Vertical (Grain's types) as type settings.
+                let shown = |label: &'static str| crate::i18n::tr_ctx(crate::i18n::current(), "effect", label);
                 let cur = v.as_str().unwrap_or_default();
-                let label = options.iter().find(|(_, value)| *value == cur).map_or(cur, |(l, _)| *l);
-                let labels: Vec<&str> = options.iter().map(|(l, _)| *l).collect();
-                if let Some((_, value)) = crate::widgets::dropdown(ui, ("fx-choice", &k), label, &labels, 140.0).and_then(|i| options.get(i)) {
+                let label = options.iter().find(|(_, value)| *value == cur).map_or(cur, |(l, _)| shown(l));
+                let labels: Vec<&str> = options.iter().map(|(l, _)| shown(l)).collect();
+                if let Some((_, value)) = crate::widgets::dropdown_names(ui, ("fx-choice", &k), label, &labels, 140.0).and_then(|i| options.get(i)) {
                     d.fields.insert(k, json!(value));
                     changed = true;
                 }
@@ -239,13 +248,23 @@ pub(super) fn param_fields(
             match v {
                 Value::Number(n) => {
                     if let Some(x) = crate::widgets::plain_field(ui, ("fx-num", &k), n.as_f64().unwrap_or(0.0), "", 3, 140.0) {
-                        d.fields.insert(k, json!(x));
+                        d.fields.insert(k, typed_number(x));
                         changed = true;
                     }
                 }
-                Value::Bool(mut b) => {
-                    if ui.checkbox(&mut b, "").changed() {
-                        d.fields.insert(k, json!(b));
+                Value::Bool(b) if relative => {
+                    ui.horizontal(|ui| {
+                        for (label, on) in [(tl!("Relative"), true), (tl!("Absolute"), false)] {
+                            if crate::widgets::radio(ui, label, b == on, true) && b != on {
+                                d.fields.insert(k.clone(), json!(on));
+                                changed = true;
+                            }
+                        }
+                    });
+                }
+                Value::Bool(b) => {
+                    if crate::widgets::check(ui, "", b, true) {
+                        d.fields.insert(k, json!(!b));
                         changed = true;
                     }
                 }
@@ -272,6 +291,13 @@ pub(super) fn param_fields(
     changed
 }
 
+/// A number typed in a command's dialog as JSON: a whole number as an integer, as counts are read
+/// (`as_u64`: Object Mosaic's columns and rows, #1000), which `12.0` isn't; a fraction stays one.
+/// Commands that take any number read either.
+fn typed_number(x: f64) -> Value {
+    if x.fract() == 0.0 && x.abs() < 1e15 { json!(x as i64) } else { json!(x) }
+}
+
 /// Editor for a plug-in's parameters from its schema (plug-in filter and effect dialogs): numbers
 /// within their range, whole numbers, checkboxes and dropdowns, in declaration order. Returns
 /// true when a value changed. The labels (from the parameter keys) and choices are the plug-in's
@@ -294,8 +320,8 @@ pub(super) fn schema_fields(ui: &mut egui::Ui, d: &mut Dialog, specs: &[(String,
                     crate::widgets::range_field(ui, ("plugin-int", k), x, *min as f64..=*max as f64, "", 0, 100.0).map(|x| json!(x as i64))
                 }
                 ParamSpec::Bool { .. } => {
-                    let mut b = cur.as_bool().unwrap_or(false);
-                    ui.checkbox(&mut b, "").changed().then(|| json!(b))
+                    let b = cur.as_bool().unwrap_or(false);
+                    crate::widgets::check(ui, "", b, true).then(|| json!(!b))
                 }
                 ParamSpec::Choice { options, .. } => {
                     let labels: Vec<&str> = options.iter().map(String::as_str).collect();
@@ -334,8 +360,14 @@ pub(super) fn humanize(k: &str) -> String {
         "Sy" => "Vertical %".into(),
         "Radius1" => "Radius 1".into(),
         "Radius2" => "Radius 2".into(),
+        "Max Radius" => "Max. Radius:".into(),
+        "Channel1" => "Channel 1:".into(),
+        "Channel2" => "Channel 2:".into(),
+        "Channel3" => "Channel 3:".into(),
+        "Channel4" => "Channel 4:".into(),
         "Include Cmy Blacks" => "Include Blacks with CMY:".into(),
         "Align To Path" => "Align to Path:".into(),
+        "Create" => "Create New Fields by:".into(),
         _ => format!("{s}:"),
     }
 }
@@ -377,19 +409,36 @@ pub(super) fn slider_w(
     track: &dyn Fn(f32) -> egui::Color32,
 ) {
     let t = Tokens::get(ui.ctx());
-    let (min, max) = (*range.start(), *range.end());
-    let v = d.f64(key, 0.0).clamp(min, max);
-    let mut new = None;
     ui.horizontal(|ui| {
         ui.add_sized([label_w, 22.0], egui::Label::new(egui::RichText::new(tl!(label)).color(t.text)));
-        if let (Some(x), _) = crate::widgets::color_slider(ui, ("dlg-slider", key), ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track) {
-            new = Some((min + x as f64 * (max - min)).round());
-        }
-        if let Some(x) = crate::widgets::plain_field(ui, ("dlg-field", key), v, suffix, 0, 52.0) {
-            new = Some(x.round().clamp(min, max));
-        }
+        slider_field(ui, d, key, range, suffix, track);
     });
-    if let Some(n) = new.filter(|n| *n != v) {
+}
+
+/// The rail and value field of [`slider`] without its label (for a row that draws its own).
+pub(super) fn slider_field(
+    ui: &mut egui::Ui,
+    d: &mut Dialog,
+    key: &str,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+    track: &dyn Fn(f32) -> egui::Color32,
+) {
+    let (min, max) = (*range.start(), *range.end());
+    let v = d.f64(key, 0.0).clamp(min, max);
+    slider_rail(ui, d, key, range, track);
+    if let Some(n) = crate::widgets::plain_field(ui, ("dlg-field", key), v, suffix, 0, 52.0).map(|x| x.round().clamp(min, max)).filter(|n| *n != v) {
+        d.fields.insert(key.into(), json!(n));
+    }
+}
+
+/// The rail of [`slider_field`] alone: dragging it sets the number `d.fields[key]` to a whole
+/// number in `range` (a value past the range shows at its end until the rail moves).
+pub(super) fn slider_rail(ui: &mut egui::Ui, d: &mut Dialog, key: &str, range: std::ops::RangeInclusive<f64>, track: &dyn Fn(f32) -> egui::Color32) {
+    let (min, max) = (*range.start(), *range.end());
+    let v = d.f64(key, 0.0).clamp(min, max);
+    let (dragged, _) = crate::widgets::color_slider(ui, ("dlg-slider", key), ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track);
+    if let Some(n) = dragged.map(|x| (min + x as f64 * (max - min)).round()).filter(|n| *n != v) {
         d.fields.insert(key.into(), json!(n));
     }
 }
@@ -509,4 +558,20 @@ pub(super) fn bleed(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
 pub(super) fn caption(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(tl!(text)).size(11.0).color(t.text_dim));
+}
+
+#[cfg(test)]
+mod typed_number_tests {
+    use super::*;
+
+    #[test]
+    fn whole_numbers_are_integers_and_fractions_stay_fractions() {
+        // Whatever the field held before: a count typed after a fraction is a count again.
+        assert_eq!(typed_number(24.0).as_u64(), Some(24));
+        assert_eq!(typed_number(-4.0), json!(-4));
+        assert_eq!(typed_number(0.0), json!(0));
+        assert_eq!(typed_number(2.5), json!(2.5));
+        // Numbers past exact integers stay floats.
+        assert!(typed_number(1e20).is_f64());
+    }
 }

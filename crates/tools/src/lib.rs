@@ -11,6 +11,7 @@ pub mod bbox;
 pub mod builder;
 pub mod catalog;
 pub mod corners;
+pub mod cropimage;
 pub mod cut;
 pub mod direct;
 pub mod distort;
@@ -322,6 +323,10 @@ pub struct ToolContext<'a> {
     pub measurement_labels: bool,
     /// Smart Guides → Transform Tools: the readouts while scaling, rotating and shearing.
     pub transform_tools_guides: bool,
+    /// Smart Guides → Spacing Guides: a moved selection snaps to spacing equal to the gap between
+    /// two other objects in its row or column, or evenly between its two neighbours, and the
+    /// equal gaps show.
+    pub spacing_guides: bool,
     /// Smart Guides → Snapping Tolerance (screen pixels): how near a smart guide target pulls the
     /// pointer, a dragged edge or a drawn point.
     pub snapping_tolerance: f64,
@@ -420,6 +425,11 @@ pub enum Cursor {
     ResizeNwSe,
     ResizeNeSw,
     Rotate,
+    /// The rotate cursor beside a bounding box, bowed toward the pointer's side of the box: off
+    /// its centre in direction `0..8` (0 straight up, then clockwise in 45° steps). Its arc wraps
+    /// the corner it is at, so at the top right it opens toward the bottom left. Make it with
+    /// [`Cursor::rotate_about`].
+    RotateToward(u8),
     /// Over a Live Corners widget (drag to round the corners).
     CornerRadius,
     Pen,
@@ -427,6 +437,8 @@ pub enum Cursor {
     PenDelete,
     PenClose,
     PenContinue,
+    /// While drawing, over an end of another open path (a click joins the two).
+    PenJoin,
     /// Over the last anchor of the path being drawn (a click retracts its outgoing handle), or with
     /// Alt held over a selected path's handle or anchor (the Anchor Point tool's gesture).
     PenConvert,
@@ -469,6 +481,18 @@ pub enum Cursor {
 }
 
 impl Cursor {
+    /// The rotate cursor for the pointer at `p` turning art about `center`: [`Cursor::RotateToward`]
+    /// the pointer's side of it, or the plain [`Cursor::Rotate`] on the centre itself.
+    pub fn rotate_about(center: Point, p: Point) -> Self {
+        let d = p - center;
+        if !(d.x.is_finite() && d.y.is_finite()) || d.hypot() < 1e-9 {
+            return Cursor::Rotate;
+        }
+        // y points down the page: atan2(x, -y) is 0 straight up and grows clockwise.
+        let octant = (d.x.atan2(-d.y) / std::f64::consts::FRAC_PI_4).round() as i64;
+        Cursor::RotateToward(octant.rem_euclid(8) as u8)
+    }
+
     /// General › Use Precise Cursors: the drawing tools' pointers (the Pen's in every state, the
     /// Eyedropper's, the Slice and Blend tools') become a plain crosshair at the hotspot.
     pub fn precise(self) -> Self {
@@ -478,6 +502,7 @@ impl Cursor {
             | Cursor::PenDelete
             | Cursor::PenClose
             | Cursor::PenContinue
+            | Cursor::PenJoin
             | Cursor::PenConvert
             | Cursor::Eyedropper
             | Cursor::Slice
@@ -511,6 +536,11 @@ pub trait Tool: Send {
     fn set_option(&mut self, _key: &str, _value: &Value) {}
     /// Is an interaction in progress (drag, open pen path)?
     fn busy(&self) -> bool {
+        false
+    }
+    /// Is a drag moving, scaling or rotating the selection (the canvas then hides the bounding box,
+    /// so only the art is seen going with the pointer)?
+    fn transforming(&self) -> bool {
         false
     }
     /// Does the tool take `key` now, ahead of the command shortcuts bound to it (the Gradient tool
@@ -582,6 +612,7 @@ pub fn create(id: &str) -> Box<dyn Tool> {
             .or_else(|| extra::create(other))
             .or_else(|| slice::create(other))
             .or_else(|| printtiling::create(other))
+            .or_else(|| cropimage::create(other))
             .or_else(|| cut::create(other))
             .unwrap_or_else(|| Box::new(NoopTool(tool_info(other).map(|t| t.id).unwrap_or("selection")))),
     }
@@ -695,6 +726,7 @@ pub(crate) mod testutil {
             anchor_path_labels: true,
             measurement_labels: true,
             transform_tools_guides: true,
+            spacing_guides: true,
             snapping_tolerance: 4.0,
             construction_angles: guides::construction_angles(guides::DEFAULT_CONSTRUCTION_ANGLES),
             screen: None,

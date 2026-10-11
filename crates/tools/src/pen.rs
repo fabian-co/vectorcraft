@@ -11,8 +11,9 @@
 //! it a corner, dragging an anchor pulls out new symmetric handles and dragging a segment reshapes
 //! it. Cmd held lends the selection tool used last for a drag (the engine's
 //! `Session::pointer`); the path being drawn goes on afterwards while it stays selected.
-//! Enter/Esc (or switching tools) ends the path. Clicking the end of a selected open path continues
-//! it. The rubber-band preview shows the next segment (Enable Rubber Band for Pen Tool). Auto Add/Delete: between paths, a click on a
+//! Enter/Esc (or switching tools) ends the path. Clicking an end of an open path continues it
+//! (selecting it); while drawing, clicking an end of another open path joins the two into one
+//! (#776). The rubber-band preview shows the next segment (Enable Rubber Band for Pen Tool). Auto Add/Delete: between paths, a click on a
 //! segment of a selected path adds an anchor there and a click on one of its anchors deletes it
 //! (Shift held or General → Disable Auto Add/Delete starts a new path instead). On a selected
 //! blend's spine a click adds a point (on a point no key object sits on: deletes it).
@@ -26,7 +27,7 @@ use vectorcraft_doc::{NodeId, NodeKind};
 use vectorcraft_geom::{BezPath, Point};
 
 use crate::direct::hit_handle;
-use crate::draw2::AnchorTool;
+use crate::draw2::{AnchorTool, editable_paths};
 use crate::guides::{DrawSnap, Leave};
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey};
 
@@ -80,6 +81,29 @@ fn active_path(cx: &ToolContext) -> Option<(NodeId, Point, Point, Point)> {
     Some((id, first, last.p, last.h_out))
 }
 
+/// An end of an open path (one subpath, not `except`) under `p`, within `tol`: the path the Pen
+/// continues or joins to, and whether it's the path's first anchor. Only paths that can be edited,
+/// not guides.
+fn open_end_at(cx: &ToolContext, p: Point, tol: f64, except: Option<NodeId>) -> Option<(NodeId, bool)> {
+    let id = vectorcraft_doc::hit::hit_test(cx.doc, p, cx.hit_options())?.leaf;
+    if Some(id) == except || !cx.doc.is_editable(id) {
+        return None;
+    }
+    let NodeKind::Path { path, guide: false, .. } = &cx.doc.node(id)?.kind else { return None };
+    let [sp] = path.subpaths.as_slice() else { return None };
+    if sp.closed {
+        return None;
+    }
+    let (first, last) = (sp.anchors.first()?.p, sp.anchors.last()?.p);
+    if p.distance(last) <= tol {
+        Some((id, false))
+    } else if p.distance(first) <= tol {
+        Some((id, true))
+    } else {
+        None
+    }
+}
+
 /// The last anchor of `id`'s last subpath: (subpath, anchor).
 fn last_anchor(cx: &ToolContext, id: NodeId) -> Option<(usize, usize)> {
     let pd = cx.doc.node(id)?.path_data()?;
@@ -96,15 +120,6 @@ fn alt_converts(cx: &ToolContext, p: Point, m: Mods) -> bool {
         && (hit_handle(cx, p, point).is_some()
             || crate::draw2::anchor_in(cx, editable_paths(cx), p, point).is_some()
             || crate::draw2::segment_in(cx, editable_paths(cx), p, cx.pick_tol()).is_some())
-}
-
-/// The selected paths the pen edits (not guides, nor locked or hidden ones).
-fn editable_paths<'a>(cx: &'a ToolContext) -> impl Iterator<Item = NodeId> + 'a {
-    cx.selection
-        .objects
-        .iter()
-        .copied()
-        .filter(|&id| cx.doc.is_editable(id) && cx.doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Path { guide: false, .. })))
 }
 
 /// Preview the outgoing handle of anchor `ai` of subpath `si` at `h`, the incoming one left alone.
@@ -160,6 +175,12 @@ impl Tool for PenTool {
                         self.handle = Some((id, si, ai, last));
                         return vec![Action::Begin("Convert Anchor Point".into()), set_out_handle(id, si, ai, last)];
                     }
+                    // An end of another open path: the two become one, and the path is finished.
+                    if let Some((other, at_first)) = open_end_at(cx, p, tol, Some(id)) {
+                        self.stop();
+                        let end = if at_first { "first" } else { "last" };
+                        return vec![Action::Exec("path.join".into(), json!({"ids": [id.0, other.0], "ends": ["last", end]}))];
+                    }
                     if let Some(acts) = self.alt_convert(cx, ev) {
                         return acts;
                     }
@@ -183,6 +204,15 @@ impl Tool for PenTool {
                         return vec![Action::Exec("path.reverse".into(), json!({}))];
                     }
                     return vec![];
+                }
+                // Continue any other open path from the end clicked, selecting it.
+                if let Some((id, at_first)) = open_end_at(cx, p, tol, None) {
+                    (self.drawing, self.path) = (true, Some(id));
+                    let mut out = vec![Action::Exec("select.set".into(), json!({"ids": [id.0]}))];
+                    if at_first {
+                        out.push(Action::Exec("path.reverse".into(), json!({"ids": [id.0]})));
+                    }
+                    return out;
                 }
                 if let Some(act) = auto_add_delete(cx, ev.pos, ev.mods, tol) {
                     return vec![act];
@@ -306,6 +336,9 @@ impl Tool for PenTool {
             if p.distance(last) <= tol {
                 return Cursor::PenConvert;
             }
+            if open_end_at(cx, p, tol, Some(id)).is_some() {
+                return Cursor::PenJoin;
+            }
         }
         if alt_converts(cx, p, m) {
             return Cursor::PenConvert;
@@ -316,7 +349,9 @@ impl Tool for PenTool {
                 Some([_]) => return Cursor::PenAdd,
                 _ => {}
             }
-            if active_path(cx).is_some_and(|(_, first, last, _)| p.distance(last) <= tol || p.distance(first) <= tol) {
+            if active_path(cx).is_some_and(|(_, first, last, _)| p.distance(last) <= tol || p.distance(first) <= tol)
+                || open_end_at(cx, p, tol, None).is_some()
+            {
                 return Cursor::PenContinue;
             }
             match auto_add_delete(cx, p, m, tol) {

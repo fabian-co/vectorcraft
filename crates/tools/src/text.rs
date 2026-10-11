@@ -59,6 +59,9 @@ struct Preedit {
     active: Option<Range<usize>>,
 }
 
+/// The edited text's layout, keyed by the font database's generation and the text.
+type CachedLayout = ((u64, TextObject), Arc<TextLayout>);
+
 #[derive(Default)]
 pub struct TypeTool {
     vertical: bool,
@@ -86,7 +89,7 @@ pub struct TypeTool {
     clicks: (Option<Point>, u8),
     /// Styled copy of the last copied range (pasting the same plain text keeps its styles).
     clipboard: Vec<TextRun>,
-    cache: Mutex<Option<(TextObject, Arc<TextLayout>)>>,
+    cache: Mutex<Option<CachedLayout>>,
 }
 
 impl TypeTool {
@@ -106,16 +109,19 @@ impl TypeTool {
         }
     }
 
-    /// Layout of `t`, cached by content (overlays run every frame).
+    /// Layout of `t`, cached by content (overlays run every frame) and by the fonts available (the
+    /// web build adds fonts after startup).
     fn layout(&self, t: &TextObject) -> Arc<TextLayout> {
+        let fonts = FontDb::global().generation();
         let mut c = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((k, l)) = c.as_ref()
+        if let Some(((g, k), l)) = c.as_ref()
+            && *g == fonts
             && k == t
         {
             return l.clone();
         }
         let l = Arc::new(vectorcraft_text::layout(FontDb::global(), t));
-        *c = Some((t.clone(), l.clone()));
+        *c = Some(((fonts, t.clone()), l.clone()));
         l
     }
 
@@ -524,8 +530,10 @@ impl Tool for TypeTool {
                 self.anchor = if word { edit::prev_word(&text, self.caret) } else { edit::prev_char(&text, self.caret) };
                 self.replace(cx, "", None)
             }
+            // Backspace takes back one character (a mistyped Thai tone mark, say); Delete, the
+            // Left and Right arrows a whole cluster.
             ToolKey::Delete if self.caret < len => {
-                self.anchor = if word { edit::next_word(&text, self.caret) } else { edit::next_char(&text, self.caret) };
+                self.anchor = if word { edit::next_word(&text, self.caret) } else { edit::next_cluster(&text, self.caret) };
                 self.replace(cx, "", None)
             }
             ToolKey::Left => {
@@ -543,7 +551,7 @@ impl Tool for TypeTool {
                     if lay.glyphs.iter().any(|g| g.rtl) {
                         vectorcraft_text::caret_horizontal(&lay, self.caret, false)
                     } else {
-                        edit::prev_char(&text, self.caret)
+                        edit::prev_cluster(&text, self.caret)
                     }
                 };
                 self.move_to(to, mods.shift)
@@ -563,7 +571,7 @@ impl Tool for TypeTool {
                     if lay.glyphs.iter().any(|g| g.rtl) {
                         vectorcraft_text::caret_horizontal(&lay, self.caret, true)
                     } else {
-                        edit::next_char(&text, self.caret)
+                        edit::next_cluster(&text, self.caret)
                     }
                 };
                 self.move_to(to, mods.shift)

@@ -223,7 +223,7 @@ fn headless_end_to_end() {
 
     // Resources.
     let v = rpc(&mut s, 10, "resources/list", json!({}));
-    assert_eq!(v["result"]["resources"].as_array().unwrap().len(), 2);
+    assert_eq!(v["result"]["resources"].as_array().unwrap().len(), 3);
     let v = rpc(&mut s, 11, "resources/read", json!({"uri": "vectorcraft://document"}));
     let text = v["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(serde_json::from_str::<Value>(text).unwrap()["layers"].is_array());
@@ -310,6 +310,22 @@ fn inspect_document_reports_the_paint_of_type() {
     assert_eq!(r["isError"], false, "{r}");
     let t = node(&mut s, 5);
     assert_eq!((t["fill"].as_str(), t["stroke"].as_str(), t["strokeWidth"].as_f64()), (Some("#0000ff"), Some("#00ff00"), Some(3.0)), "{t}");
+}
+
+/// #1003: type made on or in a path takes add_text's `color` too, over the current fill.
+#[test]
+fn add_text_on_or_in_a_path_takes_its_color() {
+    for mode in ["onPath", "area"] {
+        let mut s = server();
+        let r = call(&mut s, 2, "draw_shape", json!({"shape": "rectangle", "x": 40, "y": 40, "width": 180, "height": 60, "fill": "#0000ff"}));
+        let path = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["id"].clone();
+        let r = call(&mut s, 3, "add_text", json!({"text": "Hello", "path": path, "mode": mode, "color": "#ff0000"}));
+        assert_eq!(r["isError"], false, "{r}");
+        let id = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["id"].clone();
+        let v: Value = serde_json::from_str(&text_of(&call(&mut s, 4, "inspect_document", json!({})))).unwrap();
+        let t = v["layers"][0]["children"].as_array().unwrap().iter().find(|c| c["id"] == id).cloned().unwrap();
+        assert_eq!(t["fill"].as_str(), Some("#ff0000"), "{mode}: {t}");
+    }
 }
 
 /// save_file says it saves in the document's own format or the one the path's extension picks.
@@ -561,6 +577,24 @@ fn shift_marquee_gesture_toggles_the_selection() {
         let want = if tool == "selection" { json!([a, c]) } else { json!([a, b]) };
         assert_eq!(*sel, want, "{tool}");
     }
+}
+
+/// Preferences › Type › Show Font Names in English (#394): agents set it with `prefs.set`;
+/// `text.fontList` stays the English (canonical) family names used by `text.setStyle`, not the
+/// native UI labels.
+#[test]
+fn show_font_names_in_english_does_not_change_font_list_for_agents() {
+    let mut s = server();
+    let r = call(&mut s, 1, "run_command", json!({"command": "prefs.set", "params": {"key": "fontNamesInEnglish", "value": false}}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = call(&mut s, 2, "run_command", json!({"command": "prefs.get", "params": {"key": "fontNamesInEnglish"}}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(serde_json::from_str::<Value>(&text_of(&r)).unwrap(), json!(false));
+    let r = call(&mut s, 3, "run_command", json!({"command": "text.fontList", "params": {}}));
+    assert_eq!(r["isError"], false, "{r}");
+    let families = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["families"].as_array().unwrap().clone();
+    // Canonical English name for commands, whatever the UI labels show with the preference off.
+    assert!(families.iter().any(|f| f.as_str() == Some("Source Sans 3")), "{families:?}");
 }
 
 /// Type preferences reach agents (#394): type the Type tool places starts with placeholder text,

@@ -21,7 +21,7 @@ use vectorcraft_color::Swatch;
 use vectorcraft_doc::{Document, GraphicStyle, ImageBlob, Node, NodeId, PatternDef, Symbol, TextStyleDef};
 use vectorcraft_geom::Rect;
 
-pub use flavours::{BITMAP, EMF, FILE_HEAD, Flavour, PASTE_ORDER, PDF, PNG, SVG, TEXT, file_flavour, is_address};
+pub use flavours::{BITMAP, EMF, FILE_HEAD, Flavour, PASTE_ORDER, PDF, PNG, SVG, TEXT, file_flavour, is_address, names_a_picture};
 pub(crate) use resources::SwatchChoices;
 
 use super::*;
@@ -154,11 +154,18 @@ impl Clipboard {
             }
             vectorcraft_brush::store(&mut d, &lib);
         }
-        let mut layer = Node::layer(NodeId(u64::MAX), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
+        // The layer's id is above every copied object's, so the document saves and reopens as
+        // a native file.
+        let mut top = 0;
+        for n in &self.nodes {
+            n.walk(&mut |c| top = top.max(c.id.0));
+        }
+        let mut layer = Node::layer(NodeId(top.saturating_add(1)), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
         if let Some(ch) = layer.children_mut() {
             *ch = self.nodes.iter().cloned().map(Arc::new).collect();
         }
         d.layers = vec![Arc::new(layer)];
+        d.fix_next_id();
         d
     }
 }
@@ -170,8 +177,10 @@ impl Session {
             return None;
         }
         let d = self.clipboard.to_document();
+        // SVG has no filters for the Photoshop-style effects: their objects go in as images.
+        let flat = super::rasterfx::flatten_pixel_effects(&d);
         Some(vectorcraft_svg::export(
-            &d,
+            flat.as_ref().unwrap_or(&d),
             &vectorcraft_svg::ExportOptions { artboard: None, object_ids: vectorcraft_svg::ObjectIds::Minimal, ..Default::default() },
         ))
     }
@@ -236,6 +245,24 @@ mod tests {
         }
         for t in ["Pasted words", "see https://example.com", "https://a.org https://b.org", "https://", "example.com/cat.png", ""] {
             assert!(!is_address(t), "{t}");
+        }
+    }
+
+    /// The image markup some browsers put as text next to a copied picture names it too (#1089);
+    /// markup with words in it is text.
+    #[test]
+    fn markup_of_only_images_names_a_picture() {
+        for m in [
+            r#"<img src="https://static.example.com/eagle.png" jsaction="" class="sFlh5c" style="max-width: 351px" alt="">"#,
+            r#"<meta http-equiv="content-type" content="text/html; charset=utf-8"><img src="a.png">"#,
+            "<html><body><!--StartFragment--><IMG SRC=\"a.png\"/><!--EndFragment--></body></html>",
+            r#"<a href="https://x.org"><img src="a.png"></a>"#,
+            "https://example.com/cat.png",
+        ] {
+            assert!(names_a_picture(m), "{m}");
+        }
+        for t in ["<p>Hello</p>", r#"<img src="a.png"> and a caption"#, "<b>bold</b>", "<imgx>", "<img", "plain words", "<br>", ""] {
+            assert!(!names_a_picture(t), "{t}");
         }
     }
 

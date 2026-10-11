@@ -22,7 +22,9 @@ mod effectcmd;
 pub mod expand;
 pub(crate) mod fileinfo;
 pub mod fileio;
+pub mod findfiles;
 pub mod flatten;
+pub mod fontfiles;
 mod fonts;
 pub(crate) mod freeform;
 pub(crate) mod gradient;
@@ -32,6 +34,7 @@ pub mod help;
 pub(crate) mod inline;
 mod layer;
 mod layerpanel;
+pub mod library;
 pub mod links;
 mod live;
 pub(crate) mod maskedit;
@@ -74,6 +77,7 @@ pub(crate) mod textwrap;
 pub(crate) mod threads;
 pub(crate) mod typecmd;
 mod typemenu;
+mod variablecmds;
 pub(crate) mod views;
 pub mod wand;
 pub mod webexport;
@@ -222,6 +226,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(inline::specs());
         v.extend(textstyles::specs());
         v.extend(fonts::specs());
+        v.extend(fontfiles::specs());
         v.extend(help::specs());
         v.extend(threads::specs());
         v.extend(textwrap::specs());
@@ -231,6 +236,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(maskedit::specs());
         v.extend(tabs::specs());
         v.extend(docmenu::specs());
+        v.extend(variablecmds::specs());
         v.extend(docinfo::specs());
         v.extend(panelcmds::specs());
         v.extend(buildcmds::specs());
@@ -245,6 +251,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(freeform::specs());
         v.extend(flatten::specs());
         v.extend(stylelib::specs());
+        v.extend(library::specs());
         v.extend(expand::specs());
         v.extend(attributes::specs());
         v.extend(newart::specs());
@@ -302,6 +309,43 @@ pub(crate) fn id_param(p: &Value, key: &str) -> Option<NodeId> {
 pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<NodeId>> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(NodeId).collect())
 }
+/// Validate all explicit targets before a command changes the document or selection.
+pub(crate) fn checked_ids_param(s: &Session, p: &Value, key: &str, command: &str) -> Result<Vec<NodeId>> {
+    let values =
+        p.get(key).and_then(Value::as_array).ok_or_else(|| bad(command, format!("{key} must be an array of non-negative integer object ids")))?;
+    values.iter().map(|value| checked_id(s, value, command)).collect()
+}
+
+/// The objects a command acts on: `ids` when given (every one checked), else the selected objects.
+pub(crate) fn checked_ids_or_selection(s: &Session, p: &Value, command: &str) -> Result<Vec<NodeId>> {
+    if p.get("ids").is_some() { checked_ids_param(s, p, "ids", command) } else { edit::selected_roots(s) }
+}
+
+pub(crate) fn checked_id(s: &Session, value: &Value, command: &str) -> Result<NodeId> {
+    let id = value.as_u64().map(NodeId).ok_or_else(|| bad(command, format!("invalid object id {value}: expected a non-negative integer")))?;
+    if s.doc()?.doc.node(id).is_none() {
+        return Err(bad(command, format!("no such object id {value}")));
+    }
+    Ok(id)
+}
+
+/// `v` as exactly `N` finite numbers (`[x, y]`, `[x, y, width, height]`…): `None` when it isn't an
+/// array of that length or an entry isn't a number, so nothing malformed is left out or padded.
+pub(crate) fn finite_numbers<const N: usize>(v: &Value) -> Option<[f64; N]> {
+    let a = v.as_array().filter(|a| a.len() == N)?;
+    let mut out = [0.0; N];
+    for (o, n) in out.iter_mut().zip(a) {
+        *o = n.as_f64().filter(|n| n.is_finite())?;
+    }
+    Some(out)
+}
+
+/// `v` as a list of point indices: `None` unless it is an array of non-negative integers, so no
+/// malformed index is dropped or wrapped round.
+pub(crate) fn point_indices(v: &Value) -> Option<Vec<usize>> {
+    v.as_array()?.iter().map(|i| usize::try_from(i.as_u64()?).ok()).collect()
+}
+
 pub(crate) fn point_param(p: &Value, key: &str) -> Option<Point> {
     let a = p.get(key)?.as_array()?;
     Some(Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?))
@@ -346,13 +390,23 @@ pub fn color_value(v: &Value) -> Option<Color> {
 
 /// Objects a command targets: explicit `ids` param or the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<NodeId>> {
-    if let Some(ids) = ids_param(p, "ids") {
-        return Ok(ids);
+    // Objects given are used as given: a value that isn't an object id fails rather than the
+    // command acting on the selection instead (#785).
+    let object_id = |v: &Value| v.as_u64().map(NodeId).ok_or_else(|| EngineError::Other(format!("object ids are non-negative integers, not {v}")));
+    match p.get("ids").filter(|v| !v.is_null()) {
+        Some(Value::Array(a)) => return a.iter().map(object_id).collect(),
+        Some(v) => return Err(EngineError::Other(format!("`ids` must be an array of object ids, not {v}"))),
+        None => {}
     }
-    if let Some(id) = id_param(p, "id") {
-        return Ok(vec![id]);
+    match p.get("id").filter(|v| !v.is_null()) {
+        Some(v @ Value::Number(_)) => Ok(vec![object_id(v)?]),
+        // A step reference a batch couldn't resolve (other strings are other ids, such as an
+        // effect's).
+        Some(Value::String(r)) if r.starts_with('$') => {
+            Err(EngineError::Other(format!("`id` is the step reference {r:?}, which only `run` and `command_batch` resolve")))
+        }
+        _ => Ok(s.doc()?.selection.objects.clone()),
     }
-    Ok(s.doc()?.selection.objects.clone())
 }
 
 pub(crate) fn ok() -> Result<Value> {

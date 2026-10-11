@@ -86,6 +86,50 @@ pub fn ellipse(r: Rect) -> PathData {
     PathData::single(SubPath::new(anchors, true))
 }
 
+/// The ellipse inscribed in `r` cut as a pie: from `start` to `end` degrees, measured
+/// counterclockwise on screen from 3 o'clock (as Illustrator's Pie Start and End Angle are), then
+/// back through the centre. A pie spanning the whole turn (or nothing) is the whole [`ellipse`].
+/// The arc is one cubic per quarter turn at most: the centre, then the arc's anchors.
+pub fn ellipse_pie(r: Rect, start: f64, end: f64) -> PathData {
+    let span = (end - start).rem_euclid(360.0);
+    if !(start.is_finite() && end.is_finite()) || span < 1e-9 || 360.0 - span < 1e-9 {
+        return ellipse(r);
+    }
+    let r = r.abs();
+    let c = r.center();
+    let (rx, ry) = (r.width() / 2.0, r.height() / 2.0);
+    // Screen y runs down: counterclockwise on screen is a falling y.
+    let at = |deg: f64| {
+        let t = deg.to_radians();
+        Point::new(c.x + rx * t.cos(), c.y - ry * t.sin())
+    };
+    let tangent = |deg: f64| {
+        let t = deg.to_radians();
+        Vec2::new(-rx * t.sin(), -ry * t.cos())
+    };
+    let pieces = if span <= 90.0 {
+        1
+    } else if span <= 180.0 {
+        2
+    } else if span <= 270.0 {
+        3
+    } else {
+        4
+    };
+    let step = span / f64::from(pieces);
+    let k = 4.0 / 3.0 * (step.to_radians() / 4.0).tan();
+    let mut anchors = vec![Anchor::corner(c)];
+    for i in 0..=pieces {
+        let a = start + step * f64::from(i);
+        let (p, d) = (at(a), tangent(a) * k);
+        let h_in = if i == 0 { p } else { p - d };
+        let h_out = if i == pieces { p } else { p + d };
+        let kind = if i == 0 || i == pieces { AnchorKind::Corner } else { AnchorKind::Smooth };
+        anchors.push(Anchor { p, h_in, h_out, kind });
+    }
+    PathData::single(SubPath::new(anchors, true))
+}
+
 /// Regular polygon with `sides` (≥ 3), first vertex straight up from the centre.
 pub fn polygon(center: Point, radius: f64, sides: u32, rotation_deg: f64) -> PathData {
     let n = sides.max(3);
@@ -191,8 +235,9 @@ pub fn polar_grid(r: Rect, concentric: u32, radial: u32) -> Vec<PathData> {
         let f = i as f64 / (concentric + 1) as f64;
         out.push(ellipse(Rect::from_center_size(c, (r.width() * f, r.height() * f))));
     }
-    for i in 0..radial.max(1) {
-        let a = -PI / 2.0 + TAU * i as f64 / radial.max(1) as f64;
+    // No dividers at 0 (the loop never divides by it).
+    for i in 0..radial {
+        let a = -PI / 2.0 + TAU * i as f64 / radial as f64;
         out.push(line(c, Point::new(c.x + r.width() / 2.0 * a.cos(), c.y + r.height() / 2.0 * a.sin())));
     }
     out
@@ -205,6 +250,27 @@ mod tests {
     /// The corner (index into `radii`) of each anchor of [`rectangle_with_corners`].
     fn corner_sources(r: Rect, radii: [f64; 4]) -> Vec<usize> {
         crate::corners::cut_corners(&rectangle(r), &radii, &[]).1.concat()
+    }
+
+    /// A pie is the arc from its start to its end angle, counterclockwise on screen, closed through
+    /// the centre; a whole turn (or none) is the ellipse.
+    #[test]
+    fn a_pie_is_its_arc_closed_through_the_centre() {
+        let r = Rect::new(0.0, 0.0, 200.0, 100.0);
+        assert_eq!(ellipse_pie(r, 0.0, 360.0), ellipse(r));
+        assert_eq!(ellipse_pie(r, 90.0, 90.0), ellipse(r));
+        // A quarter, from 3 o'clock up to 12: the centre, then the arc's two ends.
+        let q = ellipse_pie(r, 0.0, 90.0);
+        let a: Vec<Point> = q.subpaths[0].anchors.iter().map(|a| a.p).collect();
+        assert_eq!(a.len(), 3);
+        assert!(a[0].distance(Point::new(100.0, 50.0)) < 1e-9 && a[1].distance(Point::new(200.0, 50.0)) < 1e-9);
+        assert!(a[2].distance(Point::new(100.0, 0.0)) < 1e-9, "counterclockwise on screen: up");
+        assert_eq!(q.bounds().map(|b| (b.x0.round(), b.y0.round(), b.x1.round(), b.y1.round())), Some((100.0, 0.0, 200.0, 50.0)));
+        // Three quarters, from 12 round to 3 o'clock: four pieces at most, the whole box covered.
+        let big = ellipse_pie(r, 90.0, 0.0);
+        assert!(big.subpaths[0].anchors.len() <= 6 && big.subpaths[0].closed);
+        assert_eq!(big.bounds().map(|b| (b.x0.round(), b.y0.round(), b.x1.round(), b.y1.round())), Some((0.0, 0.0, 200.0, 100.0)));
+        assert!(ellipse_pie(r, f64::NAN, 10.0).anchor_count() == 4, "not a number: the whole ellipse");
     }
 
     #[test]
@@ -337,6 +403,10 @@ mod tests {
     fn grids() {
         assert_eq!(rectangular_grid(Rect::new(0.0, 0.0, 10.0, 10.0), 5, 5, true).len(), 11);
         assert_eq!(polar_grid(Rect::new(0.0, 0.0, 10.0, 10.0), 5, 5).len(), 11);
+        // #1008: no radial dividers is none, only the outer ellipse without concentric ones.
+        for (radial, len) in [(0, 1), (1, 2), (2, 3)] {
+            assert_eq!(polar_grid(Rect::new(0.0, 0.0, 10.0, 10.0), 0, radial).len(), len, "{radial}");
+        }
     }
 
     #[test]

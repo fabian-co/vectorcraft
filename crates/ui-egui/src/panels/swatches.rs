@@ -581,6 +581,7 @@ pub(crate) fn drag_preview(app: &VectorcraftApp, ctx: &egui::Context) {
             None => return,
         },
         PanelDrag::Brush { def, .. } => return pointer_chip(ctx, |ui, r| super::brushes::chip(ui, r, def)),
+        PanelDrag::LibraryGraphic { library, item } => return pointer_chip(ctx, |ui, r| super::libraries::chip(app, ui, r, library, item)),
     };
     pointer_chip(ctx, |ui, r| {
         if registration {
@@ -641,7 +642,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, salt: &'static str) {
         }
     });
     ui.add_space(4.0);
-    super::recent_colors_row(app, ui);
+    // A recent colour paints the active proxy (Alt: the inactive one), as a swatch does.
+    if let Some(c) = super::recent_colors_row(app, ui) {
+        super::apply_click(app, ui, json!({"color": super::color_json(&c)}));
+    }
     widgets::divider(ui);
     widgets::subheader(ui, tl!("Swatch Tiles"));
     let query = if pstate(ui.ctx(), "swatch-show-find") { widgets::search_field(ui, find_id(), tl!("Find")) } else { String::new() };
@@ -1088,8 +1092,10 @@ impl LibraryKind for SwatchLibraries {
     }
     fn menu_tail(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.separator();
+        // As a command, so its file dialog, shown off the UI thread, loads the library when it
+        // answers.
         if menu_item(ui, tl!("Other Library…"), true, false)
-            && let Err(e) = other_library(app, None)
+            && let Err(e) = app.run("window.swatchLibrary.other", json!({}))
         {
             app.status(e);
         }

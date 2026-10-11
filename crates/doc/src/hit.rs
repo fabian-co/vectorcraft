@@ -86,6 +86,19 @@ pub fn objects_at(doc: &Document, p: Point, opt: HitOptions, scope: Option<NodeI
 
 /// [`hit_test`] passing over the nodes `skip` names (and their contents).
 fn hit_test_skipping(doc: &Document, p: Point, opt: HitOptions, skip: &dyn Fn(NodeId) -> bool) -> Option<Hit> {
+    let finish = |mut h: Hit| {
+        h.contents_of = h.ancestry.iter().rev().copied().find(|a| doc.node(*a).is_some_and(edits_contents));
+        h.layers = h.ancestry.iter().take_while(|a| doc.node(**a).is_some_and(Node::is_layer)).count();
+        h
+    };
+    // Isolation mode: only what is inside the isolated container hits. The art around it is
+    // locked, and clicks pass through it (#833).
+    if let Some(scope) = opt.scope
+        && let Some(container) = doc.node(scope).filter(|n| n.is_container())
+        && let Some(mut chain) = doc.ancestry(scope)
+    {
+        return hit_children(container, p, opt, skip, &mut chain).map(finish);
+    }
     let mut chain = Vec::new();
     for layer in doc.layers.iter().rev() {
         if !layer.visible || layer.locked {
@@ -100,10 +113,8 @@ fn hit_test_skipping(doc: &Document, p: Point, opt: HitOptions, skip: &dyn Fn(No
         }
         chain.push(layer.id);
         let opt = if matches!(layer.kind, NodeKind::Layer { preview: false, .. }) { HitOptions { outline: true, ..opt } } else { opt };
-        if let Some(mut h) = hit_children(layer, p, opt, skip, &mut chain) {
-            h.contents_of = h.ancestry.iter().rev().copied().find(|a| doc.node(*a).is_some_and(edits_contents));
-            h.layers = h.ancestry.iter().take_while(|a| doc.node(**a).is_some_and(Node::is_layer)).count();
-            return Some(h);
+        if let Some(h) = hit_children(layer, p, opt, skip, &mut chain) {
+            return Some(finish(h));
         }
         chain.pop();
     }
@@ -364,6 +375,20 @@ mod tests {
         assert!(hit_test(&d, Point::new(50.5, 25.0), HitOptions::default()).is_some());
     }
 
+    /// #1103: a marquee drawn over a background picks what is on it, not the background, whose
+    /// outline it doesn't touch.
+    #[test]
+    fn a_marquee_inside_a_background_leaves_the_background() {
+        let mut d = Document::new(200.0, 200.0);
+        let l = d.layers[0].id;
+        let (back, small) = (d.alloc_id(), d.alloc_id());
+        d.insert(Some(l), 0, Node::path(back, shapes::rectangle(Rect::new(0.0, 0.0, 200.0, 200.0)), Appearance::default_art())).unwrap();
+        d.insert(Some(l), 1, Node::path(small, shapes::rectangle(Rect::new(50.0, 50.0, 60.0, 60.0)), Appearance::default_art())).unwrap();
+        assert_eq!(marquee(&d, Rect::new(40.0, 40.0, 70.0, 70.0), None, false), vec![small]);
+        // Reaching the background's edge takes it too.
+        assert_eq!(marquee(&d, Rect::new(-5.0, 40.0, 70.0, 70.0), None, false), vec![back, small]);
+    }
+
     #[test]
     fn group_top_object() {
         let mut d = Document::new(200.0, 200.0);
@@ -560,7 +585,11 @@ world",
         d.insert(Some(l), 9, far).unwrap();
         let at = |x: f64, scope| objects_at(&d, Point::new(x, 25.0), HitOptions::default(), scope);
         assert_eq!(at(30.0, None), vec![g, a_id]);
-        assert_eq!(at(30.0, Some(g))[..2], [c_id, b_id], "isolated: the group's own objects");
+        assert_eq!(at(30.0, Some(g)), [c_id, b_id], "isolated: the group's own objects");
+        // Isolated, the art around the group is locked: clicks pass through it (#833).
+        assert!(at(5.0, Some(g)).is_empty());
+        assert!(at(130.0, Some(g)).is_empty());
+        assert!(hit_test(&d, Point::new(5.0, 25.0), HitOptions { scope: Some(g), ..HitOptions::default() }).is_none());
         assert_eq!(at(5.0, None), vec![a_id]);
         assert!(at(90.0, None).is_empty());
     }

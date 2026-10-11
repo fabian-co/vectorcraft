@@ -64,6 +64,9 @@ pub fn start() {
     wasm_bindgen_futures::spawn_local(async move {
         // Before the first frame, which looks for copies a crash left behind.
         let locks = WebLocks::start(RECOVERY_PREFIX).await;
+        // Fallback fonts the first frame needs (Noto Sans Arabic), fetched while the loading text
+        // shows; the rest load in the background once the app runs.
+        crate::fonts::load_startup_fonts().await;
         let host = Host {
             runner: eframe::WebRunner::new(),
             inbox: Arc::default(),
@@ -99,6 +102,7 @@ async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Movi
             web_options(),
             Box::new(move |cc| {
                 let ctx = &cc.egui_ctx;
+                crate::fonts::spawn_background_fonts(ctx.clone());
                 let loss = GraphicsLoss::default();
                 watch_canvas(&page, &loss, ctx);
                 if let Some(rs) = &cc.wgpu_render_state {
@@ -304,7 +308,8 @@ fn notice(lines: &[&str]) {
 }
 
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
-/// and feed them through the inboxes: placed where they were dropped on the canvas, else opened.
+/// and feed them through the inboxes: placed where they were dropped on the canvas, else opened
+/// (libraries, presets and plug-ins open wherever they are dropped).
 /// When the graphics are lost it hands the app to a new runner on a new canvas.
 struct WebShell {
     /// `None` once handed on.

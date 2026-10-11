@@ -15,35 +15,32 @@ use crate::{FilePick, Services, VectorcraftApp, dialogs};
 const TEMPLATE_EXTS: &[&str] = &["vctemplate", "ait", "vectorcraft", "drawcraft"];
 
 /// Open bytes of any readable format as a new document (templates open untitled); swatch and
-/// graphic style library files open in the library panel and flattener, PDF, print and perspective
-/// grid presets files are imported. → `document.open`'s result for a document opened now (its
+/// graphic style library files open in the library panel, Libraries panel files are added to it,
+/// and flattener, PDF, print and perspective grid presets files are imported. → `document.open`'s result for a document opened now (its
 /// `warnings` say what didn't come in as it was), else null.
 pub fn open_bytes(app: &mut VectorcraftApp, name: &str, bytes: &[u8], path: Option<String>) -> Result<Value, String> {
-    let ext = fileio::extension(name);
+    let opens = opens_as(name);
     // A WebAssembly plug-in is installed.
-    if vectorcraft_engine::cmd::plugin::EXTS.contains(&ext.as_str()) {
+    if opens == Some(OpensAs::Plugin) {
         let r =
             app.run("plugin.install", json!({"dataBase64": vectorcraft_format::base64_encode(bytes), "name": path.as_deref().unwrap_or(name)}))?;
         app.status(format!("Installed plug-in {}", r["name"].as_str().unwrap_or(name)));
         return Ok(Value::Null);
     }
-    let presets = [
-        (vectorcraft_engine::cmd::flatten::PRESET_EXTS, "flattener.presets.import", "flattener presets"),
-        (vectorcraft_engine::cmd::pdfcmds::PRESET_EXTS, "pdf.preset.import", "PDF presets"),
-        (vectorcraft_engine::cmd::printpresets::PRESET_EXTS, "print.presets.import", "print presets"),
-        (vectorcraft_engine::cmd::perspgrid::PRESET_EXTS, "perspective.presets.import", "perspective grid presets"),
-    ];
-    if let Some((_, import, what)) = presets.iter().find(|(exts, ..)| exts.contains(&ext.as_str())) {
+    if let Some(OpensAs::Presets { import, what }) = opens {
         let r = app.run(import, serde_json::json!({"data": String::from_utf8_lossy(bytes)}))?;
         let names: Vec<&str> = r["imported"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
         app.status(format!("Imported {what}: {}", names.join(", ")));
         return Ok(Value::Null);
     }
-    let swatches = vectorcraft_engine::cmd::swatchlib::LIBRARY_EXTS.contains(&ext.as_str());
-    if swatches || ext == vectorcraft_doc::style_libs::STYLES_EXT {
+    if opens == Some(OpensAs::Library) {
+        return crate::panels::libraries::import(app, json!({"data": String::from_utf8_lossy(bytes)})).map(|_| Value::Null);
+    }
+    let swatches = opens == Some(OpensAs::SwatchLibrary);
+    if swatches || opens == Some(OpensAs::StyleLibrary) {
         let p = match path {
             Some(path) => serde_json::json!({ "path": path }),
-            // `.ase` swatch libraries and colour books are binary.
+            // `.ase` swatch libraries are binary.
             None if swatches => serde_json::json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(bytes)}),
             None => serde_json::json!({"name": name, "data": String::from_utf8_lossy(bytes)}),
         };
@@ -58,6 +55,49 @@ pub fn open_bytes(app: &mut VectorcraftApp, name: &str, bytes: &[u8], path: Opti
         return Ok(Value::Null);
     }
     open_document(app, name, bytes, path, &Value::Null)
+}
+
+/// The kinds of file File → Open installs, imports or shows in the library panel or the Libraries
+/// panel ([`opens_as`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OpensAs {
+    /// A WebAssembly plug-in: installed.
+    Plugin,
+    /// Flattener, PDF, print or perspective grid presets: imported with command `import`, and
+    /// `what` names them in the status bar.
+    Presets { import: &'static str, what: &'static str },
+    /// A Libraries panel file: added to the Libraries panel as a new library.
+    Library,
+    /// A swatch library: opened in the library panel.
+    SwatchLibrary,
+    /// A graphic style library: opened in the library panel.
+    StyleLibrary,
+}
+
+/// The kind of file named `name` (by its extension) that File → Open installs, imports or shows in
+/// the library panel or the Libraries panel ([`open_bytes`]), else `None`. A drop opens these files
+/// the same way, wherever they are dropped ([`VectorcraftApp::drop_target`]).
+pub fn opens_as(name: &str) -> Option<OpensAs> {
+    let ext = fileio::extension(name);
+    let presets = [
+        (vectorcraft_engine::cmd::flatten::PRESET_EXTS, "flattener.presets.import", "flattener presets"),
+        (vectorcraft_engine::cmd::pdfcmds::PRESET_EXTS, "pdf.preset.import", "PDF presets"),
+        (vectorcraft_engine::cmd::printpresets::PRESET_EXTS, "print.presets.import", "print presets"),
+        (vectorcraft_engine::cmd::perspgrid::PRESET_EXTS, "perspective.presets.import", "perspective grid presets"),
+    ];
+    if vectorcraft_engine::cmd::plugin::EXTS.contains(&ext.as_str()) {
+        Some(OpensAs::Plugin)
+    } else if let Some(&(_, import, what)) = presets.iter().find(|(exts, ..)| exts.contains(&ext.as_str())) {
+        Some(OpensAs::Presets { import, what })
+    } else if vectorcraft_engine::cmd::library::LIBRARY_EXTS.contains(&ext.as_str()) {
+        Some(OpensAs::Library)
+    } else if vectorcraft_engine::cmd::swatchlib::LIBRARY_EXTS.contains(&ext.as_str()) {
+        Some(OpensAs::SwatchLibrary)
+    } else if ext == vectorcraft_doc::style_libs::STYLES_EXT {
+        Some(OpensAs::StyleLibrary)
+    } else {
+        None
+    }
 }
 
 /// Open a document through the engine loader with the `document.open` options in `p` →
@@ -97,7 +137,24 @@ pub fn open_dialog(app: &mut VectorcraftApp) -> Result<(), String> {
         return Ok(());
     }
     let path = pick_open(app, &FilePick { filters: fileio::open_filters().collect(), ..Default::default() })?;
-    open_path(app, &path).map(|_| ())
+    open_reporting(app, &path).map(|_| ())
+}
+
+/// A file the user asked to open (File › Open, Open Recent, the Home screen, a drop, the Finder)
+/// couldn't be: say so in a dialog as well as the status bar, which is easily missed (#861).
+pub fn report_open_error(app: &mut VectorcraftApp, name: &str, e: &str) {
+    app.status(format!("Couldn't open {name}: {e}"));
+    let message = crate::i18n::fmt(tl!("Can't open “{name}”."), &[("name", name)]);
+    dialogs::confirm::tell(app, &message, &crate::i18n::message(crate::i18n::current(), e));
+}
+
+/// [`open_path`] for a file the user asked for, a failure reported ([`report_open_error`]).
+pub fn open_reporting(app: &mut VectorcraftApp, path: &str) -> Result<Value, String> {
+    let r = open_path(app, path);
+    if let Err(e) = &r {
+        report_open_error(app, &fileio::file_name(path), e);
+    }
+    r
 }
 
 fn read(app: &VectorcraftApp, path: &str) -> Result<Vec<u8>, String> {
@@ -121,7 +178,7 @@ pub fn new_from_template(app: &mut VectorcraftApp, path: Option<String>) -> Resu
         None if app.services.open_async.is_some() => return open_dialog(app).map(|_| Value::Null),
         None => {
             let filters = std::iter::once(("Templates", TEMPLATE_EXTS)).chain(fileio::open_filters()).collect();
-            pick_open(app, &FilePick { folder: fileio::templates_folder(&app.session.prefs), filters, ..Default::default() })?
+            pick_open(app, &FilePick { folder: fileio::templates_dialog_folder(&app.session.prefs), filters, ..Default::default() })?
         }
     };
     let bytes = read(app, &path)?;
@@ -239,9 +296,13 @@ fn plan(app: &VectorcraftApp, mode: SaveMode, p: &Value) -> Result<SavePlan, Str
 /// path?}` while a dialog is open.
 pub fn save(app: &mut VectorcraftApp, mode: SaveMode, p: &Value, ask_options: bool) -> Result<Value, String> {
     remember_view(app);
-    let first = plan(app, mode, p)?;
+    // Writing over the file the document was read from is asked about here, not refused.
+    let first = plan(app, mode, &acknowledged(p))?;
     let ask = ask_options && !has_options(p);
     if let Some(path) = first.path.clone() {
+        if let Some(r) = ask_before_losing(app, &path, save_command(mode), p) {
+            return Ok(r);
+        }
         if ask && matches!(mode, SaveMode::SaveAs | SaveMode::Copy) && matches!(first.format.id, "svg" | "svgz") {
             return ask_format_options(app, mode, first.format, &path);
         }
@@ -261,12 +322,51 @@ pub fn save(app: &mut VectorcraftApp, mode: SaveMode, p: &Value, ask_options: bo
         o.remove("format");
         o.insert("path".into(), json!(with_save_extension(&picked, first.format)));
     }
-    let chosen = plan(app, mode, &q)?;
+    let chosen = plan(app, mode, &acknowledged(&q))?;
+    if let Some(r) = chosen.path.as_deref().and_then(|path| ask_before_losing(app, path, save_command(mode), &q)) {
+        return Ok(r);
+    }
     if ask && asks_options(mode, chosen.format) {
         let path = chosen.path.clone().unwrap_or_default();
         return ask_format_options(app, mode, chosen.format, &path);
     }
     write_plan(app, chosen)
+}
+
+/// The UI command that runs a save in `mode`.
+fn save_command(mode: SaveMode) -> &'static str {
+    match mode {
+        SaveMode::Save => "file.save",
+        SaveMode::SaveAs => "file.saveAs",
+        SaveMode::Copy => "file.saveCopy",
+        SaveMode::Template => "file.saveAsTemplate",
+    }
+}
+
+/// `p` with `acknowledgeLoss: true`.
+fn acknowledged(p: &Value) -> Value {
+    let mut p = if p.is_object() { p.clone() } else { json!({}) };
+    p["acknowledgeLoss"] = json!(true);
+    p
+}
+
+/// Writing `path` over the file the active document was read from, when reading it left things
+/// out (hidden text, art or layers VectorCraft can't read yet): asks first, and OK runs `command`
+/// with `params` and `acknowledgeLoss` → `{pending}` while it asks, `None` when nothing is lost.
+fn ask_before_losing(app: &mut VectorcraftApp, path: &str, command: &str, params: &Value) -> Option<Value> {
+    let what = fileio::losses_summary(fileio::overwrite_losses(app.session.active()?, path, params)?);
+    let name = fileio::file_name(path);
+    let message = crate::i18n::fmt(tl!("Replace “{name}”, the file this document was opened from?"), &[("name", &name)]);
+    let detail = crate::i18n::fmt(
+        tl!("Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it."),
+        &[("what", &what)],
+    );
+    let mut params = acknowledged(params);
+    if command != "file.save" {
+        params["path"] = json!(path);
+    }
+    dialogs::confirm::ask(app, &message, &detail, command, params);
+    Some(json!({ "pending": dialogs::confirm::KIND }))
 }
 
 /// Does a save (`mode`) to a picked file of format `f` ask for its options first? Native and `.ai`
@@ -421,6 +521,13 @@ pub fn export(app: &mut VectorcraftApp, format: Option<&str>, path: Option<Strin
         std::borrow::Cow::Owned(d) => std::sync::Arc::new(d),
     };
     let path = target_path(app, path, f.extensions[0])?;
+    let mut again = params.clone();
+    if let Some(o) = again.as_object_mut() {
+        o.insert("format".into(), json!(f.id));
+    }
+    if let Some(r) = ask_before_losing(app, &path, "file.exportAs", &again) {
+        return Ok(r);
+    }
     // An SVG given a .svgz name is written compressed.
     let f = match fileio::format_for_name(&path) {
         Some(z) if f.id == "svg" && z.id == "svgz" => z,
@@ -466,6 +573,29 @@ pub fn save_command_output(app: &mut VectorcraftApp, id: &str, ext: &str, params
     Ok(path)
 }
 
+/// Run an engine command that returns `{data}` or `{dataBase64}` and write the bytes to a file
+/// picked with file name `name` suggested next to the document (the web downloads them as `name`)
+/// → where they went.
+pub(crate) fn save_command_output_named(app: &mut VectorcraftApp, id: &str, name: &str, params: Value) -> Result<String, String> {
+    let mut v = app.session.execute(id, &params).map_err(|e| e.to_string())?;
+    let bytes = take_output(&mut v)?;
+    let path = write_named(app, None, name, &bytes)?;
+    app.status(format!("Saved {path}"));
+    Ok(path)
+}
+
+/// The bytes a command returned, taken out of its result `v`, which keeps the rest: binary output
+/// comes as base64, text (swatch libraries) as is.
+fn take_output(v: &mut Value) -> Result<Vec<u8>, String> {
+    let o = v.as_object_mut().ok_or("no data")?;
+    let bytes = match (o.remove("dataBase64"), o.remove("data")) {
+        (Some(Value::String(b64)), _) => vectorcraft_format::base64_decode(&b64),
+        (_, Some(Value::String(text))) => Some(text.into_bytes()),
+        _ => None,
+    };
+    bytes.ok_or_else(|| "no data".into())
+}
+
 /// Run an engine command that returns `{dataBase64}` without its `path` and write the bytes to
 /// that path (else a picked or suggested name) → (path, the command's result without the data).
 /// The command runs before a path is asked for, so bad params never open a save dialog, except
@@ -482,14 +612,7 @@ pub(crate) fn run_to_file(app: &mut VectorcraftApp, id: &str, ext: &str, mut par
         path = Some(picked);
     }
     let mut v = app.session.execute(id, &params).map_err(|e| e.to_string())?;
-    // Binary output comes as base64, text (swatch libraries) as is; the result keeps the rest.
-    let o = v.as_object_mut().ok_or("no data")?;
-    let bytes = match (o.remove("dataBase64"), o.remove("data")) {
-        (Some(Value::String(b64)), _) => vectorcraft_format::base64_decode(&b64),
-        (_, Some(Value::String(text))) => Some(text.into_bytes()),
-        _ => None,
-    };
-    let bytes = bytes.ok_or("no data")?;
+    let bytes = take_output(&mut v)?;
     let path = match path {
         Some(p) => p,
         None => target_path(app, None, ext)?,
@@ -631,6 +754,24 @@ mod tests {
             ..Default::default()
         };
         (VectorcraftApp::new(Session::new(), services), written)
+    }
+
+    /// #861: a file the user opens that can't be opened is reported in a dialog they close, not
+    /// only in the status bar; a file an agent opens by path only answers with the error.
+    #[test]
+    fn a_file_the_user_cant_open_is_reported_in_a_dialog() {
+        let (mut app, _) = app();
+        app.services.read = Some(Box::new(|_: &str| Err("no such file".into())));
+        assert!(open_reporting(&mut app, "/docs/gone.ai").is_err());
+        let d = app.ui.dialog.take().expect("a dialog says so");
+        assert_eq!(
+            (d.kind.as_str(), d.str("message"), d.str("detail")),
+            (dialogs::confirm::MESSAGE, "Can't open “gone.ai”.".to_string(), "no such file".to_string())
+        );
+        assert!(app.ui.status.contains("gone.ai"));
+        // An agent's `file.open {path}` gets the error back and no dialog.
+        assert!(app.run("file.open", json!({"path": "/docs/gone.ai"})).is_err());
+        assert!(app.ui.dialog.is_none());
     }
 
     fn bytes_of(app: &mut VectorcraftApp, cmd: &str, p: Value) -> Vec<u8> {

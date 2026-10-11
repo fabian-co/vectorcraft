@@ -63,7 +63,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Join",
             ["Object", "Path"],
             Some("Cmd+J"),
-            "{} join two open paths' nearest endpoints, or close a single open path",
+            "{ids?: [path, path] (default: the selected paths), ends?: [\"first\"|\"last\", \"first\"|\"last\"] (which end of each path to join, as the Pen joins them; default: the nearest pair)} join two open paths into one (the first keeps its id, selected), or close a single open path",
             has_selection,
             join
         ),
@@ -116,7 +116,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn path_mut(d: &mut vectorcraft_doc::Document, id: NodeId) -> Result<&mut PathData> {
+pub(super) fn path_mut(d: &mut vectorcraft_doc::Document, id: NodeId) -> Result<&mut PathData> {
     let n = d.node_mut(id).ok_or(EngineError::NoNode(id))?;
     match &mut n.kind {
         NodeKind::Path { path, live, .. } => {
@@ -129,7 +129,7 @@ fn path_mut(d: &mut vectorcraft_doc::Document, id: NodeId) -> Result<&mut PathDa
 
 fn append_anchor(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id").ok_or_else(|| bad("path.appendAnchor", "missing id"))?;
-    let a = anchor_from_json(p).ok_or_else(|| bad("path.appendAnchor", "missing x/y"))?;
+    let a = anchor_from_json(p, "path.appendAnchor")?;
     s.edit("Pen", |d, sel| {
         let path = path_mut(d, id)?;
         match path.subpaths.last_mut() {
@@ -217,12 +217,21 @@ fn set_anchors(s: &mut Session, p: &Value) -> Result<Value> {
     let data = PathData::new(
         subs.iter()
             .map(|sp| {
-                SubPath::new(
-                    sp.get("anchors").and_then(Value::as_array).map(|a| a.iter().filter_map(anchor_from_json).collect()).unwrap_or_default(),
-                    bool_or(sp, "closed", false),
-                )
+                let anchors = sp
+                    .get("anchors")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| bad("path.setAnchors", "each subpath needs an anchors array"))?
+                    .iter()
+                    .map(|a| anchor_from_json(a, "path.setAnchors"))
+                    .collect::<Result<Vec<_>>>()?;
+                let closed = match sp.get("closed") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Bool(v)) => *v,
+                    Some(_) => return Err(bad("path.setAnchors", "closed must be a boolean")),
+                };
+                Ok(SubPath::new(anchors, closed))
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
     );
     s.edit("Reshape", |d, _| {
         *path_mut(d, id)? = data;
@@ -283,8 +292,27 @@ fn end_points(sp: &SubPath) -> Option<(Point, Point)> {
     Some((sp.anchors.first()?.p, sp.anchors.last()?.p))
 }
 
-fn join(s: &mut Session, _: &Value) -> Result<Value> {
-    let ids = selected_paths(s)?;
+fn join(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "path.join";
+    let ids = match ids_param(p, "ids") {
+        Some(ids) => {
+            let st = s.doc()?;
+            if let Some(id) = ids.iter().find(|id| !matches!(st.doc.node(**id).map(|n| &n.kind), Some(NodeKind::Path { .. }))) {
+                return Err(bad(C, format!("{} isn't a path", id.0)));
+            }
+            ids
+        }
+        None => selected_paths(s)?,
+    };
+    // The ends to join, as (reverse the first path, reverse the second): the first path's end
+    // must come last, the second's first.
+    let ends = match p.get("ends") {
+        None => None,
+        Some(e) => match e.as_array().map(|a| a.iter().map(Value::as_str).collect::<Vec<_>>()).as_deref() {
+            Some([Some(a @ ("first" | "last")), Some(b @ ("first" | "last"))]) => Some((*a == "first", *b == "last")),
+            _ => return Err(bad(C, "ends must be two of \"first\" and \"last\"")),
+        },
+    };
     match ids.as_slice() {
         [one] => {
             let id = *one;
@@ -305,6 +333,9 @@ fn join(s: &mut Session, _: &Value) -> Result<Value> {
         }
         [a, b, ..] => {
             let (a, b) = (*a, *b);
+            if a == b {
+                return Err(bad(C, "join two different paths"));
+            }
             s.edit("Join", |d, sel| {
                 let pb = d.node(b).and_then(|n| n.path_data()).cloned().ok_or(EngineError::NoNode(b))?;
                 let pa = path_mut(d, a)?;
@@ -316,10 +347,11 @@ fn join(s: &mut Session, _: &Value) -> Result<Value> {
                 let (Some((xf, xl)), Some((yf, yl))) = (end_points(&x), end_points(&y)) else {
                     return Err(EngineError::Other("join needs open paths".into()));
                 };
-                // Pick the closest pair of ends.
+                // The ends asked for, else the closest pair.
                 let cands =
                     [(xl.distance(yf), false, false), (xl.distance(yl), false, true), (xf.distance(yf), true, false), (xf.distance(yl), true, true)];
-                let (_, rx, ry) = cands.into_iter().min_by(|p, q| p.0.total_cmp(&q.0)).unwrap_or((0.0, false, false));
+                let (rx, ry) =
+                    ends.unwrap_or_else(|| cands.into_iter().min_by(|p, q| p.0.total_cmp(&q.0)).map_or((false, false), |(_, rx, ry)| (rx, ry)));
                 if rx {
                     x.reverse();
                 }
@@ -346,9 +378,9 @@ fn join(s: &mut Session, _: &Value) -> Result<Value> {
     ok()
 }
 
-type AnchorTargets = Vec<(NodeId, Vec<(usize, usize)>)>;
+pub(super) type AnchorTargets = Vec<(NodeId, Vec<(usize, usize)>)>;
 
-fn anchor_targets(s: &Session) -> Result<AnchorTargets> {
+pub(super) fn anchor_targets(s: &Session) -> Result<AnchorTargets> {
     let st = s.doc()?;
     let mut out = vec![];
     for id in &st.selection.objects {

@@ -84,6 +84,12 @@ fn pen(p: &mut Ink, o: Pos2, badge: &str) {
         }
         "-" => line(p, b + vec2(0.0, 3.0), b + vec2(6.0, 3.0)),
         "/" => line(p, b + vec2(0.0, 6.0), b + vec2(5.0, 0.0)),
+        // Join: a segment running into a square end point.
+        "j" => {
+            line(p, b + vec2(0.0, 6.0), b + vec2(3.5, 2.5));
+            let sq = [(3.0, -1.0), (7.0, -1.0), (7.0, 3.0), (3.0, 3.0)].map(|(x, y)| b + vec2(x, y));
+            poly(p, sq.to_vec(), INK, INK);
+        }
         "^" => {
             line(p, b + vec2(0.0, 6.0), b + vec2(3.0, 0.0));
             line(p, b + vec2(3.0, 0.0), b + vec2(6.0, 6.0));
@@ -106,17 +112,25 @@ fn double_arrow(p: &mut Ink, o: Pos2, dir: egui::Vec2) {
     }
 }
 
-fn rotate(p: &mut Ink, o: Pos2) {
-    let pts: Vec<Pos2> = (0..=10)
-        .map(|i| {
-            let a = std::f32::consts::PI * (0.15 + 0.7 * i as f32 / 10.0);
-            o + vec2(a.cos() * 9.0, -a.sin() * 9.0)
-        })
-        .collect();
-    p.add(Shape::line(pts.clone(), Stroke::new(3.0, HALO)));
-    p.add(Shape::line(pts.clone(), Stroke::new(1.2, INK)));
-    for end in [pts[0], pts[pts.len() - 1]] {
-        poly(p, vec![end + vec2(-3.0, -1.0), end + vec2(3.0, -1.0), end + vec2(0.0, 4.0)], INK, INK);
+/// A curved double arrow over the hotspot: an arc with an arrowhead at each end, pointing on along
+/// the arc (#701). The arc bows up, or toward `octant` (0 up, then clockwise in 45° steps): beside a
+/// bounding box it wraps the corner the pointer is at.
+fn rotate(p: &mut Ink, o: Pos2, octant: u8) {
+    const R: f32 = 8.0;
+    let (a0, a1) = (std::f32::consts::PI * 0.12, std::f32::consts::PI * 0.88);
+    // Clockwise on screen (y down) by whole octants.
+    let (s, c) = (f32::from(octant % 8) * std::f32::consts::FRAC_PI_4).sin_cos();
+    let turn = |v: Vec2| vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+    let at = |a: f32| o + turn(vec2(a.cos() * R, -a.sin() * R));
+    let pts: Vec<Pos2> = (0..=12).map(|i| at(a0 + (a1 - a0) * i as f32 / 12.0)).collect();
+    p.add(Shape::line(pts.clone(), Stroke::new(3.2, HALO)));
+    p.add(Shape::line(pts, Stroke::new(1.3, INK)));
+    // Each head points away from the arc, along its tangent there.
+    for (a, away) in [(a0, -1.0f32), (a1, 1.0)] {
+        let t = turn(vec2(-a.sin(), -a.cos()) * away);
+        let n = vec2(-t.y, t.x);
+        let (end, tip) = (at(a) - t * 1.5, at(a) + t * 4.5);
+        poly(p, vec![tip, end + n * 1.8, end - n * 1.8], INK, INK);
     }
 }
 
@@ -259,13 +273,15 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
         Cursor::ResizeV => double_arrow(ink, p, vec2(0.0, 1.0)),
         Cursor::ResizeNwSe => double_arrow(ink, p, vec2(1.0, 1.0)),
         Cursor::ResizeNeSw => double_arrow(ink, p, vec2(1.0, -1.0)),
-        Cursor::Rotate => rotate(ink, p),
+        Cursor::Rotate => rotate(ink, p, 0),
+        Cursor::RotateToward(octant) => rotate(ink, p, octant),
         Cursor::CornerRadius => corner_radius(ink, p),
         Cursor::Pen => pen(ink, p, "*"),
         Cursor::PenAdd => pen(ink, p, "+"),
         Cursor::PenDelete => pen(ink, p, "-"),
         Cursor::PenClose => pen(ink, p, "o"),
         Cursor::PenContinue => pen(ink, p, "/"),
+        Cursor::PenJoin => pen(ink, p, "j"),
         Cursor::PenConvert => pen(ink, p, "^"),
         Cursor::Text => ibeam(ink, p),
         Cursor::AddStop => stop_badge(ink, p, true),
@@ -288,10 +304,19 @@ fn glyph(c: Cursor, p: Pos2) -> Option<Vec<Shape>> {
     Some(std::mem::take(&mut ink.0))
 }
 
-/// Paint cursor `c` at `p` on the given (foreground) painter, where the window can't show it as an
-/// OS cursor ([`OS_CURSORS`]). Returns false for cursors that stay system cursors.
-pub fn paint(painter: &Painter, c: Cursor, p: Pos2) -> bool {
-    glyph(c, p).map(|shapes| painter.extend(shapes)).is_some()
+/// Paint cursor `c` at `p`, `scale` times its size, on the given (foreground) painter, where the
+/// window can't show it as an OS cursor ([`OS_CURSORS`]). Returns false for cursors that stay
+/// system cursors.
+pub fn paint(painter: &Painter, c: Cursor, p: Pos2, scale: f32) -> bool {
+    let place = egui::emath::TSTransform::new(p.to_vec2(), scale);
+    glyph(c, Pos2::ZERO)
+        .map(|shapes| {
+            painter.extend(shapes.into_iter().map(|mut s| {
+                s.transform(place);
+                s
+            }))
+        })
+        .is_some()
 }
 
 /// Does the window show the glyphs as OS cursors ([`Images`])? Not on macOS, which sizes a cursor
@@ -412,7 +437,7 @@ mod tests {
     use crate::VectorcraftApp;
 
     /// Every cursor with a glyph.
-    const GLYPHS: [Cursor; 32] = [
+    const GLYPHS: [Cursor; 34] = [
         Cursor::Arrow,
         Cursor::ArrowHollow,
         Cursor::Move,
@@ -422,12 +447,14 @@ mod tests {
         Cursor::ResizeNwSe,
         Cursor::ResizeNeSw,
         Cursor::Rotate,
+        Cursor::RotateToward(1),
         Cursor::CornerRadius,
         Cursor::Pen,
         Cursor::PenAdd,
         Cursor::PenDelete,
         Cursor::PenClose,
         Cursor::PenContinue,
+        Cursor::PenJoin,
         Cursor::PenConvert,
         Cursor::Text,
         Cursor::Eyedropper,
@@ -553,6 +580,43 @@ mod tests {
         // Off the canvas, the panels' cursors.
         let off = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(Pos2::new(canvas.left() - 20.0, canvas.center().y))]);
         assert!(off.platform_output.cursor_image.is_none());
+    }
+
+    /// User Interface › Scale Cursor Proportional to UI (#394): off, the tool cursors keep their
+    /// size whatever the UI Scaling; on, they grow with it.
+    #[test]
+    fn tool_cursors_scale_with_the_ui_only_when_asked() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+        app.run("prefs.set", json!({"key": "uiScaling", "value": 2.0})).unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        assert_eq!(ctx.zoom_factor(), 2.0);
+        let over = app.canvas_rect.unwrap().center();
+        let shown =
+            |app: &mut VectorcraftApp, d: f32| frame(app, &ctx, vec![egui::Event::PointerMoved(over + vec2(d, 0.0))]).platform_output.cursor_image;
+        if OS_CURSORS {
+            assert_eq!(shown(&mut app, 0.0).unwrap(), app.canvas.cursors.get(Cursor::Arrow, 1.0).unwrap(), "off: its own size");
+            app.run("prefs.set", json!({"key": "scaleCursorWithUi", "value": true})).unwrap();
+            assert_eq!(shown(&mut app, 4.0).unwrap(), app.canvas.cursors.get(Cursor::Arrow, 2.0).unwrap(), "on: twice as big");
+        }
+        // Painted into the window (macOS, the web), the glyph is drawn at the scale asked for, its
+        // hotspot where the pointer is.
+        let painted = |scale: f32| {
+            let ctx = egui::Context::default();
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("probe"));
+                assert!(paint(&ui.ctx().layer_painter(layer), Cursor::Arrow, pos2(100.0, 100.0), scale));
+            });
+            out.textures_delta.clear();
+            out.textures_delta.clear();
+            out.shapes.iter().fold(egui::Rect::NOTHING, |r, c| r.union(c.shape.visual_bounding_rect()))
+        };
+        let (full, half) = (painted(1.0), painted(0.5));
+        assert!((half.height() * 2.0 - full.height()).abs() < 1.5 && full.height() > 15.0, "{full:?} {half:?}");
+        assert!(full.contains(pos2(100.0, 100.0)) && half.contains(pos2(100.0, 100.0)), "{full:?} {half:?}");
     }
 
     #[test]

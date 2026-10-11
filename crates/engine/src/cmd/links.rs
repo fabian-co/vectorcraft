@@ -53,6 +53,15 @@ pub fn specs() -> Vec<CommandSpec> {
             update
         ),
         cmd!(
+            "links.updateChanged",
+            "Update Changed Links",
+            [],
+            None,
+            "{} read again the active document's linked files that changed on disk since they were last seen (size or modification time), whatever Preferences → File Handling → Update Links says; the desktop app looks every two seconds and follows that preference. Files seen for the first time are only remembered. One undo step → {updated: [ids], ask: [], modified: []}",
+            has_doc,
+            crate::link_watch::update_changed
+        ),
+        cmd!(
             "links.relink",
             "Relink",
             [],
@@ -156,6 +165,11 @@ fn linked(n: &Node) -> Option<(&LinkInfo, &str, Option<bool>)> {
         NodeKind::PlacedDocument(p) => Some((&p.link, &p.key, Some(p.bounding))),
         _ => None,
     }
+}
+
+/// Every linked file of `d` with the ids of the objects showing it (for [`crate::link_watch`]).
+pub(crate) fn linked_groups(d: &Document) -> Vec<(String, Vec<u64>)> {
+    groups(d, None).into_iter().filter(|g| !g.ids.is_empty()).map(|g| (g.link.path, ids_json(&g.ids))).collect()
 }
 
 /// The linked images and placed documents of `d` by file and content: those in the layers (only `ids` when
@@ -283,6 +297,9 @@ fn stale(d: &Document, g: &Group) -> bool {
 pub(crate) struct LinkedFile {
     pub path: String,
     pub name: String,
+    /// The file actually read, which may be next to the current document after a move.
+    /// Nested links must be resolved against this folder, not the obsolete original path.
+    pub found_path: Option<String>,
     /// Read from where the file is found, else the pixels the document holds when they are the
     /// file's own; `None` when neither.
     pub bytes: Option<Vec<u8>>,
@@ -297,10 +314,10 @@ pub(crate) fn linked_files(d: &Document, doc_path: Option<&str>) -> Vec<LinkedFi
         .filter(|g| seen.insert(g.link.path.clone()))
         .map(|g| {
             let own = |b: &&ImageBlob| !b.is_proxy() && fileio::format_for_name(g.link.name()).is_some_and(|f| f.mime == b.mime);
-            let bytes = locate(&g.link, folder(doc_path))
-                .and_then(|mut f| f.read().ok())
-                .or_else(|| d.images.get(&g.key).filter(own).map(|b| b.bytes.to_vec()));
-            LinkedFile { path: g.link.path.clone(), name: g.link.name().to_string(), bytes }
+            let found = locate(&g.link, folder(doc_path));
+            let found_path = found.as_ref().map(|f| f.path.clone());
+            let bytes = found.and_then(|mut f| f.read().ok()).or_else(|| d.images.get(&g.key).filter(own).map(|b| b.bytes.to_vec()));
+            LinkedFile { path: g.link.path.clone(), name: g.link.name().to_string(), found_path, bytes }
         })
         .collect()
 }

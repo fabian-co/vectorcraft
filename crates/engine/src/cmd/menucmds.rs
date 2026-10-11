@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "All Artwork Above",
             ["Object", "Lock"],
             None,
-            "{} lock objects in the same layer that are above and overlap the selection → {count}",
+            "{} lock objects in the same layer that are above and overlap the selection, deselecting every selected object left locked or hidden (the key object too) → {count}",
             has_selection,
             |s, _| above(s, true)
         ),
@@ -57,7 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "All Artwork Above",
             ["Object", "Hide"],
             None,
-            "{} hide objects in the same layer that are above and overlap the selection → {count}",
+            "{} hide objects in the same layer that are above and overlap the selection, deselecting every selected object left hidden or locked (the key object too) → {count}",
             has_selection,
             |s, _| above(s, false)
         ),
@@ -111,7 +111,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Crop Image",
             ["Object"],
             None,
-            "{rect?: [x, y, width, height]} crop the selected image (default: to the artboard it sits on) → {id, width, height}",
+            "{rect?: [x, y, width, height] | trim?: true (to the pixels that aren't fully transparent, pixel for pixel; an image with none to cut is left as it is, trimmed: false)} crop the selected image (default: to the artboard it sits on) → {id, width, height, trimmed? (with trim)}",
             has_image,
             crop_image
         ),
@@ -156,7 +156,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Rearrange All Artboards…",
             ["Object", "Artboards"],
             None,
-            "{columns?: n (2), spacing?: pt (20), byColumn?: false, moveArtwork?: true (locked and hidden art only with prefs moveLockedWithArtboard)} lay artboards out in a grid",
+            "{layout?: gridByRow|gridByColumn|row|column (gridByRow; byColumn?: true is gridByColumn), order?: leftToRight|rightToLeft (leftToRight: right-to-left mirrors the order along the rows), columns?: n (2; the rows for gridByColumn; row and column ignore it), spacing?: pt (20), moveArtwork?: true (locked and hidden art only with prefs moveLockedWithArtboard)} lay the artboards out in their order, the grid's top-left at the first artboard's → {artboards, rows, columns}",
             has_doc,
             rearrange_artboards
         ),
@@ -228,7 +228,7 @@ fn above(s: &mut Session, lock: bool) -> Result<Value> {
     }
     let label = if lock { "Lock" } else { "Hide" };
     let n = hits.len();
-    s.edit(label, |d, _| {
+    s.edit(label, |d, sel| {
         for id in &hits {
             if let Some(n) = d.node_mut(*id) {
                 if lock {
@@ -238,6 +238,7 @@ fn above(s: &mut Session, lock: bool) -> Result<Value> {
                 }
             }
         }
+        sel.deselect_uneditable(d);
         Ok(())
     })?;
     Ok(json!({ "count": n }))
@@ -541,6 +542,9 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad(C, "select an image"))?;
     let node = st.doc.node(id).cloned().ok_or(EngineError::NoNode(id))?;
     let NodeKind::Image(im) = &node.kind else { return Err(bad(C, "select an image")) };
+    if p.get("trim").and_then(Value::as_bool) == Some(true) {
+        return trim_image(s, id, im.clone());
+    }
     let ib = node.geometric_bounds().ok_or_else(|| bad(C, "image has no bounds"))?;
     let rect = match p.get("rect").and_then(Value::as_array) {
         Some(a) if a.len() == 4 => {
@@ -592,6 +596,49 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     Ok(json!({ "id": id.0, "width": w, "height": h }))
+}
+
+/// Crop Image's trim: the image cut to the box of its pixels that aren't fully transparent, the
+/// pixels copied as they are (no resampling) and placed where they were.
+fn trim_image(s: &mut Session, id: NodeId, im: ImageObject) -> Result<Value> {
+    const C: &str = "object.cropImage";
+    let st = s.doc()?;
+    let blob = st.doc.images.get(&im.key).ok_or_else(|| bad(C, "the image's pixels are missing"))?;
+    let px = image::load_from_memory(&blob.bytes).map_err(|_| bad(C, "the image's pixels can't be read"))?.to_rgba8();
+    let (w, h) = px.dimensions();
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for (x, y, p) in px.enumerate_pixels() {
+        if p[3] > 0 {
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return Err(bad(C, "the image is fully transparent"));
+    }
+    if (x0, y0, x1, y1) == (0, 0, w, h) {
+        // Already trimmed: not an error, so a script can trim every image it opens.
+        return Ok(json!({ "id": id.0, "width": w, "height": h, "trimmed": false }));
+    }
+    let cut = image::imageops::crop_imm(&px, x0, y0, x1 - x0, y1 - y0).to_image();
+    let mut png = Vec::new();
+    cut.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| bad(C, e.to_string()))?;
+    let (cw, ch) = (x1 - x0, y1 - y0);
+    s.edit("Crop Image", |d, _| {
+        let key = unique_key(d, "crop");
+        d.images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", png));
+        if let Some(n) = d.node_mut(id) {
+            n.kind = NodeKind::Image(ImageObject {
+                key,
+                width: cw,
+                height: ch,
+                xf: im.xf * Affine::translate((f64::from(x0), f64::from(y0))),
+                link: None,
+                placement: Default::default(),
+            });
+        }
+        Ok(())
+    })?;
+    Ok(json!({ "id": id.0, "width": cw, "height": ch, "trimmed": true }))
 }
 
 /// The Control bar's Mask for an image: a clip group of the image and a clipping path on its
@@ -656,7 +703,7 @@ fn trim_marks(s: &mut Session, p: &Value) -> Result<Value> {
     if rects.is_empty() {
         return Err(bad(C, "nothing to mark"));
     }
-    let parent = s.doc()?.insertion_parent();
+    let parent = s.doc()?.target_parent()?;
     let ids = s.edit("Create Trim Marks", |d, sel| {
         let mut ids = vec![];
         for r in &rects {
@@ -777,10 +824,32 @@ fn convert_to_artboards(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
-    let n_ab = s.doc()?.doc.artboards.len().max(1);
-    let cols = (f64_or(p, "columns", 2.0).clamp(1.0, n_ab as f64)) as usize;
+    const CMD: &str = "artboard.rearrange";
+    use super::newdoc::ArtboardLayout as L;
+    // A value given (not null) must be one of the names.
+    let named = |key: &str| p.get(key).filter(|v| !v.is_null()).map(|v| v.as_str().unwrap_or_default());
+    let layout = match named("layout") {
+        Some(l) => L::parse(l).ok_or_else(|| bad(CMD, "layout must be gridByRow, gridByColumn, row or column"))?,
+        None if bool_or(p, "byColumn", false) => L::GridByColumn,
+        None => L::GridByRow,
+    };
+    let rtl = match named("order") {
+        None => false,
+        Some(o) if o.eq_ignore_ascii_case("leftToRight") => false,
+        Some(o) if o.eq_ignore_ascii_case("rightToLeft") => true,
+        Some(_) => return Err(bad(CMD, "order must be leftToRight or rightToLeft")),
+    };
+    let count = s.doc()?.doc.artboards.len();
+    let n_ab = count.max(1);
+    // Columns of a grid by row, rows of a grid by column (NaN casts to 0).
+    let lines = (f64_or(p, "columns", 2.0).clamp(1.0, n_ab as f64) as usize).max(1);
+    let (rows, cols) = match layout {
+        L::GridByRow => (n_ab.div_ceil(lines), lines),
+        L::GridByColumn => (lines, n_ab.div_ceil(lines)),
+        L::Row => (1, n_ab),
+        L::Column => (n_ab, 1),
+    };
     let spacing = f64_or(p, "spacing", 20.0).clamp(-1.0e5, 1.0e5);
-    let by_col = bool_or(p, "byColumn", false);
     let move_art = bool_or(p, "moveArtwork", true);
     let locked_and_hidden = s.prefs.move_locked_with_artboard;
     let scale_strokes = false;
@@ -788,7 +857,7 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
         let rects: Vec<Rect> = d.artboards.iter().map(|a| a.rect).collect();
         let Some(first) = rects.first().copied() else { return Ok(()) };
         let sizes: Vec<(f64, f64)> = rects.iter().map(|r| (r.width(), r.height())).collect();
-        let origins = super::newdoc::grid_origins(&sizes, first.origin(), cols, spacing, by_col, false);
+        let origins = super::newdoc::grid_origins_rc(&sizes, first.origin(), (rows, cols), spacing, layout == L::GridByColumn, rtl);
         let deltas: Vec<Vec2> = rects.iter().zip(origins).map(|(r, o)| o - r.origin()).collect();
         if move_art {
             let tops: Vec<(NodeId, Point)> = d
@@ -800,11 +869,11 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
                 .filter_map(|n| Some((n.id, n.geometric_bounds()?.center())))
                 .collect();
             for (id, c) in tops {
-                if let Some(i) = rects.iter().position(|r| r.contains(c))
-                    && deltas[i] != Vec2::ZERO
+                if let Some(&dl) = rects.iter().position(|r| r.contains(c)).and_then(|i| deltas.get(i))
+                    && dl != Vec2::ZERO
                     && let Some(n) = d.node_mut(id)
                 {
-                    n.transform(Affine::translate(deltas[i]), scale_strokes);
+                    n.transform(Affine::translate(dl), scale_strokes);
                 }
             }
         }
@@ -818,5 +887,5 @@ fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(())
     })?;
-    ok()
+    Ok(json!({ "artboards": count, "rows": rows, "columns": cols }))
 }

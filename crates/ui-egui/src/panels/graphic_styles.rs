@@ -351,7 +351,7 @@ fn zone_input(ui: &Ui, zone: &Response, d: &Document, ev: &mut Events) {
         PanelDrag::GraphicStyle(n) => (Some(n), None),
         PanelDrag::Art(ids) => (None, ids.first().copied()),
         PanelDrag::Appearance(id) => (None, Some(*id)),
-        PanelDrag::Paint { .. } | PanelDrag::Symbol(_) | PanelDrag::Brush { .. } => (None, None),
+        PanelDrag::Paint { .. } | PanelDrag::Symbol(_) | PanelDrag::Brush { .. } | PanelDrag::LibraryGraphic { .. } => (None, None),
     };
     if style.is_none() && source.is_none() {
         return;
@@ -730,8 +730,10 @@ impl LibraryKind for GraphicStyleLibraries {
     }
     fn menu_tail(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.separator();
+        // As a command, so its file dialog, shown off the UI thread, loads the library when it
+        // answers.
         if menu_item(ui, tl!("Other Library…"), true, false)
-            && let Err(e) = other_library(app, None)
+            && let Err(e) = app.run("window.graphicStyleLibrary.other", json!({}))
         {
             app.status(e);
         }

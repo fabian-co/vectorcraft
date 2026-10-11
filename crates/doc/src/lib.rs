@@ -40,6 +40,8 @@ pub mod slices;
 pub mod style_libs;
 pub mod swatches;
 pub mod text;
+pub mod trace;
+pub mod variables;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -59,12 +61,12 @@ pub(crate) mod skip {
 
 pub use appearance::StrokeGradientMode;
 pub use appearance::{
-    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, ProfilePreset, SavedProfile, StrokeAlign,
-    StrokeLayer, WidthProfile,
+    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, PressureProfile, ProfilePreset, SavedProfile,
+    StrokeAlign, StrokeLayer, WidthProfile,
 };
 pub use assets::ExportAsset;
 pub use corners::LiveCorners;
-pub use graph::{GraphKind, GraphSpec};
+pub use graph::{GraphKind, GraphSpec, MAX_GRAPH_CATEGORIES, MAX_GRAPH_SERIES, SeriesPaint, TickLength, ValueAxisSide};
 pub use hit::{Hit, HitKind};
 pub use links::{LinkInfo, PlacementOptions};
 pub use live::{BlendOrientation, BlendSpacing, BlendSpec, EnvelopeKind, GradientMesh, MeshPoint};
@@ -85,16 +87,18 @@ pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
 pub use text::{
-    AreaFit, AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, Composer, FirstBaseline, InlineArt, Justify, LeadingModel, Mojikumi,
-    ParaDirection, ParaStyle, PathAlign, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap,
-    VerticalAlign, WrapShape,
+    AreaFit, AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, Composer, Digits, FirstBaseline, InlineArt, Justify, Kinsoku, LeadingModel,
+    Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef,
+    TextWrap, VerticalAlign, WrapShape,
 };
+pub use trace::TraceView;
+pub use variables::{DataSet, DataValue, Variable, VariableKind, Variables};
 pub use vectorcraft_color as color;
 pub use vectorcraft_geom as geom;
 
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Swatch, SwatchGroup};
-use vectorcraft_geom::{Point, Rect, Vec2};
+use vectorcraft_geom::{Affine, Point, Rect, Vec2};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DocError {
@@ -398,12 +402,17 @@ pub struct Guide {
     /// and moves, is copied and is deleted with it. None: a canvas guide, across the whole canvas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artboard: Option<u32>,
+    /// The layer (or sublayer) it is on: it shows, hides and locks with that layer and is listed
+    /// in it in the Layers panel, and goes when the layer is deleted. None: on no layer (guides
+    /// from before guides had layers, and from files that don't say), always there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<NodeId>,
 }
 
 impl Guide {
     /// A canvas guide.
     pub fn new(vertical: bool, pos: f64) -> Self {
-        Self { vertical, pos, artboard: None }
+        Self { vertical, pos, artboard: None, layer: None }
     }
 
     /// Moved by `d` (a vertical guide across, a horizontal one down).
@@ -559,6 +568,9 @@ pub struct Document {
     /// Select → Save Selection… (at most [`SavedSelection::MAX`]); saved with the document.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub saved_selections: Vec<SavedSelection>,
+    /// Variables (data merge): named values bound to objects, applied per dataset.
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    pub variables: Variables,
     #[serde(default)]
     pub grid: GridPrefs,
     #[serde(default = "ppi72")]
@@ -691,6 +703,7 @@ impl Document {
             guides: vec![],
             views: vec![],
             saved_selections: vec![],
+            variables: Variables::default(),
             grid: GridPrefs::default(),
             raster_effects_ppi: 72.0,
             images: BTreeMap::new(),
@@ -739,7 +752,8 @@ impl Document {
         }
         max = self.slices.iter().fold(max, |m, s| m.max(s.id.0));
         max = self.assets.iter().fold(max, |m, a| m.max(a.id));
-        self.next_id = self.next_id.max(max + 1);
+        // An id of u64::MAX (a damaged file) can't overflow: ids after it are reused at worst.
+        self.next_id = self.next_id.max(max.saturating_add(1));
     }
 
     /// Find a node anywhere in the tree.
@@ -957,8 +971,12 @@ impl Document {
                 if c.is_layer() {
                     collect(c, rect, all, out);
                 } else if let Some(b) = c.geometric_bounds()
-                    && rect.contains(Point::new(b.x0, b.y0))
-                    && rect.contains(Point::new(b.x1, b.y1))
+                    // Inside it, edges included: art flush with the right or bottom edge is on it too
+                    // (`Rect::contains` leaves those out, #890).
+                    && b.x0 >= rect.x0
+                    && b.y0 >= rect.y0
+                    && b.x1 <= rect.x1
+                    && b.y1 <= rect.y1
                 {
                     out.push(c.id);
                 }
@@ -976,6 +994,73 @@ impl Document {
     pub fn guide_span(&self, g: &Guide) -> Option<(f64, f64)> {
         let r = self.artboards.iter().find(|a| Some(a.id) == g.artboard)?.rect;
         Some(if g.vertical { (r.y0, r.y1) } else { (r.x0, r.x1) })
+    }
+    /// The layer (or sublayer) ruler guide `g` is on, if it is on one this document has.
+    fn guide_layer(&self, g: &Guide) -> Option<NodeId> {
+        g.layer.filter(|l| self.node(*l).is_some_and(Node::is_layer))
+    }
+    /// Is ruler guide `g` shown: on no layer, or on a layer that (with the layers around it) is
+    /// visible? A guide whose layer is gone shows as one on no layer.
+    pub fn guide_shown(&self, g: &Guide) -> bool {
+        self.guide_layer(g).is_none_or(|l| self.is_visible(l))
+    }
+    /// Can ruler guide `g` be picked, moved and deleted: shown, and its layer unlocked?
+    pub fn guide_editable(&self, g: &Guide) -> bool {
+        self.guide_layer(g).is_none_or(|l| self.is_editable(l))
+    }
+    /// Put the ruler guides on no layer this document has (from files saved before guides had
+    /// layers, or of layers merged into `layer`) on layer `layer`. Returns how many.
+    pub fn rehome_guides(&mut self, layer: NodeId) -> usize {
+        let lost: Vec<bool> = self.guides.iter().map(|g| self.guide_layer(g).is_none()).collect();
+        let mut n = 0;
+        for (g, lost) in self.guides.iter_mut().zip(lost) {
+            if lost {
+                g.layer = Some(layer);
+                n += 1;
+            }
+        }
+        n
+    }
+    /// Put the ruler guides on no layer (from files saved before guides had layers), or on one that
+    /// is gone, on the top visible, unlocked layer ([`Self::default_layer`]). Returns how many.
+    pub fn adopt_guides(&mut self) -> usize {
+        self.default_layer().map_or(0, |home| self.rehome_guides(home))
+    }
+    /// Delete the ruler guides whose layer was deleted (they go with it), keeping `sel`'s guides in
+    /// step. Guides on no layer stay. Returns how many went.
+    pub fn drop_guides_of_deleted_layers(&mut self, sel: &mut Selection) -> usize {
+        let gone: Vec<bool> = self.guides.iter().map(|g| g.layer.is_some() && self.guide_layer(g).is_none()).collect();
+        self.retain_guides(sel, |i, _| !gone.get(i).copied().unwrap_or(false))
+    }
+    /// Copy the ruler guides of layer `from` and of its sublayers onto their copies in `copy` (made
+    /// from `from` by [`Self::reid`]: the same tree with fresh ids), as duplicating a layer copies
+    /// the objects on it. Returns how many.
+    pub fn copy_layer_guides(&mut self, from: &Node, copy: &Node) -> usize {
+        let layers = |n: &Node| {
+            let mut out = vec![];
+            n.walk(&mut |c| {
+                if c.is_layer() {
+                    out.push(c.id);
+                }
+            });
+            out
+        };
+        let pairs: Vec<(NodeId, NodeId)> = layers(from).into_iter().zip(layers(copy)).collect();
+        let copies: Vec<Guide> = self
+            .guides
+            .iter()
+            .filter_map(|g| {
+                let to = pairs.iter().find(|(a, _)| Some(*a) == g.layer)?.1;
+                Some(Guide { layer: Some(to), ..g.clone() })
+            })
+            .collect();
+        let n = copies.len();
+        self.guides.extend(copies);
+        n
+    }
+    /// The ruler guides on layer `layer` (not its sublayers'), by index.
+    pub fn guides_on(&self, layer: NodeId) -> impl Iterator<Item = (usize, &Guide)> + '_ {
+        self.guides.iter().enumerate().filter(move |(_, g)| g.layer == Some(layer))
     }
     /// Does ruler guide `g` run past `p` (up to `tol` beyond its ends)?
     pub fn guide_passes(&self, g: &Guide, p: Point, tol: f64) -> bool {
@@ -1002,6 +1087,13 @@ impl Document {
     pub fn move_artboard_guides(&mut self, id: u32, d: Vec2) {
         for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
             *g = g.moved(d);
+        }
+    }
+    /// Map the guides of artboard `id` through `xf`, an axis-aligned scale and move (Scale Artwork
+    /// with Artboard).
+    pub fn map_artboard_guides(&mut self, id: u32, xf: Affine) {
+        for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
+            g.pos = if g.vertical { (xf * Point::new(g.pos, 0.0)).x } else { (xf * Point::new(0.0, g.pos)).y };
         }
     }
     /// Copy the guides of artboard `from` onto artboard `to`, `d` away (with a copy of their
@@ -1164,6 +1256,10 @@ mod tests {
         let wide = Rect::new(-1.0, -1.0, 40.0, 15.0);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0), false), vec![a]);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0), false), vec![a], "b only half inside");
+        // Flush with the artboard's edges counts as inside: the right and bottom ones too (#890).
+        for board in [Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(-5.0, 0.0, 10.0, 15.0), Rect::new(0.0, -5.0, 15.0, 10.0)] {
+            assert_eq!(d.art_on_artboard(board, false), vec![a], "{board:?}");
+        }
         d.node_mut(a).unwrap().locked = true;
         assert_eq!(d.art_on_artboard(wide, false), vec![b]);
         // Move Locked and Hidden Artwork with Artboard (#394): hidden art stays too, unless on.

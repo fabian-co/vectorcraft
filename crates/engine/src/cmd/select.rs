@@ -19,20 +19,44 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             all
         ),
-        cmd!("select.allOnArtboard", "All on Active Artboard", ["Select"], Some("Cmd+Alt+A"), "{artboard?: index}", has_doc, all_on_artboard),
+        cmd!(
+            "select.allOnArtboard",
+            "All on Active Artboard",
+            ["Select"],
+            Some("Cmd+Alt+A"),
+            "{artboard?: index (0-based; the app passes the active one; default: the first)}",
+            has_doc,
+            all_on_artboard
+        ),
         cmd!("select.none", "Deselect", ["Select"], Some("Cmd+Shift+A"), "{}", has_doc, none),
         cmd!("select.reselect", "Reselect", ["Select"], Some("Cmd+6"), "{}", has_doc, reselect),
         cmd!("select.inverse", "Inverse", ["Select"], None, "{}", has_doc, inverse),
         cmd!("select.nextAbove", "Next Object Above", ["Select"], Some("Cmd+Alt+]"), "{}", has_selection, |s, _| step(s, 1)),
         cmd!("select.nextBelow", "Next Object Below", ["Select"], Some("Cmd+Alt+["), "{}", has_selection, |s, _| step(s, -1)),
-        cmd!("select.set", "Select Objects", [], None, "{ids: [id…]}", has_doc, set),
-        cmd!("select.add", "Add to Selection", [], None, "{ids: [id…]}", has_doc, add),
+        cmd!(
+            "select.set",
+            "Select Objects",
+            [],
+            None,
+            "{ids: [id…]} all ids must be non-negative integers naming existing objects → {count, ids} (resulting selection)",
+            has_doc,
+            set
+        ),
+        cmd!(
+            "select.add",
+            "Add to Selection",
+            [],
+            None,
+            "{ids: [id…]} all ids must be non-negative integers naming existing objects → {count, ids} (resulting selection)",
+            has_doc,
+            add
+        ),
         cmd!(
             "select.toggle",
             "Toggle Selection",
             [],
             None,
-            "{id} or {ids: [id…]}: each selected one leaves the selection, the others join it",
+            "{id} or {ids: [id…]}: each selected one leaves the selection, the others join it; all ids must be non-negative integers naming existing objects → {count, ids} (resulting selection)",
             has_doc,
             toggle
         ),
@@ -41,7 +65,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Key Object",
             [],
             None,
-            "{id?: a selected object (the Selection tool: a click on one object of a selection of several; on the key again: none)} the key object Align aligns to and Distribute Spacing spaces from; none clears it",
+            "{id?: a selected object, one of two or more (the Selection tool: a click on one object of a selection of several; on the key again: none)} the key object Align aligns to and Distribute Spacing spaces from; none clears it, as does a selection that holds only the key and objects inside it (one object, or a group key and its own members)",
             has_doc,
             key
         ),
@@ -200,8 +224,20 @@ fn none(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn reselect(s: &mut Session, _: &Value) -> Result<Value> {
-    let Some((c, p)) = s.doc()?.last_selection_cmd.clone() else { return ok() };
-    s.execute(&c, &p)
+    let st = s.doc()?;
+    let Some((c, p, from)) = st.last_selection_cmd.clone() else { return ok() };
+    // After Deselect, a Same command takes its reference again from the objects that were selected
+    // when it ran, those still there (#903).
+    let from: Vec<NodeId> = from.into_iter().filter(|id| st.doc.node(*id).is_some()).collect();
+    let restore = st.selection.objects.is_empty() && !from.is_empty();
+    if restore {
+        s.select(|_, sel| sel.set(from))?;
+    }
+    let r = s.execute(&c, &p);
+    if restore && r.is_err() {
+        s.select(|_, sel| sel.clear())?;
+    }
+    r
 }
 
 fn inverse(s: &mut Session, _: &Value) -> Result<Value> {
@@ -225,29 +261,39 @@ fn step(s: &mut Session, dir: i64) -> Result<Value> {
 }
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = ids_param(p, "ids").ok_or_else(|| bad("select.set", "missing ids"))?;
-    s.select(|d, sel| sel.set(ids.iter().copied().filter(|i| d.node(*i).is_some())))?;
-    ok()
+    let ids = checked_ids_param(s, p, "ids", "select.set")?;
+    s.select(|_, sel| sel.set(ids.iter().copied()))?;
+    selection_result(s)
 }
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = ids_param(p, "ids").ok_or_else(|| bad("select.add", "missing ids"))?;
+    let ids = checked_ids_param(s, p, "ids", "select.add")?;
     s.select(|_, sel| {
         for i in ids {
             sel.add(i);
         }
     })?;
-    ok()
+    selection_result(s)
 }
 
 fn toggle(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = ids_param(p, "ids").or_else(|| id_param(p, "id").map(|id| vec![id])).ok_or_else(|| bad("select.toggle", "missing id or ids"))?;
+    let ids = if p.get("ids").is_some() {
+        checked_ids_param(s, p, "ids", "select.toggle")?
+    } else {
+        let value = p.get("id").ok_or_else(|| bad("select.toggle", "missing id or ids"))?;
+        vec![checked_id(s, value, "select.toggle")?]
+    };
     s.select(|_, sel| {
         for id in ids {
             sel.toggle(id);
         }
     })?;
-    ok()
+    selection_result(s)
+}
+
+fn selection_result(s: &Session) -> Result<Value> {
+    let selection = &s.doc()?.selection;
+    Ok(json!({ "count": selection.len(), "ids": selection.objects }))
 }
 
 fn key(s: &mut Session, p: &Value) -> Result<Value> {
@@ -256,17 +302,35 @@ fn key(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// `[[subpath, anchor]…]` anchor references (malformed entries are left out).
-pub(crate) fn parse_refs(v: Option<&Value>) -> Vec<(usize, usize)> {
-    v.and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|x| Some((x.get(0)?.as_u64()? as usize, x.get(1)?.as_u64()? as usize))).collect())
-        .unwrap_or_default()
+/// `[[subpath, anchor]…]` anchor references of `cmd`: a malformed entry fails rather than being
+/// left out, which would act on other anchors than the ones given.
+pub(crate) fn checked_refs(v: Option<&Value>, cmd: &str) -> Result<Vec<(usize, usize)>> {
+    let refs = v.and_then(Value::as_array).ok_or_else(|| bad(cmd, "`anchors` must be an array of [subpath, anchor] pairs"))?;
+    refs.iter()
+        .map(|v| {
+            let Some([subpath, anchor]) = v.as_array().map(Vec::as_slice) else {
+                return Err(bad(cmd, format!("invalid anchor reference {v}: expected [subpath, anchor]")));
+            };
+            let coordinate = |v: &Value| {
+                v.as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| bad(cmd, format!("invalid anchor index {v}: expected a non-negative integer")))
+            };
+            Ok((coordinate(subpath)?, coordinate(anchor)?))
+        })
+        .collect()
 }
 
 fn anchors(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = id_param(p, "id").ok_or_else(|| bad("select.anchors", "missing id"))?;
-    let refs = parse_refs(p.get("anchors"));
-    let mode = str_param(p, "mode").unwrap_or("set").to_string();
+    const C: &str = "select.anchors";
+    let id = checked_id(s, p.get("id").ok_or_else(|| bad(C, "missing id"))?, C)?;
+    let refs = checked_refs(p.get("anchors"), C)?;
+    let mode = match str_param(p, "mode") {
+        None | Some("set") => "set",
+        Some("add") => "add",
+        Some("toggle") => "toggle",
+        Some(m) => return Err(bad(C, format!("unknown mode {m:?}"))),
+    };
     s.select(|_, sel| {
         if mode == "set" {
             sel.clear();
@@ -285,11 +349,16 @@ fn anchors(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn anchors_many(s: &mut Session, p: &Value) -> Result<Value> {
-    let items: Vec<(NodeId, BTreeSet<(usize, usize)>)> = p
-        .get("items")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|it| Some((NodeId(it.get("id")?.as_u64()?), parse_refs(it.get("anchors")).into_iter().collect()))).collect())
-        .unwrap_or_default();
+    const C: &str = "select.anchorsMany";
+    let raw = p.get("items").and_then(Value::as_array).ok_or_else(|| bad(C, "`items` must be an array of {id, anchors}"))?;
+    let items: Vec<(NodeId, BTreeSet<(usize, usize)>)> = raw
+        .iter()
+        .map(|it| {
+            let id = checked_id(s, it.get("id").ok_or_else(|| bad(C, "each item needs an id"))?, C)?;
+            let refs = checked_refs(it.get("anchors"), C)?;
+            Ok((id, refs.into_iter().collect()))
+        })
+        .collect::<Result<_>>()?;
     // `add: true` is the older spelling of mode add.
     let mode = match str_param(p, "mode") {
         Some(m @ ("set" | "add" | "toggle" | "subtract")) => m,
@@ -375,8 +444,9 @@ fn select_where(s: &mut Session, cmd: &str, p: &Value, f: impl Fn(&Document, &No
     for l in st.doc.layers.iter().filter(|l| l.visible && !l.locked) {
         visit(&st.doc, l, &f, &mut ids);
     }
+    let from = st.selection.objects.clone();
     s.select(|_, sel| sel.set(ids.iter().copied()))?;
-    s.doc_mut()?.last_selection_cmd = Some((cmd.to_string(), p.clone()));
+    s.doc_mut()?.last_selection_cmd = Some((cmd.to_string(), p.clone(), from));
     Ok(json!({ "count": ids.len() }))
 }
 

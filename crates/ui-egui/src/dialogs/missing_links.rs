@@ -2,7 +2,8 @@
 //! (`links.relink`), and with Apply to All the other missing files are looked for by name in its
 //! folder; Ignore keeps the images showing their saved preview, and with Apply to All ignores the
 //! rest. Afterwards, with Preferences › Update Links: Ask When Modified, the modified links are
-//! offered for update (`links.update`).
+//! offered for update (`links.update`). Files another app changes while the document is open are
+//! offered the same way ([`ask_update_changed`], from [`vectorcraft_engine::link_watch`]).
 //!
 //! Fields: `missing` (`[{name, path, ids}]`, the one asked about first), `modified` (the ids of
 //! images whose file was modified), `applyToAll`, `path` (the replacement file; picked when empty)
@@ -35,18 +36,23 @@ fn ids(rows: &[Value]) -> Vec<Value> {
 }
 
 /// After a document opened (`document.open`'s result `r`): ask about its missing linked files,
-/// then about its modified ones. The web reads no linked files, so missing ones just show their
+/// then about its modified ones, then about the fonts it opened without
+/// ([`super::missing_fonts`]). The web reads no linked files, so missing ones just show their
 /// previews there.
 pub fn after_open(app: &mut VectorcraftApp, r: &Value) {
+    // The fonts' dialog waits for these questions (one dialog at a time).
+    super::missing_fonts::after_open(app, r);
     let rows = |k: &str| r[k].as_array().cloned().unwrap_or_default();
     let (missing, modified) = (rows("missingLinks"), ids(&rows("modifiedLinks")));
     if missing.is_empty() || cfg!(target_arch = "wasm32") {
         if !missing.is_empty() {
             app.status(format!("{} linked file(s) can't be read here: their previews show", missing.len()));
         }
-        return ask_update(app, modified);
+        ask_update(app, modified);
+    } else {
+        open(app, missing, modified);
     }
-    open(app, missing, modified);
+    super::settle(app);
 }
 
 fn open(app: &mut VectorcraftApp, missing: Vec<Value>, modified: Vec<Value>) {
@@ -55,6 +61,17 @@ fn open(app: &mut VectorcraftApp, missing: Vec<Value>, modified: Vec<Value>) {
 
 /// With Update Links: Ask When Modified, offer to read the modified linked files `ids` again.
 fn ask_update(app: &mut VectorcraftApp, ids: Vec<Value>) {
+    ask(app, ids, tl!("{count} linked image(s) changed since this document was saved. Show the new versions?"));
+}
+
+/// The same offer for linked files another app changed while the document is open
+/// ([`vectorcraft_engine::link_watch`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn ask_update_changed(app: &mut VectorcraftApp, ids: Vec<Value>) {
+    ask(app, ids, tl!("{count} linked image(s) changed on disk. Show the new versions?"));
+}
+
+fn ask(app: &mut VectorcraftApp, ids: Vec<Value>, question: &str) {
     if ids.is_empty() {
         return;
     }
@@ -62,10 +79,7 @@ fn ask_update(app: &mut VectorcraftApp, ids: Vec<Value>) {
         app.status(format!("{} linked image(s) changed on disk: Update Links shows the new versions", ids.len()));
         return;
     }
-    let detail = crate::i18n::fmt(
-        tl!("{count} linked image(s) changed since this document was saved. Show the new versions?"),
-        &[("count", &ids.len().to_string())],
-    );
+    let detail = crate::i18n::fmt(question, &[("count", &ids.len().to_string())]);
     super::confirm::ask(app, tl!("Update Modified Links"), &detail, "links.update", json!({ "ids": ids }));
 }
 

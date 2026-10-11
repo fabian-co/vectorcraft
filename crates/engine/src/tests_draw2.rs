@@ -197,6 +197,68 @@ fn curvature_click_first_point_closes() {
     assert_eq!(p.anchor_count(), 3);
 }
 
+/// The Curvature tool edits a path another tool drew (#798), one undo step per edit, keeping its
+/// shape except where edited.
+#[test]
+fn curvature_edits_any_selected_path() {
+    let mut s = session();
+    let v = view();
+    let anchors = json!([
+        {"x": 100, "y": 300},
+        {"x": 200, "y": 200, "in": [160, 210], "out": [260, 185]},
+        {"x": 350, "y": 280, "in": [320, 230], "out": [380, 330]},
+        {"x": 450, "y": 350, "in": [420, 360], "out": [480, 300]},
+        {"x": 550, "y": 260, "in": [520, 290]}
+    ]);
+    let id = NodeId(s.execute("path.create", &json!({ "anchors": anchors })).unwrap()["id"].as_u64().unwrap());
+    s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
+    s.select_tool("curvature", v).unwrap();
+    let before = path(&s, id).subpaths[0].clone();
+    // Drag a point: only its two segments change.
+    assert_eq!(gesture(&mut s, &[(350.0, 280.0), (360.0, 320.0), (370.0, 340.0)], Mods::default()), 1);
+    let sp = path(&s, id).subpaths[0].clone();
+    assert_eq!(sp.anchors[2].p, Point::new(370.0, 340.0));
+    assert_eq!((sp.segment(0), sp.segment(3)), (before.segment(0), before.segment(3)));
+    assert_eq!(s.doc().unwrap().selection.anchors.get(&id).map(|a| a.len()), Some(1), "the point is current");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(path(&s, id).subpaths[0], before);
+    // Alt-click toggles it, Delete removes the current point: one step each.
+    let (alt, steps) = (Mods { alt: true, ..Default::default() }, undo_steps(&s));
+    assert_eq!(gesture(&mut s, &[(200.0, 200.0)], alt), 1);
+    assert!(!path(&s, id).subpaths[0].anchors[1].has_out());
+    s.tool_key(ToolKey::Delete, Mods::default(), v).unwrap();
+    assert_eq!(path(&s, id).anchor_count(), 4);
+    assert_eq!(undo_steps(&s), steps + 2);
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(path(&s, id).subpaths[0], before);
+    // A press on a segment adds a point, the drag moving it: one step.
+    s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
+    let on = kurbo::ParamCurve::eval(&before.segment(3), 0.5);
+    assert_eq!(gesture(&mut s, &[(on.x, on.y), (on.x, on.y + 20.0), (on.x, on.y + 30.0)], Mods::default()), 1);
+    let sp = path(&s, id).subpaths[0].clone();
+    assert_eq!(sp.anchors.len(), 6);
+    assert_eq!(sp.anchors[4].p, Point::new(on.x, on.y + 30.0));
+    assert_eq!((sp.segment(0), sp.segment(1), sp.segment(2)), (before.segment(0), before.segment(1), before.segment(2)));
+    s.execute("edit.undo", &json!({})).unwrap();
+    // A click on an end, then two more: the path goes on, its old segments unchanged.
+    let steps = undo_steps(&s);
+    for (x, y) in [(550.0, 260.0), (650.0, 300.0), (720.0, 220.0)] {
+        gesture(&mut s, &[(x, y)], Mods::default());
+    }
+    assert_eq!(undo_steps(&s), steps + 2, "selecting the end is no step");
+    let sp = path(&s, id).subpaths[0].clone();
+    assert_eq!(sp.anchors.len(), 7);
+    assert!((0..4).all(|i| sp.segment(i) == before.segment(i)));
+    assert_eq!(sp.anchors[6].p, Point::new(720.0, 220.0));
+    // The other end closes it; Esc and a click away start a new path.
+    gesture(&mut s, &[(100.0, 300.0)], Mods::default());
+    assert!(path(&s, id).is_closed());
+    s.tool_key(ToolKey::Escape, Mods::default(), v).unwrap();
+    gesture(&mut s, &[(700.0, 550.0)], Mods::default());
+    assert_eq!(paths(&s).len(), 2);
+}
+
 #[test]
 fn add_and_delete_anchor_tools() {
     let mut s = session();
@@ -789,4 +851,62 @@ fn pen_with_alt_converts_the_anchors_of_the_path_being_drawn() {
     assert!(smooth(a) && a.h_out == Point::new(340.0, 400.0), "smooth: {a:?}");
     gesture(&mut s, &[(500.0, 400.0)], none);
     assert_eq!((paths(&s).len(), path(&s, id).subpaths[0].anchors.len()), (1, 5));
+}
+
+/// #776: the Pen continues any open path from the end clicked, selected or not, and while drawing a
+/// click on an end of another open path joins the two into one path, in one undo step, which
+/// finishes it.
+#[test]
+fn the_pen_continues_any_open_path_and_joins_another() {
+    use vectorcraft_tools::Cursor;
+    let (v, none) = (view(), Mods::default());
+    let mut s = session();
+    let a = line(&mut s, 100.0, 100.0, 200.0, 100.0);
+    let b = line(&mut s, 300.0, 200.0, 400.0, 200.0);
+    s.execute("select.none", &json!({})).unwrap();
+    s.select_tool("pen", v).unwrap();
+    assert_eq!(s.cursor(Point::new(200.0, 100.0), none, v), Cursor::PenContinue, "an end of a path that isn't selected");
+    gesture(&mut s, &[(200.0, 100.0)], none);
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a]);
+    assert_eq!(s.cursor(Point::new(300.0, 200.0), none, v), Cursor::PenJoin);
+    assert_eq!(s.cursor(Point::new(350.0, 200.0), none, v), Cursor::Pen, "the middle of the other path");
+    // #1009: Use Precise Cursors makes the join pointer a crosshair too.
+    s.execute("prefs.set", &json!({"key": "usePreciseCursors", "value": true})).unwrap();
+    assert_eq!(s.cursor(Point::new(300.0, 200.0), none, v), Cursor::Crosshair);
+    s.execute("prefs.set", &json!({"key": "usePreciseCursors", "value": false})).unwrap();
+    assert_eq!(gesture(&mut s, &[(300.0, 200.0)], none), 1);
+    let pts = |s: &Session, id| path(s, id).subpaths.iter().flat_map(|sp| sp.anchors.iter().map(|x| (x.p.x, x.p.y))).collect::<Vec<_>>();
+    assert_eq!(pts(&s, a), [(100.0, 100.0), (200.0, 100.0), (300.0, 200.0), (400.0, 200.0)]);
+    assert!(s.doc().unwrap().doc.node(b).is_none() && paths(&s).len() == 1, "one path");
+    // The join finished it: the next click starts a new path.
+    gesture(&mut s, &[(500.0, 500.0)], none);
+    assert_eq!(paths(&s).len(), 2);
+    // From a path's first end, drawing goes on from there: the path is reversed.
+    s.execute("select.none", &json!({})).unwrap();
+    s.select_tool("selection", v).unwrap();
+    s.select_tool("pen", v).unwrap();
+    gesture(&mut s, &[(100.0, 100.0)], none);
+    gesture(&mut s, &[(50.0, 50.0)], none);
+    assert_eq!(pts(&s, a), [(400.0, 200.0), (300.0, 200.0), (200.0, 100.0), (100.0, 100.0), (50.0, 50.0)]);
+}
+
+/// `path.join {ids, ends}` joins the ends asked for, not the nearest pair; bad requests are errors.
+#[test]
+fn join_takes_the_paths_and_the_ends_to_join() {
+    let mut s = session();
+    let a = line(&mut s, 0.0, 0.0, 100.0, 0.0);
+    let b = line(&mut s, 110.0, 0.0, 200.0, 0.0);
+    // The far ends: a's first to b's last (the nearest pair would be a's last and b's first).
+    s.execute("path.join", &json!({"ids": [a.0, b.0], "ends": ["first", "last"]})).unwrap();
+    let pts: Vec<(f64, f64)> = path(&s, a).subpaths[0].anchors.iter().map(|x| (x.p.x, x.p.y)).collect();
+    assert_eq!(pts, [(100.0, 0.0), (0.0, 0.0), (200.0, 0.0), (110.0, 0.0)]);
+    let r = rect(&mut s, 0.0, 50.0, 10.0, 10.0);
+    for bad in [
+        json!({"ids": [a.0, a.0]}),
+        json!({"ids": [a.0, 999]}),
+        json!({"ids": [a.0, r.0], "ends": ["first"]}),
+        json!({"ids": [a.0, b.0], "ends": ["first", "middle"]}),
+    ] {
+        assert!(s.execute("path.join", &bad).is_err(), "{bad}");
+    }
 }

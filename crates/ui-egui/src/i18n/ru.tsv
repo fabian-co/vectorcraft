@@ -9,6 +9,53 @@
 # Coverage: the whole interface — every menu string and every `tl!` literal (`complete_menus`,
 # tested). Left in English on purpose (`MENU_KEEP_AS_IS` in the tests): the product name, language
 # names, OpenType, the built-in workspace names and the bracketed perspective grid preset names.
+# Photoshop-style raster effects (Effect menu, their dialogs).
+	Glowing Edges…	Светящиеся края…
+	Glowing Edges	Светящиеся края
+	Edge Width	Ширина края
+	Edge Brightness	Яркость края
+	Smoothness	Сглаживание
+	Radial Blur…	Радиальное размытие…
+	Smart Blur…	Умное размытие…
+	Sharpen	Резкость
+	Unsharp Mask…	Нерезкая маска…
+	Pixelate	Пикселизация
+	Color Halftone…	Цветные полутона…
+	Crystallize…	Кристаллизация…
+	Mezzotint…	Меццо-тинто…
+	Pointillize…	Пуантилизм…
+	Color Halftone	Цветные полутона
+	Crystallize	Кристаллизация
+	Mezzotint	Меццо-тинто
+	Pointillize	Пуантилизм
+	Max. Radius	Макс. радиус
+	Channel 1	Канал 1
+	Channel 2	Канал 2
+	Channel 3	Канал 3
+	Channel 4	Канал 4
+	Cell Size	Размер ячейки
+	Fine Dots	Мелкие точки
+	Medium Dots	Средние точки
+	Grainy Dots	Зернистые точки
+	Coarse Dots	Крупные точки
+	Short Lines	Короткие линии
+	Medium Lines	Средние линии
+	Long Lines	Длинные линии
+	Short Strokes	Короткие штрихи
+	Medium Strokes	Средние штрихи
+	Long Strokes	Длинные штрихи
+	Radial Blur	Радиальное размытие
+	Smart Blur	Умное размытие
+	Unsharp Mask	Нерезкая маска
+	Gaussian Blur	Размытие по Гауссу
+	Method	Метод
+	Quality	Качество
+	Radius	Радиус
+	Spin	Вращение
+	Draft	Черновое
+	Good	Хорошее
+	Best	Наилучшее
+
 # Status and error messages too (`@msg` rows at the end, `COMPLETE_MESSAGES` in the tests).
 # A native speaker's review is welcome: keep the placeholders ({name}), the trailing "…" and the
 # leading/trailing spaces of fragments exactly as they are.
@@ -74,6 +121,7 @@
 	Add to Swatches	Добавить в образцы
 	Add Used Colors	Добавить использованные цвета
 	Additional Plug-ins Folder	Папка дополнительных модулей
+	Additional Fonts Folder	Папка дополнительных шрифтов
 	Adjust Adjoining Width Points	Настроить смежные точки ширины
 	Adjust Color Balance…	Настроить цветовой баланс…
 	Adjust Colors	Настроить цвета
@@ -141,6 +189,7 @@
 	Appearance panel	Панель «Оформление»
 	Applies when the linked file is relinked or updated.	Применяется при повторной привязке или обновлении связанного файла.
 	Applies the next time VectorCraft starts.	Применяется при следующем запуске VectorCraft.
+	Apply	Применить
 	Apply Brush	Применить кисть
 	Apply Character Style	Применить стиль символа
 	Apply Effect	Применить эффект
@@ -200,6 +249,13 @@
 	Auto Size New Area Type	Автоматически подгонять размер нового текста в области
 	Auto Spell Check	Автоматическая проверка орфографии
 	Auto-Collapse Iconic Panels	Автоматически сворачивать значки панелей
+	Ellipse Properties:	Свойства эллипса:
+	Invert Pie	Инвертировать сектор
+	Side Length:	Длина стороны:
+	Make Sides Equal	Выровнять стороны
+	Pie End Angle:	Конечный угол сектора:
+	Pie Start Angle:	Начальный угол сектора:
+	Show Tool Group Labels	Показывать названия групп инструментов
 	Auto-Rotate (turn the paper to each artboard)	Автоповорот (поворачивать лист по каждой монтажной области)
 	Automatic flatness	Автоматическая плоскостность
 	Automatically	Автоматически
@@ -318,6 +374,8 @@
 	Clean Up…	Очистить…
 	Clear	Очистить
 	Clear All Tabs	Удалить все табуляции
+	Above Text	Над текстом
+	Position Panel Above Text	Расположить панель над текстом
 	Clear Appearance	Очистить оформление
 	Clear Guides	Удалить направляющие
 	Clear Overrides	Очистить переопределения
@@ -469,6 +527,7 @@
 	Copy Fonts Used in the Document	Копировать шрифты, использованные в документе
 	Copy Links	Копировать связи
 	Copy Selected Style	Копировать выбранный стиль
+	Copy to User Defined	Копировать в «Пользовательский»
 	Copy Width Point	Копировать точку ширины
 	Copyright	Copyright
 	Copyright Info URL:	URL информации об авторских правах:
@@ -652,6 +711,7 @@
 	Divide Vertically Into	Разделить по вертикали на
 	Do Not Move	Не перемещать
 	Do you want to save the changes you made to “{name}”?	Сохранить изменения, внесённые в «{name}»?
+	Can't open “{name}”.	Не удаётся открыть «{name}».
 	Document	Документ
 	Document Color Mode	Цветовой режим документа
 	Document Info	Сведения о документе
@@ -952,7 +1012,22 @@
 	Flare	Блик
 	Flare Tool	Инструмент «Блик»
 	Flare Tool Options	Параметры инструмента «Блик»
+	Halo	Ореол
+	Rays	Лучи
+	Rings	Кольца
+	Diameter:	Диаметр:
+	Brightness:	Яркость:
+	Growth:	Рост:
+	Fuzziness:	Размытие:
+	Number:	Количество:
+	Longest:	Самый длинный:
+	Path:	Контур:
+	Largest:	Самое большое:
+	Direction:	Направление:
+	Symbolism Tools Options	Параметры инструментов символов
+	Symbol Set Density:	Плотность набора символов:
 	Flat Image	Плоское изображение
+	Flat Logo	Плоский логотип
 	Flatness:	Плоскостность:
 	Flatten Artwork	Объединить рисунок
 	Flatten Transparency	Объединить прозрачности
@@ -1117,6 +1192,7 @@
 	Highlight Alternate Glyphs	Выделять альтернативные глифы
 	Highlight anchors on mouse over	Выделять опорные точки при наведении
 	Highlight Rows	Выделять строки
+	Highlight Variable	Подсветить переменную
 	Highlight Substituted Fonts	Выделять заменённые шрифты
 	Highlight Substituted Glyphs	Выделять заменённые глифы
 	History	История
@@ -1149,6 +1225,11 @@
 	Ignore	Игнорировать
 	Ignore Artboards (all the art as one page)	Игнорировать монтажные области (весь рисунок как одна страница)
 	Ignore White	Игнорировать белый
+	Palette:	Палитра:
+	Limited	Ограниченная
+	Full Tone	Полутоновая
+	Document Library	Библиотека документа
+	Library:	Библиотека:
 	Image	Изображение
 	Image Info	Сведения об изображении
 	Image Map:	Карта изображения:
@@ -1258,6 +1339,7 @@
 	Last Effect…	Последний эффект…
 	Last Page	Последняя страница
 	Latin	Латиница
+	Thai	Тайская
 	Latin Extended	Расширенная латиница
 	Latin-1 Supplement	Дополнение Latin-1
 	Layer	Слой
@@ -1392,6 +1474,9 @@
 	Marks and Bleed	Метки и вылет
 	Marks and Bleeds	Метки и вылеты
 	Match User Interface Brightness	Согласовать с яркостью интерфейса
+	Light Gray	Светло-серый
+	Medium Gray	Средне-серый
+	Dark Gray	Тёмно-серый
 	Materials…	Материалы…
 	Matte	Мат
 	Matte:	Мат:
@@ -1445,12 +1530,17 @@
 	Modify	Изменить
 	Mojikumi	Mojikumi
 	Mojikumi Set	Набор mojikumi
+	Kinsoku Set	Набор kinsoku
+	Hard	Строгий
+	Soft	Мягкий
 	Monitor RGB	RGB монитора
 	Mono	Моно
 	Monochrome images	Монохромные изображения
 	Monospaced	Моноширинный
 	More	Больше
 	More Pathfinder options	Дополнительные параметры обработки контуров
+	More Align options	Дополнительные параметры выравнивания
+	More Paragraph options	Дополнительные параметры абзаца
 	More Settings	Дополнительные настройки
 	Move	Переместить
 	Move All Objects	Переместить все объекты
@@ -1472,6 +1562,7 @@
 	Move Rows	Переместить строки
 	Move Slices	Переместить фрагменты
 	Move Spine Point	Переместить точку остова
+	Reshape Spine Segment	Изменить форму сегмента остова
 	Move Swatch	Переместить образец
 	Move Up	Переместить вверх
 	Move…	Переместить…
@@ -1494,6 +1585,58 @@
 	New Art Has Basic Appearance	Новый рисунок имеет основное оформление
 	New Artboard	Новая монтажная область
 	New Bristle Brush	Новая щетинная кисть
+	Calligraphic Brush Options	Параметры каллиграфической кисти
+	Bristle Brush Options	Параметры щетинной кисти
+	Scatter Brush Options	Параметры кисти-распыления
+	Art Brush Options	Параметры художественной кисти
+	Pattern Brush Options	Параметры узорной кисти
+	Scatter:	Рассеивание:
+	Rotation:	Поворот:
+	Rotation relative to:	Поворот относительно:
+	Brush Scale Options	Параметры масштабирования кисти
+	Scale Proportionately	Масштабировать пропорционально
+	Stretch to Fit Stroke Length	Растянуть по длине обводки
+	Stretch Between Guides	Растянуть между направляющими
+	Start:	Начало:
+	End:	Конец:
+	Left to Right	Слева направо
+	Right to Left	Справа налево
+	Top to Bottom	Сверху вниз
+	Bottom to Top	Снизу вверх
+	Flip:	Отразить:
+	Outer Corner Tile	Фрагмент внешнего угла
+	Side Tile	Боковой фрагмент
+	Inner Corner Tile	Фрагмент внутреннего угла
+	Start Tile	Начальный фрагмент
+	End Tile	Конечный фрагмент
+	Fit	Подгонка
+	Stretch to fit	Растянуть для подгонки
+	Add space to fit	Добавить интервалы для подгонки
+	Approximate path	Приблизить к контуру
+	Colorization	Перекрашивание
+	Tints	Оттенки
+	Tints and Shades	Оттенки и тени
+	Hue Shift	Сдвиг тона
+	Key Color:	Ключевой цвет:
+	Roundness:	Округлость:
+	Fixed	Фиксированный
+	Pressure	Нажим
+	Shape:	Форма:
+	Bristle Length:	Длина щетинок:
+	Bristle Density:	Плотность щетинок:
+	Bristle Thickness:	Толщина щетинок:
+	Paint Opacity:	Непрозрачность краски:
+	Stiffness:	Жёсткость:
+	Round Point	Круглая заострённая
+	Flat Point	Плоская заострённая
+	Round Blunt	Круглая тупая
+	Flat Blunt	Плоская тупая
+	Round Curve	Круглая изогнутая
+	Flat Curve	Плоская изогнутая
+	Round Angle	Круглая скошенная
+	Flat Angle	Плоская скошенная
+	Round Fan	Круглая веерная
+	Flat Fan	Плоская веерная
 	New Brush…	Новая кисть…
 	New Calligraphic Brush	Новая каллиграфическая кисть
 	New Character Style	Новый стиль символа
@@ -1562,6 +1705,9 @@
 	No text selected	Текст не выделен
 	No Thumbnails	Без миниатюр
 	Noise	Шум
+	Create:	Создать:
+	Fills	Заливки
+	Strokes	Обводки
 	Nonbreaking Hyphen	Неразрывный дефис
 	Nonbreaking Space	Неразрывный пробел
 	None	Нет
@@ -1903,6 +2049,11 @@
 	Proof Colors	Цветопроба
 	Proof Setup	Настройка цветопробы
 	Properties	Свойства
+	Proportional Metrics	Пропорциональные метрики
+	Digits	Цифры
+	Arabic	Арабские
+	Hindi	Хинди
+	Farsi	Фарси
 	Proportional Oldstyle	Пропорциональные старого стиля
 	Pucker & Bloat…	Сморщивание и раздувание…
 	Pucker Tool	Инструмент «Сморщивание»
@@ -1942,7 +2093,17 @@
 	Rating:	Рейтинг:
 	Real World:	Реальный мир:
 	Real-time Drawing and Editing	Рисование и редактирование в реальном времени
-	Rearrange All Artboards (on the roadmap)	Переставить все монтажные области (в плане развития)
+	Rearrange All Artboards	Переставить все монтажные области
+	Rearrange All	Переставить все
+	Layout Order:	Порядок макета:
+	Change to Left-to-Right Layout	Переключить на макет слева направо
+	Grid by Row	Сетка по строкам
+	Grid by Column	Сетка по столбцам
+	Arrange by Row	Расположить в строку
+	Arrange by Column	Расположить в столбец
+	Move Artwork with Artboard	Перемещать иллюстрацию вместе с монтажной областью
+	Scale Artwork with Artboard	Масштабировать иллюстрацию вместе с монтажной областью
+	Artboards: {n}	Монтажные области: {n}
 	Rearrange All Artboards…	Переставить все монтажные области…
 	Recall Selection	Восстановить выделение
 	RECENT	ПОСЛЕДНИЕ
@@ -1992,6 +2153,9 @@
 	Redefine Symbol	Переопределить символ
 	Redefine {kind} Style	Переопределить стиль {kind}
 	Redo	Повторить
+	List Folder	Показать содержимое папки
+	Begin Undo Group	Начать группу отмены
+	End Undo Group	Завершить группу отмены
 	Redo {name}	Повторить {name}
 	Redo {}	Повторить {}
 	Reduce Colors	Сократить число цветов
@@ -2006,6 +2170,25 @@
 	Reflect…	Отразить…
 	Refresh	Обновить
 	Refresh Font List	Обновить список шрифтов
+	Missing Fonts	Отсутствующие шрифты
+	Missing Fonts Dialog	Диалоговое окно «Отсутствующие шрифты»
+	These fonts aren't available. Their text shows in another font.	Эти шрифты недоступны. Их текст отображается другим шрифтом.
+	Search Fonts Folder	Искать в папке Fonts
+	Find in Folder…	Найти в папке…
+	Find Fonts in Folder…	Найти шрифты в папке…
+	Find Font Files	Найти файлы шрифтов
+	Add Font Files	Добавить файлы шрифтов
+	Add Fonts	Добавить шрифты
+	Find Fonts	Найти шрифты
+	Stop	Остановить
+	Searching…	Поиск…
+	Not found	Не найдено
+	{folders} folder(s) and {files} file(s) searched	Просмотрено папок: {folders}, файлов: {files}
+	{count} folder(s) skipped, such as other apps' and the system's folders and hidden ones	Пропущено папок: {count}, например папки других приложений и системы и скрытые папки
+	{count} folder(s) or file(s) couldn't be read	Не удалось прочитать папок или файлов: {count}
+	The search stopped at its limit: search a smaller folder.	Поиск остановился на пределе: выберите папку поменьше.
+	Copy only fonts you own or are licensed to install.	Копируйте только шрифты, которые принадлежат вам или которые вы вправе устанавливать по лицензии.
+	VectorCraft copies the fonts to {folder}.	VectorCraft копирует шрифты в {folder}.
 	Registered Trademark Symbol	Символ зарегистрированного товарного знака
 	Registration marks	Метки совмещения
 	Registry name:	Имя в реестре:
@@ -2104,6 +2287,8 @@
 	Reverse Spine	Обратить остов
 	Revert	Вернуть
 	Revert to the saved version of “{name}”?	Вернуться к сохранённой версии «{name}»?
+	Replace “{name}”, the file this document was opened from?	Заменить «{name}» — файл, из которого открыт этот документ?
+	Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	При открытии было пропущено то, что VectorCraft пока не умеет читать ({what}), поэтому замена файла потеряет это навсегда. Чтобы сохранить это, сохраните документ под другим именем.
 	Revolve…	Вращение…
 	RGB Color	Цвет RGB
 	Right	Справа
@@ -2395,6 +2580,8 @@
 	Show Guides	Показать направляющие
 	Show handles when multiple anchors are selected	Показывать маркеры при выделении нескольких опорных точек
 	Show Hidden Characters	Показать скрытые символы
+	Bold	Полужирный
+	Italic	Курсив
 	Show Images in Outline Mode	Показывать изображения в режиме контуров
 	Show in Folder	Показать в папке
 	Show Indic Options	Показать параметры индийских языков
@@ -2452,6 +2639,7 @@
 	Size Tile to Art	Подогнать плитку по рисунку
 	Size/Leading	Размер/интерлиньяж
 	Size:	Размер:
+	Ridges per segment:	Гребней на сегмент:
 	Size: {size}  Tracking: {tracking}	Размер: {size}  Трекинг: {tracking}
 	Skew	Скос
 	Skin Tone Ramps	Шкалы тонов кожи
@@ -2480,9 +2668,19 @@
 	Smart Guides (⌘U)	Умные направляющие (⌘U)
 	Smart Punctuation…	Умная пунктуация…
 	Smooth	Сгладить
+	Corner	Угол
+	Relative	Относительно
+	Absolute	Абсолютно
 	Smooth Color	Сглаженный цвет
 	Smooth Tool	Инструмент «Сглаживание»
 	Snap Curves To Lines	Привязывать кривые к линиям
+	View:	Просмотр:
+	Tracing Result	Результат трассировки
+	Tracing Result with Outlines	Результат трассировки с контурами
+	Outlines	Контуры
+	Outlines with Source Image	Контуры с исходным изображением
+	Source Image	Исходное изображение
+	Image Trace View	Просмотр трассировки изображения
 	Snap Options	Параметры привязки
 	Snap to Glyph	Привязать к глифу
 	Snap to Grid	Привязать к сетке
@@ -2578,6 +2776,7 @@
 	Swash	Росчерк
 	Swatch Conflict	Конфликт образцов
 	Swatch Conflicts	Конфликты образцов
+	Swatch exchange files keep solid colors only.	Файлы обмена образцами сохраняют только сплошные цвета.
 	Swatch Libraries	Библиотеки образцов
 	Swatch Libraries Menu	Меню «Библиотеки образцов»
 	Swatch Library	Библиотека образцов
@@ -2587,6 +2786,42 @@
 	Swatch Tiles	Плитки образцов
 	Swatches	Образцы
 	Switch workspace	Переключить рабочую среду
+	Add Content	Добавить содержимое
+	Click to apply to the selected type	Щёлкните, чтобы применить к выделенному тексту
+	Create New Library	Создать библиотеку
+	Create New Library…	Создать библиотеку…
+	Rename Library…	Переименовать библиотеку…
+	Delete the library “{name}”?	Удалить библиотеку «{name}»?
+	Drag art or swatches here, or use + to add the selection's colors and text styles.	Перетащите сюда графику или образцы или нажмите +, чтобы добавить цвета и стили текста выделенного.
+	Its graphics, colors and text styles are deleted from this machine.	Её графика, цвета и стили текста будут удалены с этого компьютера.
+	Keep graphics, colors and text styles here to use them in any document. Libraries are stored on this machine — no account required.	Храните здесь графику, цвета и стили текста, чтобы использовать их в любом документе. Библиотеки хранятся на этом компьютере — учётная запись не нужна.
+	This library is empty	Эта библиотека пуста
+	Add to Library	Добавить в библиотеку
+	Delete Library	Удалить библиотеку
+	Delete Library Item	Удалить элемент библиотеки
+	No results	Ничего не найдено
+	No items in this library match “{query}”.	В этой библиотеке нет элементов, соответствующих «{query}».
+	Right-click an item to move it into this group.	Щёлкните элемент правой кнопкой мыши, чтобы переместить его в эту группу.
+	New Group	Новая группа
+	New Group…	Новая группа…
+	Move to Group	Переместить в группу
+	No Group	Без группы
+	Rename Group…	Переименовать группу…
+	Delete Group	Удалить группу
+	Import Library…	Импортировать библиотеку…
+	Export Library…	Экспортировать библиотеку…
+	Import Library	Импортировать библиотеку
+	Export Library	Экспортировать библиотеку
+	New Library Group	Новая группа библиотеки
+	Rename Library Group	Переименовать группу библиотеки
+	Delete Library Group	Удалить группу библиотеки
+	Move Library Item to Group	Переместить элемент библиотеки в группу
+	Library	Библиотека
+	Rename Library	Переименовать библиотеку
+	Show Library	Показать библиотеку
+	Use Library Item	Использовать элемент библиотеки
+	Graphic	Графика
+	Show all open documents	Показать все открытые документы
 	Symbol Instance	Экземпляр символа
 	Symbol Libraries	Библиотеки символов
 	Symbol Libraries (on the roadmap)	Библиотеки символов (в плане развития)
@@ -2674,6 +2909,9 @@
 	Tool Options…	Параметры инструмента…
 	Toolbar: Advanced / Basic	Панель инструментов: расширенная / основная
 	Toolbar: Single/Double Column	Панель инструментов: один/два столбца
+	Toolbar: Add Tool	Панель инструментов: добавить инструмент
+	Toolbar: Remove Tool	Панель инструментов: убрать инструмент
+	Toolbar: Reset	Панель инструментов: сбросить
 	Toolbars	Панели инструментов
 	Tools	Инструменты
 	Top	Вверху
@@ -2776,6 +3014,7 @@
 	Untitled	Без названия
 	Update Link	Обновить связь
 	Update Links	Обновить связи
+	Update Changed Links	Обновить измененные связи
 	Update Modified Links	Обновить изменённые связи
 	Updated {} image(s)	Обновлено изображений: {}
 	UPPERCASE	ПРОПИСНЫЕ
@@ -2827,6 +3066,38 @@
 	V:	В:
 	Variable Width Profile	Профиль переменной ширины
 	Variables	Переменные
+	New Variable	Новая переменная
+	Delete Variable	Удалить переменную
+	List Variables	Перечислить переменные
+	Bind Variable	Привязать переменную
+	Unbind Variable	Отвязать переменную
+	New Data Set	Новый набор данных
+	Delete Data Set	Удалить набор данных
+	List Data Sets	Перечислить наборы данных
+	Select Data Set	Выделить набор данных
+	Next Data Set	Следующий набор данных
+	Previous Data Set	Предыдущий набор данных
+	Data Sets	Наборы данных
+	New Variable…	Новая переменная…
+	New Data Set…	Новый набор данных…
+	Edit Data Set…	Изменить набор данных…
+	Data Set	Набор данных
+	Kind	Тип
+	Variable	Переменная
+	no document	нет документа
+	no data set to edit	нет набора данных для изменения
+	Make Text Dynamic	Сделать текст динамическим
+	Make Visibility Dynamic	Сделать видимость динамической
+	Capture Data Set	Записать набор данных
+	Update Data Set	Обновить набор данных
+	Rename Data Set…	Переименовать набор данных…
+	Variable Options…	Параметры переменной…
+	Select Bound Object	Выбрать связанный объект
+	Select All Bound Objects	Выбрать все связанные объекты
+	Multiple objects	Несколько объектов
+	New Name	Новое имя
+	no variable to rename	нет переменной для переименования
+	no data set to rename	нет набора данных для переименования
 	Variation:	Вариация:
 	Vector Effects	Векторные эффекты
 	Vector Halftone	Векторный полутон
@@ -2909,7 +3180,9 @@
 	Scrub Numeric Fields by Dragging	Изменять числовые поля перетаскиванием
 	{count} file(s) in {folder}{note}. Show the package folder?	Файлов: {count} в {folder}{note}. Показать папку пакета?
 	{count} linked file(s) not found	Не найдено связанных файлов: {count}
+	fonts not copied: {fonts}	шрифты не скопированы: {fonts}
 	{count} linked image(s) changed since this document was saved. Show the new versions?	Связанных изображений ({count}) изменились с момента сохранения этого документа. Показать новые версии?
+	{count} linked image(s) changed on disk. Show the new versions?	Связанных изображений ({count}) изменились на диске. Показать новые версии?
 	{count} more rules: Export writes every one.	Ещё правил: {count}: экспорт записывает все.
 	{count} unnamed objects left out: name them, or turn on Unnamed Objects in the panel menu.	Пропущено объектов без имени: {count}: назовите их или включите «Объекты без имени» в меню панели.
 	{effect} is already applied	{effect} уже применён
@@ -2968,6 +3241,9 @@
 	 to zoom in  |  	 для увеличения  |  
 	 to zoom out  |  	 для уменьшения  |  
 	 to zoom into an area	 для увеличения области
+	Hold	Удерживать
+	 right or left to zoom in or out  |  	 вправо или влево для увеличения или уменьшения  |  
+	 to keep zooming	 для непрерывного масштабирования
 	 an object to copy its attributes  |  	 в объект для копирования его атрибутов  |  
 	 to apply the selection's to it  |  	 для применения атрибутов выделения к нему  |  
 	 to sample a color	 для взятия образца цвета
@@ -3051,6 +3327,7 @@ axis	Horizontal	Горизонтально
 axis	Vertical	Вертикально
 axis	Both	Оба
 	Drag to move	Перетащите для перемещения
+	Drag to move out of the set	Перетащите, чтобы вынести из набора
 	Drag to float as a toolbar	Перетащите, чтобы сделать плавающей панелью инструментов
 	Put back in the toolbar	Вернуть на панель инструментов
 	Float Panel	Сделать панель плавающей
@@ -3065,6 +3342,22 @@ axis	Both	Оба
 # stays English for agents and tests. `{_1}`, `{_2}` … stand for the `{}` of the format string, in order
 # (`complete_languages_translate_every_message` lists any that are missing). Command ids, parameter
 # names and values in backticks or code (`colorModel rgb`, `document.export`) stay as they are.
+@msg	no library `{id}`	нет библиотеки `{id}`
+@msg	select some type first	сначала выделите текст
+@msg	{_1} has no {_2} style	у {_1} нет начертания {_2}
+@msg	a layer couldn't be read	не удалось прочитать слой
+@msg	it has more than one artboard	в нём несколько монтажных областей
+@msg	it has no page	в нём нет страницы
+@msg	it has too many text objects	в нём слишком много текстовых объектов
+@msg	it has too much text	в нём слишком много текста
+@msg	its editing data doesn't say where its artboard is	его данные для редактирования не указывают, где находится монтажная область
+@msg	its editing data has no layers	в его данных для редактирования нет слоёв
+@msg	its editing data is damaged	его данные для редактирования повреждены
+@msg	its editing data is for a different page	его данные для редактирования относятся к другой странице
+@msg	its layers use {_1}, which aren't read yet	его слои используют {_1}, что пока не читается
+@msg	its page has text, and its layers have no text objects to put it in	на его странице есть текст, а на слоях нет текстовых объектов, куда его поместить
+@msg	its type is to come in as outlines, which only its page has	его текст должен прийти в виде контуров, а они есть только на его странице
+@msg	the art on them differs from the page's in {_1}% of it	изображение на слоях отличается от изображения на странице на {_1} % площади
 @msg	`to` must be "corner" or "smooth"	`to` должно быть "corner" или "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	файлы BMP бывают RGB или в оттенках серого: colorModel rgb или gray
 @msg	Blend colors: select at least three objects with filled colours	Смешивание цветов: выберите не менее трёх объектов с цветными заливками
@@ -3138,6 +3431,7 @@ axis	Both	Оба
 @msg	`color` must be a colour	`color` должно быть цветом
 @msg	`command` must be a command whose menu item opens a dialog (see ui.menuDialog)	`command` должно быть командой, пункт меню которой открывает диалоговое окно (см. ui.menuDialog)
 @msg	`freeform.points` must be an array	`freeform.points` должно быть массивом
+@msg	`freeform.lines` must be an array	`freeform.lines` должно быть массивом
 @msg	`gradient` must be an object	`gradient` должно быть объектом
 @msg	`library` is a library id or name (see {list})	`library` — это идентификатор или имя библиотеки (см. {list})
 @msg	`mode` applies to freeform gradients	`mode` применяется к произвольным градиентам
@@ -3200,6 +3494,7 @@ axis	Both	Оба
 @msg	antiAlias `{id}`: none, art or type	antiAlias `{id}`: none, art или type
 @msg	artboard {0} does not exist	монтажная область {0} не существует
 @msg	at this scale the drawing is {w} × {h} pt, more than the canvas holds: choose a smaller scale or fit it to the artboard	при этом масштабе рисунок имеет размер {w} × {h} пт, что больше холста: выберите меньший масштаб или впишите его в монтажную область
+@msg	axis must be "vertical", "horizontal" or an angle in degrees, not `{v}`	axis должно быть "vertical", "horizontal" или углом в градусах, а не `{v}`
 @msg	background {other}: transparent, white, black or a colour such as "#ff8800"	фон {other}: transparent, white, black или цвет, например "#ff8800"
 @msg	bad color {v}	недопустимый цвет {v}
 @msg	bad colour `{hex}` (#rrggbb)	недопустимый цвет `{hex}` (#rrggbb)
@@ -3218,6 +3513,7 @@ axis	Both	Оба
 @msg	cannot distort a zero-size bounding box	нельзя исказить ограничительную рамку нулевого размера
 @msg	cannot read PDF: {0}	не удалось прочитать PDF: {0}
 @msg	cannot split an open path at its end point	нельзя разделить открытый контур в его конечной точке
+@msg	closing needs three anchors	для замыкания нужны три опорные точки
 @msg	check an asset to export	отметьте ресурс для экспорта
 @msg	choice must be "merge" or "add", not `{choice}`	choice должно быть "merge" или "add", а не `{choice}`
 @msg	choose a direction to divide in	выберите направление для разделения
@@ -3238,8 +3534,10 @@ axis	Both	Оба
 @msg	empty path	пустой контур
 @msg	file version {0} is newer than this VectorCraft supports ({VERSION})	версия файла {0} новее, чем поддерживает этот VectorCraft ({VERSION})
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	произвольной точке {i} нужны `at` [x, y] и допустимый `color`
+@msg	freeform line {i} must be an array of point indices	произвольная линия {i} должна быть массивом индексов точек
 @msg	give both `start` and `end` [x, y] (or neither)	укажите и `start`, и `end` [x, y] (или ни одного)
-@msg	give corners of the path: anchors between two straight sides	укажите углы контура: опорные точки между двумя прямыми сторонами
+@msg	give corners of the path: anchors where its sides meet at an angle	укажите углы контура: опорные точки, в которых его стороны сходятся под углом
+@msg	give horizontal or vertical	укажите horizontal или vertical
 @msg	give the path `id` and the width point `index`	укажите `id` контура и `index` точки ширины
 @msg	guides are locked	направляющие заблокированы
 @msg	image '{key}' has no pixels and was left out	изображение '{key}' не имеет пикселей и было пропущено
@@ -3284,6 +3582,7 @@ axis	Both	Оба
 @msg	no blend options	нет параметров перехода
 @msg	no bounds	нет границ
 @msg	no brush named `{name}`	нет кисти с именем `{name}`
+@msg	no brush selected	кисть не выбрана
 @msg	no catalog	нет каталога
 @msg	no changes since the last save	нет изменений с момента последнего сохранения
 @msg	no clock to keep a heartbeat by	нет часов для поддержания сигнала
@@ -3353,6 +3652,7 @@ axis	Both	Оба
 @msg	no symbol instances selected	экземпляры символов не выделены
 @msg	no target object has an opacity mask: select one or give `id`	ни у одного целевого объекта нет непрозрачной маски: выделите один или укажите `id`
 @msg	no threaded text selected	связанный текст не выделен
+@msg	no user library folder here	здесь нет папки пользовательских библиотек
 @msg	no user workspace `{from}`	нет пользовательской рабочей среды `{from}`
 @msg	node {_1} is not text	узел {_1} не является текстом
 @msg	not a DXF drawing	не является чертежом DXF
@@ -3474,6 +3774,8 @@ axis	Both	Оба
 @msg	the image's pixels don't match its size	пиксели изображения не соответствуют его размеру
 @msg	the layer has no objects to clip by	в слое нет объектов для обрезки
 @msg	the layer or group is locked	слой или группа заблокированы
+@msg	the guide is on a hidden or locked layer	направляющая находится на скрытом или заблокированном слое
+@msg	the target layer is locked or hidden	целевой слой заблокирован или скрыт
 @msg	the layer to flatten into is hidden	слой для объединения скрыт
 @msg	the object already has an opacity mask	у объекта уже есть непрозрачная маска
 @msg	the object has no geometry	у объекта нет геометрии
@@ -3498,7 +3800,7 @@ axis	Both	Оба
 @msg	the {tool} tool has no options	инструмент {tool} не имеет параметров
 @msg	there are no objects to release	нет объектов для освобождения
 @msg	there are no printer settings to open here	здесь нет настроек принтера для открытия
-@msg	this PostScript file can't be read ({_1}): save it as PDF or SVG in the app that made it	этот файл PostScript невозможно прочитать ({_1}): сохраните его как PDF или SVG в приложении, которое его создало
+@msg	this PostScript file can't be read ({why}): save it as PDF or SVG in the app that made it	этот файл PostScript невозможно прочитать ({why}): сохраните его как PDF или SVG в приложении, которое его создало
 @msg	this file's PostScript couldn't be read ({why}): {what}	PostScript этого файла невозможно прочитать ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	этот формат содержит одну монтажную область: экспортируйте несколько как PDF или с помощью document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	это чертёж DWG, который невозможно прочитать: сохраните его из приложения CAD как ASCII DXF и откройте его
@@ -3538,6 +3840,7 @@ axis	Both	Оба
 @msg	{_1} is already used by {_2}	{_1} уже используется {_2}
 @msg	{_1} linked file(s) can't be read here: their previews show	здесь невозможно прочитать связанных файлов: {_1}: отображаются их предварительные просмотры
 @msg	{_1} linked image(s) changed on disk: Update Links shows the new versions	связанных изображений ({_1}) изменились на диске: «Обновить связи» покажет новые версии
+@msg	Updated {_1} linked file(s) changed on disk	Обновлено связанных файлов, измененных на диске: {_1}
 @msg	{_1}: not saved, so not closed	{_1}: не сохранён, поэтому не закрыт
 @msg	{bpp}-bit bitmaps can't be read	растровые изображения с глубиной {bpp} бит не читаются
 @msg	{command} didn't create an object	{command} не создал объект
@@ -3586,7 +3889,47 @@ axis	Both	Оба
 @msg	tool (a tool id) is required	требуется tool (идентификатор инструмента)
 @msg	{tool} isn't in a toolbar group of several tools	{tool} не входит в группу панели инструментов из нескольких инструментов
 @msg	onto must name a panel floating in another group	onto должен называть панель, плавающую в другой группе
+@msg	below and above must name a panel floating in another group	below и above должны называть панель, плавающую в другой группе
+@msg	give only one of onto, below and above	укажите только один из onto, below и above
+@msg	column must be true or a number from 1	column должен быть true или числом от 1
 @msg	x and y must both be numbers	x и y должны быть числами
+@msg	"{0}" is not a colour: write it as #rrggbb	«{0}» не является цветом: запишите его как #rrggbb
+@msg	this isn't a flat-colour logo ({_1}% of its solid areas match a few flat colours), so Flat Logo mode would turn its gradients into patches: use Color mode instead	это не логотип из плоских цветов ({_1}% его сплошных областей совпадает с несколькими плоскими цветами), поэтому режим «Плоский логотип» превратил бы градиенты в пятна: используйте режим «Цвет»
+@msg	`{what}` closes nothing	`{what}` ничего не закрывает
+@msg	`{what}` closes something it didn't open	`{what}` закрывает то, что не открывал
+@msg	a path has too many points	в контуре слишком много точек
+@msg	it ends inside a layer	они заканчиваются внутри слоя
+@msg	it has art outside its layers	в них есть графика вне слоёв
+@msg	it has more than {MAX_NODES} objects	в них больше {MAX_NODES} объектов
+@msg	it has no layers	в них нет слоёв
+@msg	it has too many values in a row	в них слишком много значений подряд
+@msg	it has {_1}, which VectorCraft doesn't read from it yet	в них есть {_1}, которые VectorCraft пока не читает
+@msg	its objects are nested too deeply	объекты в них вложены слишком глубоко
+@msg	its section ending with `%{end}` doesn't end	раздел, заканчивающийся на `%{end}`, не заканчивается
+@msg	objects with several fills or strokes, effects or brushes came in as their drawn look ({_1}): their appearance isn't editable yet	объекты с несколькими заливками или обводками, эффектами или кистями импортированы в нарисованном виде ({_1}): их оформление пока нельзя редактировать
+@msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	градиент «{name}» не определён в файле: вместо него используется сплошной цвет
+@msg	an image VectorCraft can't read was left out	изображение, которое VectorCraft не может прочитать, пропущено
+@msg	an image whose data is cut short was left out	изображение с обрезанными данными пропущено
+@msg	its editing data doesn't say where its art is	в его данных редактирования не указано, где находится графика
+@msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	этот файл сохранён без совместимости с PDF, и его данные редактирования не удаётся прочитать ({why})
+@msg	No fonts are missing in this document	В этом документе нет отсутствующих шрифтов
+@msg	VectorCraft doesn't search other apps' or the system's folders: {path}	VectorCraft не ищет в папках других приложений и системы: {path}
+@msg	VectorCraft doesn't search the Shared or Public folder in Users: {path}	VectorCraft не ищет в папках Shared и Public внутри Users: {path}
+@msg	{path} is not a folder	{path} не является папкой
+@msg	the search couldn't start: try again in a moment	не удалось начать поиск: повторите попытку чуть позже
+@msg	searching a folder isn't available on the web	поиск в папке недоступен в веб-версии
+@msg	every search thread stopped on an internal error (please report this bug)	все потоки поиска остановились из-за внутренней ошибки (сообщите об этой ошибке)
+@msg	VectorCraft's Fonts folder isn't set here: the desktop app and vectorcraft-cli set it	Папка Fonts VectorCraft здесь не задана: её задают настольное приложение и vectorcraft-cli
+@msg	choose the font files to add	выберите файлы шрифтов для добавления
+@msg	{n} font file(s) are now in {folder}	Файлов шрифтов теперь в {folder}: {n}
+@msg	{n} font file(s) are now in {folder}; {failed} couldn't be added: {reason}	Файлов шрифтов теперь в {folder}: {n}; не удалось добавить {failed}: {reason}
+@msg	{n} font(s) aren't available here: their text shows in another font	здесь недоступно шрифтов: {n}; их текст отображается другим шрифтом
+@msg	not a file	не файл
+@msg	not a font file	не файл шрифта
+@msg	that document is no longer open	этот документ больше не открыт
+@msg	larger than 256 MB	больше 256 МБ
+@msg	the files come to more than 1 GB: add fewer at a time	файлы занимают больше 1 ГБ: добавляйте меньше за раз
+@msg	every numbered name for it is taken in the Fonts folder	все нумерованные имена для него уже заняты в папке Fonts
 
 # The macOS menu bar (native_menu): the app and Window menus' system items, Settings pages.
 	Services	Службы
@@ -3600,6 +3943,8 @@ axis	Both	Оба
 	Images: link to the file instead of only embedding it.	Изображения: связывать с файлом вместо простого внедрения.
 	VectorCraft documents: one locked object, updated when the file changes.	Документы VectorCraft: один заблокированный объект, обновляемый при изменении файла.
 	A file dialog is open: choose there first	Открыто окно выбора файла: сначала сделайте выбор в нём
+	The document was closed while its file dialog was open	Документ был закрыт, пока было открыто его окно выбора файла
+	The dialog was closed before its file dialog answered	Диалоговое окно было закрыто до того, как ответило его окно выбора файла
 	Shaper	Shaper
 	Expand Shaper Group	Разобрать группу Shaper
 	Release Shaper Group	Освободить группу Shaper
@@ -3609,3 +3954,199 @@ axis	Both	Оба
 	Perspective Distort	Искажение перспективы
 	Artboard	Монтажная область
 	Exit	Выйти
+@msg	`id` is the step reference {r}, which only `run` and `command_batch` resolve	`id` — это ссылка на шаг {r}, которую разрешают только `run` и `command_batch`
+@msg	`ids` must be an array of object ids, not {v}	`ids` должен быть массивом идентификаторов объектов, а не {v}
+@msg	`corners` must be an array of anchor indices, not {v}	`corners` должен быть массивом индексов опорных точек, а не {v}
+@msg	`{text}`: step {i}'s result has no such value (write $$ for a literal $)	`{text}`: в результате шага {i} нет такого значения (чтобы написать сам $, введите $$)
+@msg	`{text}`: there is no step {i} before this one (steps count from 0; write $$ for a literal $)	`{text}`: перед этим шагом нет шага {i} (шаги считаются с 0; чтобы написать сам $, введите $$)
+@msg	object ids are non-negative integers, not {v}	идентификаторы объектов — неотрицательные целые числа, а не {v}
+@msg	automation filesystem access is not granted: read authority is absent: {path}	у автоматизации нет доступа к файловой системе: нет права на чтение: {path}
+@msg	automation filesystem access is not granted: write authority is absent: {path}	у автоматизации нет доступа к файловой системе: нет права на запись: {path}
+@msg	automation path rejected: outside the read root {root}: {path}	путь автоматизации отклонён: вне корневой папки для чтения {root}: {path}
+@msg	automation path rejected: outside the write root {root}: {path}	путь автоматизации отклонён: вне корневой папки для записи {root}: {path}
+@msg	automation path rejected: path is empty	путь автоматизации отклонён: путь пуст
+@msg	automation path rejected: a link that leads nowhere: {path}	путь автоматизации отклонён: ссылка, которая никуда не ведёт: {path}
+@msg	automation path rejected: cannot resolve {path}: {e}	путь автоматизации отклонён: не удаётся определить {path}: {e}
+@msg	automation path rejected: parent traversal below a folder that doesn't exist: {path}	путь автоматизации отклонён: переход вверх (..) из несуществующей папки: {path}
+@msg	automation path rejected: reserved device names are not allowed: {path}	путь автоматизации отклонён: зарезервированные имена устройств недопустимы: {path}
+@msg	Multichannel PSD files can't be read: save it in RGB, CMYK or Grayscale mode	Файлы PSD в режиме «Многоканальный» не читаются: сохраните его в режиме RGB, CMYK или «Градации серого»
+@msg	not a PSD file	это не документ PSD
+@msg	the PSD file has an unknown colour mode ({m})	у файла PSD неизвестный цветовой режим ({m})
+@msg	the PSD file's image data uses an unknown compression ({m})	данные изображения файла PSD используют неизвестное сжатие ({m})
+@msg	the PSD image is too large to read ({_1} × {_2} pixels)	изображение PSD слишком велико для чтения ({_1} × {_2} пикс.)
+@msg	zipped 32-bit PSD image data with prediction can't be read	32-битные данные изображения PSD со сжатием ZIP с предсказанием не читаются
+@msg	{depth}-bit PSD files in this colour mode can't be read	{depth}-битные файлы PSD в этом цветовом режиме не читаются
+@msg	the PSD file is cut short	файл PSD обрезан
+@msg	the PSD file's header is damaged	заголовок файла PSD повреждён
+@msg	the PSD file's image data can't be read: {e}	не удаётся прочитать данные изображения файла PSD: {e}
+	Video	Видео
+	De-Interlace…	Устранение чересстрочности…
+	De-Interlace	Устранение чересстрочности
+	NTSC Colors	Цвета NTSC
+	Eliminate	Удалить
+	Create New Fields by	Создать новые поля
+	Odd Fields	Нечётные поля
+	Even Fields	Чётные поля
+	Duplication	Дублированием
+	Interpolation	Интерполяцией
+@msg	Imported library {name}	Импортирована библиотека {name}
+	RGB:	RGB:
+	CMYK:	CMYK:
+	Texture	Текстура
+	Craquelure…	Кракелюры…
+	Grain…	Зерно…
+	Mosaic Tiles…	Мозаичные фрагменты…
+	Patchwork…	Цветная плитка…
+	Stained Glass…	Витраж…
+	Texturizer…	Текстуризатор…
+	Craquelure	Кракелюры
+	Grain	Зерно
+	Mosaic Tiles	Мозаичные фрагменты
+	Patchwork	Цветная плитка
+	Stained Glass	Витраж
+	Texturizer	Текстуризатор
+	Crack Spacing	Интервал трещин
+	Crack Depth	Глубина трещин
+	Crack Brightness	Яркость трещин
+	Intensity	Интенсивность
+	Grain Type	Тип зерна
+	Tile Size	Размер фрагментов
+	Grout Width	Ширина швов
+	Lighten Grout	Осветление швов
+	Square Size	Размер квадратов
+	Relief	Рельеф
+	Border Thickness	Толщина границ
+	Light Intensity	Интенсивность света
+	Light Direction	Направление света
+	Sprinkles	Брызги
+	Clumped	Комки
+	Contrasty	Контрастное
+	Enlarged	Укрупнённое
+	Stippled	Пунктир
+	Speckle	Крапинки
+	Brick	Кирпич
+	Burlap	Мешковина
+	Canvas	Холст
+	Sandstone	Песчаник
+	Bottom Left	Снизу слева
+	Top Left	Сверху слева
+	Top Right	Сверху справа
+	Bottom Right	Снизу справа
+	Edge	Край
+	System Title Bar	Системная строка заголовка
+	Value Axis	Ось значений
+	On Left Side	Слева
+	On Right Side	Справа
+	On Both Sides	С обеих сторон
+	Short	Короткие
+	Full Width	Во всю ширину
+	Distort	Искажение
+	Diffuse Glow…	Рассеянное свечение…
+	Glass…	Стекло…
+	Ocean Ripple…	Океанские волны…
+	Diffuse Glow	Рассеянное свечение
+	Glass	Стекло
+	Ocean Ripple	Океанские волны
+	Graininess	Зернистость
+	Glow Amount	Сила свечения
+	Clear Amount	Чистые области
+	Ripple Size	Размер волн
+	Ripple Magnitude	Сила волн
+	Blocks	Блоки
+	Frosted	Матовое
+	Tiny Lens	Мелкие линзы
+	Rename Data Set	Переименовать набор данных
+	Rename Variable	Переименовать переменную
+	Variable Options	Параметры переменной
+	Edit Data Set	Изменить набор данных
+	Define a variable first	Сначала определите переменную
+	Text	Текст
+	Visibility	Видимость
+# Shared panel docking
+	Activate Panel	Активировать панель
+	Change Panel Layout	Изменить расположение панелей
+	Close Panel	Закрыть панель
+	Move Panel	Переместить панель
+	Group with	Сгруппировать с
+	Resize panels	Изменить размер панелей
+	Resize panel window	Изменить размер окна панели
+@msg	Invalid panel layout; restored the default dock	Недопустимое расположение панелей; восстановлено расположение по умолчанию
+@msg	action is required	Необходимо указать action
+@msg	anchor must name a registered panel	anchor должен указывать зарегистрированную панель
+@msg	before must name a panel	before должен указывать панель
+@msg	docking action contains an unknown panel or an excessive split path	Действие прикрепления содержит неизвестную панель или слишком длинный путь разделений
+@msg	group must be true or false	group должен иметь значение true или false
+@msg	move requires a destination panel	Для перемещения требуется целевая панель
+@msg	move requires an existing destination panel	Для перемещения требуется существующая целевая панель
+@msg	onto must name a floating panel	onto должен указывать плавающую панель
+@msg	panel group is empty	Группа панелей пуста
+@msg	panel must name a registered panel	panel должен указывать зарегистрированную панель
+@msg	saved panel layout is invalid; reset the workspace first	Сохранённое расположение панелей недопустимо; сначала сбросьте рабочую среду
+@msg	zone must be a string	zone должен быть строкой
+@msg	zone must be tab, center, left, right, top or bottom	zone должен иметь значение tab, center, left, right, top или bottom
+@msg	{key} must be a finite coordinate	{key} должен быть конечной координатой
+@msg	x and y must be provided together	x и y необходимо указывать вместе
+@msg	invalid restored panel group	Восстановленная группа панелей недопустима
+
+# Revolve profile guidance.
+
+# Interactive Revolve controls.
+	Lighting	Освещение
+	Revolve angle	Угол вращения профиля
+	Axis side	Сторона оси
+	Rotation X	Поворот X
+	Rotation Y	Поворот Y
+	Rotation Z	Поворот Z
+	Shading	Затенение
+	Direction	Направление
+	Elevation	Высота
+	Ambient	Фоновое освещение
+	Segments	Сегменты
+	Show axis	Показать ось
+	Reset all	Сбросить всё
+	Reset to default	Вернуть значение по умолчанию
+	Reset all Revolve settings to their defaults.	Возвращает все настройки вращения профиля к значениям по умолчанию.
+	Drag values or labels. Double-click a value to type.	Перетаскивайте значения или подписи. Для ввода дважды щёлкните значение.
+	Drag rings to rotate. Shift snaps to 15°.	Перетаскивайте кольца для вращения. Shift задаёт шаг 15°.
+	Drag the light, or its rings. Shift snaps to 15°.	Перетаскивайте источник света или кольца. Shift задаёт шаг 15°.
+lighting	Light	Свет
+	Keep visible surfaces only when expanding	При разборе сохранять только видимые поверхности
+	Trim covered geometry on Expand Appearance. Live preview keeps the full surface. Transparent paints and surfaces exceeding visibility limits retain all faces.	Удаляет скрытую геометрию при разборе оформления. Предпросмотр сохраняет всю поверхность. Прозрачные краски и поверхности, превышающие ограничения видимости, сохраняют все грани.
+	Accented Edges…	Акцент на краях…
+	Angled Strokes…	Наклонные мазки…
+	Crosshatch…	Перекрёстная штриховка…
+	Dark Strokes…	Тёмные мазки…
+	Ink Outlines…	Контуры тушью…
+	Spatter…	Разбрызгивание…
+	Sprayed Strokes…	Распылённые мазки…
+	Sumi-e…	Суми-э…
+	Accented Edges	Акцент на краях
+	Angled Strokes	Наклонные мазки
+	Crosshatch	Перекрёстная штриховка
+	Dark Strokes	Тёмные мазки
+	Ink Outlines	Контуры тушью
+	Spatter	Разбрызгивание
+	Sprayed Strokes	Распылённые мазки
+	Sumi-e	Суми-э
+	Direction Balance	Баланс направления
+	Stroke Length	Длина мазка
+	Sharpness	Резкость
+	Strength	Сила
+	Balance	Баланс
+	Black Intensity	Интенсивность чёрного
+	White Intensity	Интенсивность белого
+	Dark Intensity	Интенсивность тёмного
+	Spray Radius	Радиус распыления
+	Stroke Direction	Направление мазков
+	Stroke Width	Ширина мазка
+	Stroke Pressure	Нажим мазка
+	Right Diagonal	Диагональ вправо
+	Left Diagonal	Диагональ влево
+	Vertical Guide	Вертикальная направляющая
+	Horizontal Guide	Горизонтальная направляющая
+	Move Guide to Layer	Переместить направляющую на слой
+@msg	invalid native panel set	Недопустимый собственный набор панелей
+@msg	missing panel layout	Отсутствует расположение панелей
+@msg	unsupported native docking operation	Неподдерживаемая собственная операция прикрепления
+	Linux Display Server	Дисплейный сервер Linux
+	X11 (XWayland)	X11 (XWayland)
