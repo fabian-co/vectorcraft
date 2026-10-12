@@ -173,6 +173,7 @@
 	Horizontal Align Right	水平方向右に整列
 	Vertical Align Top	垂直方向上に整列
 	Vertical Align Center	垂直方向中央に整列
+	Horizontal & Vertical Align Center	水平方向および垂直方向中央に整列
 	Vertical Align Bottom	垂直方向下に整列
 	Group	グループ
 	Ungroup	グループ解除
@@ -2151,6 +2152,9 @@
 	Rectangle Properties:	長方形のプロパティ:
 	Rectangle Tool	長方形ツール
 	Rectangular Grid	長方形グリッド
+# Rectangular Grid click dialog.
+	Horizontal Dividers:	水平方向の分割線:
+	Vertical Dividers:	垂直方向の分割線:
 	Rectangular Grid Tool	長方形グリッドツール
 	Red	レッド
 	Redefine Character Style	文字スタイルを再定義
@@ -2197,6 +2201,13 @@
 	Relink	再リンク
 	Relink to Folder…	フォルダーに再リンク…
 	Relink…	再リンク…
+	Find Linked Files	リンクファイルを検索
+	Find Linked Files in Folder…	フォルダー内のリンクファイルを検索…
+	Choose the file to relink each linked file to. Files with the size and contents saved with the link come first.	リンクファイルごとに、再リンク先のファイルを選んでください。リンクに保存されたサイズと内容が同じファイルが先頭に表示されます。
+	Same file	同じファイル
+	Same size	同じサイズ
+	Don't Relink	再リンクしない
+	Copy into the document's folder	ドキュメントのフォルダーにコピー
 	Remove	削除
 	Remove Asset	アセットを削除
 	Remove Brush Stroke	ブラシストロークを削除
@@ -2355,6 +2366,7 @@
 	Select All Instances	すべてのインスタンスを選択
 	Select All Unused	未使用項目をすべて選択
 	Select Anchors	アンカーを選択
+	Select Segments	パスのセグメントを選択
 	Select Appearance Item	アピアランス項目を選択
 	Select Freeform Point	フリーフォームポイントを選択
 	Select Gradient Stop	グラデーションの分岐点を選択
@@ -2392,7 +2404,6 @@
 	Set Anchors	アンカーポイントを設定
 	Set Bounds	境界を設定
 	Set Current Layer	現在のレイヤーを設定
-	Set Key Object	キーオブジェクトを設定
 	Set Keyboard Shortcut	キーボードショートカットを設定
 	Set Mesh Point Color	メッシュポイントのカラーを設定
 	Set Preference	環境設定を設定
@@ -2982,6 +2993,23 @@
 	Gradient (.)	グラデーション (.)
 	Graph Data	グラフデータ
 	Graph Type	グラフの種類
+	Graph Design	グラフのデザイン
+	Graph Marker	グラフのマーカー
+	New Design	新規デザイン
+	Delete Design	デザインを削除
+	Paste Design	デザインをペースト
+	Select Unused	未使用を選択
+	Import Data…	データを読み込み…
+	Transpose	行と列を入れ替え
+	Switch x/y	X/Y を入れ替え
+	Number of Decimals:	小数点以下の桁数:
+	Column Width:	列の幅:
+	No Legend	凡例なし
+	Standard Legend	標準の凡例
+	Legends in Wedges	くさび形内に凡例
+	Ratio	比率
+	Even	均等
+	Stacked	積み重ね
 	Graphic Style Libraries Menu	グラフィックスタイルライブラリメニュー
 	Graphics	グラフィックス
 	Greek & Cyrillic	ギリシャ文字とキリル文字
@@ -3449,6 +3477,7 @@ theme	Appearance	外観
 @msg	no such segment	指定されたセグメントが見つかりません
 @msg	no such subpath	指定されたサブパスが見つかりません
 @msg	object {id} is not a path	オブジェクト {id} はパスではありません
+@msg	object {id} is not a selected top-level object	オブジェクト {id} は選択されている最上位のオブジェクトではありません
 @msg	nothing to redo	やり直す操作がありません
 @msg	nothing to undo	取り消す操作がありません
 @msg	Expand Appearance: the selection has a basic appearance	アピアランスを分割: 選択範囲は基本アピアランスです
@@ -3949,6 +3978,9 @@ theme	Appearance	外観
 @msg	larger than 256 MB	256 MB を超えています
 @msg	the files come to more than 1 GB: add fewer at a time	ファイルの合計が 1 GB を超えています: 一度に追加するファイルを減らしてください
 @msg	every numbered name for it is taken in the Fonts folder	Fonts フォルダーでは、このファイルの番号付きの名前がすべて使われています
+@msg	every numbered name for {name} is taken in the document's folder	ドキュメントのフォルダーでは、{name} の番号付きの名前がすべて使われています
+@msg	No linked files to look for	検索するリンクファイルがありません
+@msg	Relinked {n} image(s); {name} couldn't be relinked: {reason}	画像を {n} 枚再リンクしましたが、{name} は再リンクできませんでした: {reason}
 @msg	`id` is the step reference {r}, which only `run` and `command_batch` resolve	`id` はステップ参照 {r} です。ステップ参照を解決できるのは `run` と `command_batch` だけです
 @msg	`ids` must be an array of object ids, not {v}	`ids` はオブジェクト ID の配列にしてください ({v} は使えません)
 @msg	`corners` must be an array of anchor indices, not {v}	`corners` はアンカーポイントのインデックスの配列にしてください ({v} は使えません)
@@ -4148,3 +4180,6 @@ lighting	Light	ライト
 @msg	unsupported native docking operation	ネイティブドッキング操作は未対応です
 	Linux Display Server	Linux ディスプレイサーバー
 	X11 (XWayland)	X11 (XWayland)
+	Artistic	アーティスティック
+	Film Grain…	フィルム粒子…
+	Highlight Area	ハイライト領域

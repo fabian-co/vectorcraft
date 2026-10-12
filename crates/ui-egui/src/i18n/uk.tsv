@@ -1114,6 +1114,23 @@
 	Graph	Діаграма
 	Graph Data	Дані діаграми
 	Graph Type	Тип діаграми
+	Graph Design	Дизайн діаграми
+	Graph Marker	Маркер діаграми
+	New Design	Новий дизайн
+	Delete Design	Видалити дизайн
+	Paste Design	Вставити дизайн
+	Select Unused	Вибрати невикористані
+	Import Data…	Імпорт даних…
+	Transpose	Транспонувати
+	Switch x/y	Поміняти x/y
+	Number of Decimals:	Кількість десяткових знаків:
+	Column Width:	Ширина стовпця:
+	No Legend	Без легенди
+	Standard Legend	Стандартна легенда
+	Legends in Wedges	Легенди в секторах
+	Ratio	Пропорційно
+	Even	Однаково
+	Stacked	Стосом
 	Graphic Style	Графічний стиль
 	Graphic Style Libraries	Бібліотеки графічних стилів
 	Graphic Style Libraries Menu	Меню "Бібліотеки графічних стилів"
@@ -2140,6 +2157,9 @@
 	Rectangle: Sunshine	Прямокутник: Сонце
 	Rectangle…	Прямокутник…
 	Rectangular Grid	Прямокутна сітка
+# Rectangular Grid click dialog.
+	Horizontal Dividers:	Горизонтальні розділювачі:
+	Vertical Dividers:	Вертикальні розділювачі:
 	Rectangular Grid Tool	Інструмент «Прямокутна сітка»
 	Red	Червоний
 	Redefine Character Style	Перевизначити стиль символу
@@ -2204,6 +2224,13 @@
 	Relinked {n} image(s); not in that folder: {}	Відновлено зв’язок із зображеннями: {n}; немає в цій папці: {}
 	Relinked {} image(s)	Відновлено зв’язок із зображеннями: {}
 	Relink…	Відновити зв’язок…
+	Find Linked Files	Знайти пов’язані файли
+	Find Linked Files in Folder…	Знайти пов’язані файли в папці…
+	Choose the file to relink each linked file to. Files with the size and contents saved with the link come first.	Виберіть для кожного пов’язаного файлу файл, з яким потрібно відновити зв’язок. Спершу йдуть файли з розміром і вмістом, збереженими разом зі зв’язком.
+	Same file	Той самий файл
+	Same size	Той самий розмір
+	Don't Relink	Не відновлювати зв’язок
+	Copy into the document's folder	Копіювати в папку документа
 	Reload Plug-ins	Перезавантажити модулі
 	Remove	Прибрати
 	Remove Anchor Points	Забрати опорні точки
@@ -2472,6 +2499,7 @@
 	Select an image to see its Link Info.	Виберіть зображення, щоб побачити зв’язок.
 	Select an image to trace	Виберіть зображення для трасування
 	Select Anchors	Виділити опорні точки
+	Select Segments	Виділити сегменти
 	Select Appearance Item	Виділити елемент оформлення
 	Select Art	Виділити малюнок
 	Select art and choose Object › Pattern › Make.	Виділіть малюнок та виберіть «Об’єкт › Візерунок › Створити».
@@ -2517,7 +2545,6 @@
 	Set base color to the current color	Зробити поточний колір базовим
 	Set Bounds	Задати межі
 	Set Current Layer	Зробити шар поточним
-	Set Key Object	Задати ключовий об’єкт
 	Set Keyboard Shortcut	Задати клавіші
 	Set Mesh Point Color	Задати колір точки сітки
 	Set Preference	Задати налаштування
@@ -3111,6 +3138,7 @@ effect	Points	Точки
 	Vertical %	По вертикалі, %
 	Vertical Align Bottom	Вирівняти по нижньому краю по вертикалі
 	Vertical Align Center	Вирівняти по центру по вертикалі
+	Horizontal & Vertical Align Center	Вирівняти по центру по горизонталі й вертикалі
 	Vertical Align Top	Вирівняти по верхньому краю по вертикалі
 	Vertical Area Type Tool	Інструмент «Вертикальний текст в області»
 	Vertical Distribute Bottom	Розподілити по нижньому краю по вертикалі
@@ -3666,6 +3694,7 @@ axis	Both	Обидві
 @msg	nothing to wrap	нічого обтікати
 @msg	object {0} cannot have children	об’єкт {0} не може мати нащадків
 @msg	object {id} is not a path	об’єкт {id} не є контуром
+@msg	object {id} is not a selected top-level object	об’єкт {id} не є виділеним об’єктом верхнього рівня
 @msg	page size {w} × {h}	розмір сторінки {w} × {h}
 @msg	page {0} does not exist (the PDF has {1})	сторінка {0} не існує (в PDF{1})
 @msg	paste unavailable	вставка недоступна
@@ -3918,6 +3947,9 @@ axis	Both	Обидві
 @msg	larger than 256 MB	більше 256 МБ
 @msg	the files come to more than 1 GB: add fewer at a time	файли займають понад 1 ГБ: додавайте менше за раз
 @msg	every numbered name for it is taken in the Fonts folder	усі нумеровані імена для нього вже зайняті в папці Fonts
+@msg	every numbered name for {name} is taken in the document's folder	усі нумеровані імена для {name} уже зайняті в папці документа
+@msg	No linked files to look for	Немає пов’язаних файлів для пошуку
+@msg	Relinked {n} image(s); {name} couldn't be relinked: {reason}	Відновлено зв’язок із зображеннями: {n}; не вдалося відновити зв’язок із {name}: {reason}
 	Services	Служби
 	Hide VectorCraft	Приховати VectorCraft
 	Zoom	Масштаб
@@ -4134,3 +4166,6 @@ lighting	Light	Світло
 @msg	unsupported native docking operation	Непідтримувана власна операція прикріплення
 	Linux Display Server	Дисплейний сервер Linux
 	X11 (XWayland)	X11 (XWayland)
+	Artistic	Художні
+	Film Grain…	Зернистість плівки…
+	Highlight Area	Область світлих тонів

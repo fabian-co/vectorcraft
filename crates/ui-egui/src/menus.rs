@@ -666,6 +666,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{ids?} open Placement Options for images `ids` (default: the selected ones; dialog `placementOptions`: ids, preserve, align, clip, see links.placementOptions); OK runs links.placementOptions",
     ),
     (
+        "ui.findLinksInFolder",
+        "Find Linked Files in Folder…",
+        "",
+        "{folder?, ids?: [image or placed document ids]} the Links panel's Find in Folder…: asks for a folder (or takes folder), then opens Find Linked Files (dialog `findLinks`) looking in it and its subfolders for the files of linked objects `ids` (default: the selected linked images and placed documents, else every missing file; links.findFiles). An error when there is nothing to look for. Disabled where there is no folder picker (the web)",
+    ),
+    (
         "ui.packageDialog",
         "Package…",
         "Cmd+Alt+Shift+P",
@@ -1366,6 +1372,9 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "links.editOriginal" => crate::panels::links::open_file(app, p, false),
         "links.reveal" => crate::panels::links::open_file(app, p, true),
         "ui.placementOptionsDialog" => crate::dialogs::placement_options::open(app, p),
+        "ui.findLinksInFolder" => {
+            crate::dialogs::find_links::find_in_folder_command(app, s("folder"), p.get("ids").and_then(Value::as_array).cloned())
+        }
         "ui.packageDialog" => crate::dialogs::package::open(app),
         "file.showPackage" => crate::dialogs::package::show_package(app, p),
         "docInfo.save" => crate::panels::doc_info::save_report(app, p),
@@ -1650,7 +1659,7 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
         "effect.last" => match &app.last_effect {
             Some((e, _)) => {
                 let name = vectorcraft_effects::effect_info(e).map(|i| i.label).unwrap_or(e.as_str());
-                fmt(tl!("Last Effect: {name}"), &[("name", tl!(name))])
+                fmt(tl!("Last Effect: {name}"), &[("name", crate::i18n::tr_id(lang, e, name))])
             }
             None => crate::i18n::tr_id(lang, id, label).to_string(),
         },
@@ -1659,6 +1668,19 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
             if shows_a_name(id, &shown) { shown } else { crate::i18n::tr_id(lang, id, &shown).to_string() }
         }
     }
+}
+
+/// The label of an Effect menu item in the UI language, by the effect's own id. Every effect item
+/// runs `effect.apply` or `effect.dialog`, so the command id can't tell them apart; an `@id` row
+/// for the effect id (for example `pathfinder.add`) wins over the plain row of the English label.
+/// `None` when the catalog has no such row, and the plain translation applies.
+fn effect_item_label(id: &str, p: &Value) -> Option<String> {
+    if !matches!(id, "effect.apply" | "effect.dialog") {
+        return None;
+    }
+    let effect = p.get("effect")?.as_str()?;
+    let shown = crate::i18n::tr_id(crate::i18n::current(), effect, "");
+    (!shown.is_empty()).then(|| shown.to_string())
 }
 
 /// Menu slots that are left out while they have nothing to show (unused saved views, recent files,
@@ -1793,7 +1815,7 @@ pub fn entry<'a>(app: &VectorcraftApp, it: &'a Item) -> Option<Entry<'a>> {
             Entry::Item(Row {
                 command: Some((id, p)),
                 source: label,
-                label: display_label(app, id, label).into(),
+                label: effect_item_label(id, p).unwrap_or_else(|| display_label(app, id, label)).into(),
                 shortcut: item_shortcut(id, p),
                 enabled,
                 checked,
@@ -1958,6 +1980,7 @@ pub fn enabled(app: &VectorcraftApp, id: &str) -> bool {
         "ui.dxfOptionsDialog" => app.session.active().is_some(),
         "links.editOriginal" | "links.reveal" => selected_image(app, |im| im.link.is_some()) || selected_placed(app),
         "ui.placementOptionsDialog" => selected_image(app, |_| true) || selected_placed(app),
+        "ui.findLinksInFolder" => crate::picks::can(app, &crate::picks::PickRequest::Folder) && app.session.active().is_some(),
         "ui.packageDialog" | "docInfo.save" => app.session.active().is_some(),
         "ui.epsOptionsDialog" => app.session.active().is_some(),
         "file.saveForWeb" | "file.saveForWeb.browser" => app.session.active().is_some(),
@@ -2138,6 +2161,9 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                         cp("Horizontal Align Left", "object.align", json!({"horizontal": "left"})),
                         cp("Horizontal Align Center", "object.align", json!({"horizontal": "center"})),
                         cp("Horizontal Align Right", "object.align", json!({"horizontal": "right"})),
+                        Sep,
+                        cp("Horizontal & Vertical Align Center", "object.align", json!({"horizontal": "center", "vertical": "center"})),
+                        Sep,
                         cp("Vertical Align Top", "object.align", json!({"vertical": "top"})),
                         cp("Vertical Align Center", "object.align", json!({"vertical": "center"})),
                         cp("Vertical Align Bottom", "object.align", json!({"vertical": "bottom"})),
@@ -2320,7 +2346,16 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                         c("Fit to Selected Art", "artboard.fitToSelection"),
                     ],
                 ),
-                sub("Graph", vec![c("Type…", "graph.setType"), c("Data…", "graph.setData"), todo("Design…"), todo("Column…"), todo("Marker…")]),
+                sub(
+                    "Graph",
+                    vec![
+                        c("Type…", "graph.setType"),
+                        c("Data…", "graph.setData"),
+                        c("Design…", "graph.design"),
+                        todo("Column…"),
+                        c("Marker…", "graph.marker"),
+                    ],
+                ),
                 sub(
                     "Collect for Export",
                     vec![
@@ -2988,7 +3023,7 @@ fn menu_dialog(app: &VectorcraftApp, id: &str) -> Option<(&'static str, Value)> 
         // Offset Path opens on the values it was last confirmed with.
         "object.path.offsetPath" if app.ui.offset_path.is_object() => ("offsetPath", app.ui.offset_path.clone()),
         "object.path.offsetPath" => ("offsetPath", json!({"offset": "10 pt", "joins": "miter", "miterLimit": 4})),
-        "object.path.simplify" => ("simplify", json!({"tolerance": "1 pt"})),
+        "object.path.simplify" => ("simplify", json!({"tolerance": "1 pt", "preview": true})),
         "object.path.splitIntoGrid" => ("splitIntoGrid", json!({"rows": 2, "columns": 2, "gutter": "12 pt"})),
         "object.vectorHalftone" => (crate::dialogs::halftone::KIND, crate::dialogs::halftone::fields()),
         "artboard.rearrange" => (crate::dialogs::rearrange_artboards::KIND, crate::dialogs::rearrange_artboards::fields()),
@@ -3034,8 +3069,12 @@ fn to_field(ctx: &egui::Context, field: egui::Id, e: egui::Event) {
 /// Object › Graph › Type… or Data… (`id`): its dialog, with the selected graph's current values
 /// (the command's query).
 pub(crate) fn graph_dialog(app: &mut VectorcraftApp, id: &str) -> Result<Value, String> {
+    // Graph Data: the worksheet.
+    if id == "graph.setData" {
+        return crate::dialogs::graph_data::open(app);
+    }
     let v = app.session.execute(id, &json!({})).map_err(|e| e.to_string())?;
-    let (label, fields) = if id == "graph.setData" { ("Graph Data", json!({"csv": v["csv"]})) } else { ("Graph Type", v) };
+    let (label, fields) = ("Graph Type", v);
     app.run("ui.paramDialog", json!({"command": id, "label": label, "params": fields})).map(|_| json!({ "dialog": "command" }))
 }
 
@@ -3088,6 +3127,14 @@ pub fn invoke(app: &mut VectorcraftApp, id: &str, p: Value) {
     // Object → Graph → Type… / Data…: dialogs with the selected graph's current values.
     if matches!(id, "graph.setType" | "graph.setData") && p.as_object().is_none_or(|o| o.is_empty()) {
         if let Err(e) = graph_dialog(app, id) {
+            app.status(e);
+        }
+        return;
+    }
+    // Object → Graph → Design… / Marker…: the document's graph designs.
+    if matches!(id, "graph.design" | "graph.marker") && p.as_object().is_none_or(|o| o.is_empty()) {
+        let r = if id == "graph.design" { crate::dialogs::graph_design::open_design(app) } else { crate::dialogs::graph_design::open_marker(app) };
+        if let Err(e) = r {
             app.status(e);
         }
         return;
@@ -3366,7 +3413,8 @@ fn font_items(english_names: bool) -> Vec<Item> {
 
 /// The raster effects' submenus of the Effect menu (the Photoshop-style effects, below the
 /// vector effects): (submenu, the catalogue's menu path of its effects).
-const RASTER_MENUS: [(&str, &[&str]); 7] = [
+const RASTER_MENUS: [(&str, &[&str]); 8] = [
+    ("Artistic", &["Effect", "Artistic"]),
     ("Blur", &["Effect", "Blur"]),
     ("Brush Strokes", &["Effect", "Brush Strokes"]),
     ("Distort", &["Effect", "Distort"]),
@@ -3583,6 +3631,7 @@ pub fn menu_strings() -> std::collections::BTreeSet<String> {
     }
     out.extend(crate::prefs_dialog::UI_FIELDS.iter().map(|f| f.2.to_string()));
     out.extend(crate::dialogs::button_labels().into_iter().map(str::to_string));
+    out.extend(crate::dialogs::FILM_GRAIN_FIELDS.iter().map(|(_, label, _)| label.to_string()));
     out.extend(crate::chrome::hint_strings().into_iter().map(str::to_string));
     out.remove("");
     out

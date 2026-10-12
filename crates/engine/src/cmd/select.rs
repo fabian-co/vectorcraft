@@ -62,14 +62,23 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "select.key",
-            "Set Key Object",
+            "Cancel Key Object",
             [],
             None,
-            "{id?: a selected object, one of two or more (the Selection tool: a click on one object of a selection of several; on the key again: none)} the key object Align aligns to and Distribute Spacing spaces from; none clears it, as does a selection that holds only the key and objects inside it (one object, or a group key and its own members)",
+            "{id?: a selected top-level object (not a layer, a compound-path member or an object inside another selected object), one of two or more (the Selection tool: a click on one object of a selection of several; on the key again: no id)} the key object Align aligns to and Distribute Spacing spaces from; without `id` it cancels the key, as does a selection that holds only the key and objects inside it (one object, or a group key and its own members); any other id is an error that leaves the key as it was → {key} (the resulting key object, or null)",
             has_doc,
             key
         ),
         cmd!("select.anchors", "Select Anchors", [], None, "{id, anchors: [[subpath, anchor]…], mode: \"set\"|\"add\"|\"toggle\"}", has_doc, anchors),
+        cmd!(
+            "select.segments",
+            "Select Segments",
+            [],
+            None,
+            "{id, segments: [[subpath, segment]…]} select path segments; their endpoints move with them, Delete removes only their connections",
+            has_doc,
+            segments
+        ),
         cmd!(
             "select.anchorsMany",
             "Select Anchors",
@@ -297,9 +306,18 @@ fn selection_result(s: &Session) -> Result<Value> {
 }
 
 fn key(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = id_param(p, "id");
-    s.select(|_, sel| sel.key = id.filter(|i| sel.contains(*i)))?;
-    ok()
+    let id = p.get("id").map(|value| checked_id(s, value, "select.key")).transpose()?;
+    if let Some(id) = id {
+        let st = s.doc()?;
+        // A selected top-level object is the only top-level object among the selected ones of
+        // itself and its ancestors.
+        let selected = st.doc.ancestry(id).unwrap_or_default().into_iter().filter(|a| st.selection.contains(*a)).collect();
+        if super::edit::roots_of(&st.doc, selected) != [id] {
+            return Err(bad("select.key", format!("object {id} is not a selected top-level object")));
+        }
+    }
+    s.select(|_, sel| sel.key = id)?;
+    Ok(json!({ "key": s.doc()?.selection.key }))
 }
 
 /// `[[subpath, anchor]…]` anchor references of `cmd`: a malformed entry fails rather than being
@@ -321,6 +339,27 @@ pub(crate) fn checked_refs(v: Option<&Value>, cmd: &str) -> Result<Vec<(usize, u
         .collect()
 }
 
+fn segments(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "select.segments";
+    let id = checked_id(s, p.get("id").ok_or_else(|| bad(C, "missing id"))?, C)?;
+    let refs: BTreeSet<_> = checked_refs(p.get("segments"), C)?.into_iter().collect();
+    let path = s.doc()?.doc.node(id).and_then(|n| n.path_data()).ok_or_else(|| bad(C, "object is not a path"))?;
+    let mut endpoints = BTreeSet::new();
+    for &(si, seg) in &refs {
+        let sp = path.subpaths.get(si).filter(|sp| seg < sp.segment_count()).ok_or_else(|| bad(C, "segment does not exist"))?;
+        endpoints.extend([(si, seg), (si, (seg + 1) % sp.anchors.len())]);
+    }
+    s.select(|_, sel| {
+        sel.clear();
+        if !refs.is_empty() {
+            sel.add(id);
+            sel.anchors.insert(id, endpoints);
+            sel.segments.insert(id, refs);
+        }
+    })?;
+    ok()
+}
+
 fn anchors(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "select.anchors";
     let id = checked_id(s, p.get("id").ok_or_else(|| bad(C, "missing id"))?, C)?;
@@ -331,12 +370,21 @@ fn anchors(s: &mut Session, p: &Value) -> Result<Value> {
         Some("toggle") => "toggle",
         Some(m) => return Err(bad(C, format!("unknown mode {m:?}"))),
     };
-    s.select(|_, sel| {
+    s.select(|d, sel| {
         if mode == "set" {
             sel.clear();
         }
+        // A path selected as a whole has every anchor selected: toggle and add start from them all.
+        let whole = sel.contains(id) && sel.partial(id).is_none();
         sel.add(id);
+        // A segment pick's endpoints aren't selected anchors: start from none of them.
+        if sel.segments.remove(&id).is_some() {
+            sel.anchors.remove(&id);
+        }
         let e = sel.anchors.entry(id).or_default();
+        if whole && let Some(path) = d.node(id).and_then(|n| n.path_data()) {
+            e.extend(path.anchors().map(|(s, i, _)| (s, i)));
+        }
         for r in refs {
             if mode == "toggle" && e.contains(&r) {
                 e.remove(&r);
@@ -371,6 +419,8 @@ fn anchors_many(s: &mut Session, p: &Value) -> Result<Value> {
             sel.clear();
         }
         for (id, refs) in items {
+            // A segment pick's endpoints aren't selected anchors: start from none of them.
+            let segment_pick = sel.segments.remove(&id).is_some();
             let all: BTreeSet<(usize, usize)> =
                 d.node(id).and_then(|n| n.path_data()).map(|p| p.anchors().map(|(s, i, _)| (s, i)).collect()).unwrap_or_default();
             // Anything but a path is selected, toggled or deselected as a whole.
@@ -384,6 +434,7 @@ fn anchors_many(s: &mut Session, p: &Value) -> Result<Value> {
             }
             // From the anchors selected now (all of them for a path selected as a whole).
             let now = match sel.partial(id) {
+                _ if segment_pick => BTreeSet::new(),
                 Some(a) => a.clone(),
                 None if sel.contains(id) => all.clone(),
                 None => BTreeSet::new(),

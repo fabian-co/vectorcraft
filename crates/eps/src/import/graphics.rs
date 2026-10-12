@@ -434,7 +434,10 @@ impl Interp<'_> {
                     self.g.path.curve_to(xf * a, xf * b, xf * p);
                     self.g.cur = Some(xf * p);
                 }
-                PathEl::ClosePath => self.g.path.close_path(),
+                PathEl::ClosePath => {
+                    self.grow()?;
+                    self.g.path.close_path();
+                }
             }
         }
         Ok(())
@@ -1528,6 +1531,7 @@ impl Interp<'_> {
             }
             ClosePath => {
                 if self.g.cur.is_some() {
+                    self.grow()?;
                     self.g.path.close_path();
                     self.g.cur = self.g.start;
                 }
@@ -1688,7 +1692,7 @@ pub(crate) fn collapse(nodes: &mut [Arc<Node>], shadings: &[NodeId]) {
             && shadings.contains(&fill.id)
             && let (NodeKind::Path { path, rule, clipping: true, .. }, NodeKind::Path { .. }) = (&clip.kind, &fill.kind)
         {
-            let mut p = Node::path(fill.id, path.clone(), fill.appearance.clone());
+            let mut p = Node::path(fill.id, path.clone(), (*fill.appearance).clone());
             if let NodeKind::Path { rule: r, .. } = &mut p.kind {
                 *r = *rule;
             }

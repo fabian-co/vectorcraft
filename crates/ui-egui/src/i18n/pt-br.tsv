@@ -595,6 +595,8 @@
 	Description:	Descrição:
 	Deselect	Desmarcar
 	Design…	Projeto…
+	Graph Design	Projeto do gráfico
+	Graph Marker	Marcador do gráfico
 	Destination:	Destino:
 	Detail:	Detalhe:
 	Devices	Dispositivos
@@ -2071,6 +2073,7 @@
 	Select All Instances	Selecionar Todas as Instâncias
 	Select All Unused	Selecionar Todos os Não Usados
 	Select Anchors	Selecionar Âncoras
+	Select Segments	Selecionar segmentos
 	Select Appearance Item	Selecionar Item de Aparência
 	Select Freeform Point	Selecionar Ponto Livre
 	Select Gradient Stop	Selecionar Parada de Gradiente
@@ -2115,7 +2118,6 @@
 	Set Anchors	Definir Âncoras
 	Set Bounds	Definir Limites
 	Set Current Layer	Definir Camada Atual
-	Set Key Object	Definir Objeto-Chave
 	Set Keyboard Shortcut	Definir Atalho de Teclado
 	Set Mesh Point Color	Definir Cor do Ponto de Malha
 	Set Preference	Definir Preferência
@@ -2565,6 +2567,7 @@
 	Vertical	Vertical
 	Vertical Align Bottom	Alinhar Inferior Verticalmente
 	Vertical Align Center	Alinhar Centro Verticalmente
+	Horizontal & Vertical Align Center	Alinhar Centro Horizontal e Verticalmente
 	Vertical Align Top	Alinhar Superior Verticalmente
 	Vertical Area Type Tool	Ferramenta Texto Vertical de Área
 	Vertical Distribute Space	Distribuir Espaço Verticalmente
@@ -3665,3 +3668,7 @@ axis	Both	Ambos
 @msg	invalid native panel set	conjunto de painéis nativos inválido
 @msg	missing panel layout	layout de painéis ausente
 @msg	unsupported native docking operation	operação de encaixe nativa não suportada
+	Artistic	Artístico
+	Film Grain…	Granulação de filme…
+	Grain	Grão
+	Highlight Area	Área de realces

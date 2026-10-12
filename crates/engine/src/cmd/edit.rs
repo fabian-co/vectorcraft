@@ -251,22 +251,29 @@ pub(crate) fn selected_roots(s: &Session) -> Result<Vec<NodeId>> {
 /// The top-level objects among `ids` (in paint order): compound-path members stand for their
 /// compound, and ids whose ancestor is also listed, and layers, are dropped.
 pub(crate) fn roots_of(doc: &Document, ids: Vec<NodeId>) -> Vec<NodeId> {
+    // Every id's place in the tree, found in one walk (a lookup per id is a walk per id).
+    let paths = doc.index_paths(ids.iter().copied());
     // A compound-path member acts as its compound (compounds are one object).
-    let mut sel: Vec<NodeId> = ids
+    let mut sel: Vec<(NodeId, Option<Vec<usize>>)> = ids
         .into_iter()
-        .map(|id| match doc.parent_of(id).and_then(|p| doc.node(p).map(|n| (p, n))) {
-            Some((p, n)) if matches!(n.kind, vectorcraft_doc::NodeKind::Compound { .. }) => p,
-            _ => id,
+        .map(|id| {
+            let path = paths.get(&id);
+            let parent = path.and_then(|p| p.split_last()).map(|(_, up)| up).filter(|up| !up.is_empty());
+            match parent.and_then(|up| doc.node_at(up).map(|n| (up, n))) {
+                Some((up, n)) if matches!(n.kind, vectorcraft_doc::NodeKind::Compound { .. }) => (n.id, Some(up.to_vec())),
+                _ => (id, path.cloned()),
+            }
         })
         .collect();
-    sel.dedup();
+    sel.dedup_by_key(|(id, _)| *id);
+    let listed: std::collections::HashSet<NodeId> = sel.iter().map(|(id, _)| *id).collect();
     sel.iter()
-        .copied()
-        .filter(|id| {
-            let anc = doc.ancestry(*id).unwrap_or_default();
-            !anc[..anc.len().saturating_sub(1)].iter().any(|a| sel.contains(a))
+        .filter(|(_, path)| {
+            let anc = path.as_deref().and_then(|p| doc.ancestry_at(p)).unwrap_or_default();
+            !anc[..anc.len().saturating_sub(1)].iter().any(|a| listed.contains(a))
         })
-        .filter(|id| doc.node(*id).is_some_and(|n| !n.is_layer()))
+        .filter(|(_, path)| path.as_deref().and_then(|p| doc.node_at(p)).is_some_and(|n| !n.is_layer()))
+        .map(|(id, _)| *id)
         .collect()
 }
 
@@ -293,7 +300,7 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn clear(s: &mut Session, p: &Value) -> Result<Value> {
     let explicit = if p.get("ids").is_some() { Some(checked_ids_param(s, p, "ids", "edit.clear")?) } else { None };
-    // Direct-selected anchors: delete those anchors instead of whole objects.
+    // Direct-selected anchors or segments: remove those components instead of whole objects.
     if explicit.is_none() && !s.doc()?.selection.anchors.is_empty() {
         return super::path::delete_anchors(s, p);
     }

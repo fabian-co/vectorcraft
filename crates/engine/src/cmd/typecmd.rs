@@ -248,14 +248,14 @@ fn create_outlines(s: &mut Session, _: &Value) -> Result<Value> {
                 }
                 let st = t.runs.get(g.run).map(|r| r.style.clone()).unwrap_or_else(|| t.first_style());
                 let mut node = shape_node(d, path, None);
-                node.appearance = st.appearance();
+                node.appearance = st.appearance().into();
                 children.push(Arc::new(node));
             }
             // Underline and strikethrough bars become paths of their run's paint too (#847).
             for (run, bar) in vectorcraft_text::decorations(&lay, vectorcraft_text::FontDb::global(), t) {
                 let st = t.runs.get(run).map(|r| r.style.clone()).unwrap_or_else(|| t.first_style());
                 let mut node = shape_node(d, PathData::from_bezpath(&bar).transformed(t.xf), None);
-                node.appearance = st.appearance();
+                node.appearance = st.appearance().into();
                 children.push(Arc::new(node));
             }
             let (par, idx, _) = d.position(tid).ok_or(EngineError::NoNode(tid))?;
@@ -469,6 +469,35 @@ fn set_style(s: &mut Session, p: &Value) -> Result<Value> {
                 t.edit_paras(span, |pa| pa.justify = j);
             }
             refresh_bounds(t);
+        }
+        // Graph labels keep a change made to all of their text through the graph being drawn again (sizes as given,
+        // not in a scaled label's own units).
+        if range.is_none() {
+            super::graph::capture_label_styles(d, &ids, &|st| {
+                if let Some(f) = &font {
+                    st.font_family = f.clone();
+                    st.font_version = None;
+                }
+                if let Some(f) = &style {
+                    st.font_style = f.clone();
+                    st.font_version = None;
+                }
+                if let Some(v) = size {
+                    st.size = v.clamp(0.1, 1296.0);
+                }
+                if let Some(l) = leading {
+                    st.leading = l;
+                }
+                if let Some(v) = tracking {
+                    st.tracking = v.clamp(-1000.0, 10000.0);
+                }
+                if let Some(f) = &fill {
+                    st.fill = f.clone();
+                }
+                if let Some(f) = &features {
+                    st.features = f.clone();
+                }
+            });
         }
         Ok(())
     })?;

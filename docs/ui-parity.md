@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (a marquee needs to touch a path, not just lie inside its fill, #1103; earlier: Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged; Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged; Simplify preview/counts and valid rewritten-path selection (#1272); parity remains partial; Texture-effect drag redraws optimized (#1257); idle Windows interaction still unverified; scores unchanged; Curvature point display improved (#1236, in part); scores unchanged; Direct Selection: no-op anchor Align preserves Undo, Redo and saved state (#1180 follow-up); Eyedropper cursor distinguished from precise crosshair (#1269); scores unchanged; Eyedropper can read visible locked and outside-isolation sources (#1251); scores unchanged; Direct Selection: independent segment picks and Delete (#1278); scores unchanged; Adding paint to an unpainted zero-width stroke restores the 1 pt default (#1253); scores unchanged; macOS save sheets offer a Format menu, #866; Attributes fill-rule controls edit the compound when a member is selected, #1197; a marquee needs to touch a path, not just lie inside its fill, #1103; earlier: Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -51,25 +51,27 @@ tools, never checked side by side) isn't captured row by row.
 | Auto Add/Delete on a selected path; Shift or the preference disables it | done | |
 | Pen cursors (new path ×, continue /, close o, add +, delete −, convert ^) | partial | vector cursors exist; not every state verified |
 | Each anchor snaps to Smart Guides and construction angles | done | `DrawSnap` |
-| Curvature tool: click/drag points, double-click or Alt-click for a corner, temporary Direct Selection, point conversion | partial | modifiers requested in #975 |
+| Curvature tool: click/drag points, double-click or Alt-click for a corner, temporary Direct Selection, point conversion | partial | circular point markers without direction handles or duplicate markers, Anchor Size and Hide Edges regression-tested (#1236, in part); existing-path interpolation request and modifiers requested in #975 remain |
 | Add/Delete/Anchor Point tools; Anchor Point tool drags segments to reshape | done | |
 | Pencil: Fidelity, Keep selected, Alt to Smooth, edit selected paths, close by proximity | partial | Keep selected and Alt to Smooth are missing |
 | Join tool scrubbing, Average, Join with corner/smooth choice | done | |
-| Simplify (slider, auto, corner angle threshold) | done | |
+| Simplify (slider, auto, corner angle threshold) | partial | Tolerance, default-on Preview and original/new point counts (#1272); slider, auto-simplify, corner-angle UI and Show Original remain missing |
 
 ## Direct Selection, anchors and handles
 
 | Behaviour | Status | Notes |
 |---|---|---|
 | Click/Shift-click anchors; marquee toggles with Shift | done | #483 |
+| Align selected anchors to their bounds or the artboard; repeating an alignment that moves nothing keeps Undo, Redo and saved state | done | #1180 follow-up; engine regressions include rounding-only moves and unchanged handles |
 | A marquee selects the objects whose paths it touches (anchors or segments): drawn inside a filled shape, over a background, it leaves that shape (Preview and Outline) | done | #1103 |
+| Click a segment independently of its endpoint anchors; only its direction handles show | done | #1278: hollow endpoint squares, selected edge emphasized; headless egui checked |
 | Drag a curved segment to bend it, a straight one to move its anchors | done | |
 | Drag by an anchor of a path selected whole moves the whole path; Alt-drag by an anchor or a segment copies it, Alt toggles the copy during the drag, and the copy snaps by the anchor pressed, onto the original too | done | #1104 |
 | Handles shown are the handles that drag; tolerance from Selection & Anchor Display | done | #494 |
 | Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides |
 | Show handles when multiple anchors are selected; Highlight anchors on mouse over; anchor and handle size | done | Preferences › Selection & Anchor Display |
 | Convert selected anchors to corner/smooth from the Control bar and Properties | done | |
-| Cut path at selected anchors, Remove Anchor Points, Delete removes segments | done | |
+| Cut path at selected anchors, Remove Anchor Points, Delete removes segments | done | #1278: segment Delete preserves neighboring edges and endpoint anchors; a second Delete removes the remainder; explicit anchor Delete retains its behavior |
 | Live Corners widgets (radius readout, Alt-click cycles kind, double-click the Corners dialog) | done | clicking a widget without pre-selecting the anchor (#908) missing |
 | Corners between curved sides (#1144), Relative rounding | partial | Relative rounding missing |
 | Isolation mode by double-click, breadcrumbs, Esc to exit | done | |
@@ -100,12 +102,13 @@ tools, never checked side by side) isn't captured row by row.
 
 | Behaviour | Status | Notes |
 |---|---|---|
+| Moving a rounded rectangle with Craquelure at high DPI | partial | Distance searches optimized; moved-viewport pixels unchanged for three texture effects; `texture_drag_perf` probe available. Idle Windows mouse-drag QA remains (#1257) |
 | Bounding-box handles: Shift proportional, Alt from centre, rotate outside the corners | done | |
 | Rotated objects keep a rotated bounding box and their angle; Reset Bounding Box | done | |
 | Free Transform, Scale and Reflect along a rotated box | missing | |
 | Free Transform widget: constrain, free distort, perspective distort; the key-held variants | done | |
 | Transform tools: click sets the reference point (snaps to anchors/centres), Alt-click opens the dialog, Alt-release copies | done | |
-| Transform Again, Transform Each, Scale Strokes & Effects, Scale Corners | done | Transform Again after a type-area resize scales the type (gap) |
+| Transform Again, Transform Each, Scale Strokes & Effects, Scale Corners | done | |
 | Reference point locator (nine squares) in Control bar and Transform panel | done | |
 
 ## Nudging, numeric entry and precision
@@ -126,11 +129,16 @@ tools, never checked side by side) isn't captured row by row.
 |---|---|---|
 | Space: Hand; Cmd+Space / Cmd+Alt+Space: zoom in/out; middle button pans | done | |
 | Cmd/Ctrl: last-used selection tool; Cmd+Alt: Group Selection inside Direct Selection | partial | |
+| Eyedropper reads visible sources while their layer/object is locked or outside isolation | done | Ordinary/Shift/Shift+Alt and gradient-stop reads preserve the source and selection; Alt reverse remains editable-only; hidden art stays excluded (`eyedropper_sources.rs`, #1251) |
+| Add a visible stroke after drawing with inherited None/zero-width paint | done | Paint and Swap Fill/Stroke restore the existing 1 pt default; positive widths and painted zero widths stay as set; Undo/Redo and targeted appearance items tested (`stroke_visibility.rs`, #1253) |
 | Alt-drag duplicates (objects, artboards with their art) | done | |
+| Document Setup → Edit Artboards applies valid settings, closes the dialog and activates the Artboard tool | done | Pointer-click tests cover successful handoff, invalid settings, OK, Cancel and Undo in `dialogs/document_setup.rs`. |
+| Escape leaves Artboard editing for Selection; during a drag it first cancels the gesture | done | Headless egui key events cover idle Escape, active-drag cancellation and a subsequent Escape in `tests_distortkeys.rs`. |
 | Shift-click selects several artboards (Artboard tool, Artboards panel); they move, Alt-copy and delete together | done | `artboard.move`/`artboard.delete` `indices` (#1139) |
 | Shape tools: Shift constrains, Alt from centre, Space moves while dragging, arrows change sides/points/rows | done | |
 | Tool double-click opens its options | done | |
 | Per-platform mapping (Cmd ↔ Ctrl, Option ↔ Alt) | done | |
+| Eyedropper cursor; Use Precise Cursors | partial | original pipette at the sampling tip, distinct from the precise crosshair at five DPI scales (#1269); OS cursor display and Caps Lock unverified |
 | Every tool's modifiers checked against the shortcut reference | missing | this is the fidelity pass |
 
 ## Keyboard shortcuts
@@ -153,10 +161,12 @@ Layers panel.
 | Properties panel per context (every selection type's Quick Actions) | partial | |
 | Contextual task bar | done | |
 | Control bar with Transform and Stroke popovers | done | |
+| Attributes fill-rule controls with a compound member selected | done | Edits the compound's rule; direction still edits only the member; rendered-hole and Undo/Redo regression tests (#1197) |
 | Canvas context menu | done | Layers rows, panels and type have none (gap) |
 | Blend panel (30.7) | missing | Blend Options dialog exists |
 | SVG Interactivity, Retype, Comments, Version History panels | missing | the last two are cloud features (out of scope) |
 | Workspaces (save, reset, switch) | done | |
+| macOS save sheet: choose the format from a menu | done | #866; `apps/vectorcraft/src/mac_save_format.rs`; current suffix selects the initial format, changing it updates the filename; native SVG save and cancel after changing to PDF checked |
 | Preferences: every option acts | partial | ~17 stored but unused (#394) |
 
 ## Look and feel
@@ -170,6 +180,18 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged |
+| 2026-10-12 | minor | Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged |
+| 2026-10-12 | minor | Simplify previews and shows original/new point counts; refits/subdivisions select changed paths whole (#1272); auto/slider/corner-angle UI and Show Original remain partial |
+| 2026-10-12 | minor | Texture-effect drag redraws optimized (#1257); idle Windows interaction still unverified; scores unchanged |
+| 2026-10-12 | minor | Curvature: circular point markers, no direction handles or duplicate points; existing-path interpolation and #975 remain separate (#1236, in part); scores unchanged (estimated) |
+| 2026-10-12 | minor | Direct Selection: repeating anchor Align and rounding-only Align leave Undo, Redo and saved state intact (#1180 follow-up); scores unchanged (estimated) |
+| 2026-10-12 | minor | Eyedropper: original pipette at the sampling tip; precise setting and DPI checked (#1269); OS visual QA and Caps Lock unverified; scores unchanged |
+| 2026-10-12 | minor | Eyedropper can read visible locked and outside-isolation sources (#1251); scores unchanged |
+| 2026-10-12 | minor | Direct Selection: segment click/display and Delete preserve neighboring edges (#1278); pointer/egui/native checks, OS visual QA pending; score unchanged |
+| 2026-10-12 | minor | Adding paint to an unpainted zero-width stroke restores the 1 pt default (#1253); scores unchanged |
+| 2026-10-12 | minor | macOS native save sheets gain a localised Format menu (#866); filename regression tests and an actual SVG save, PDF selection and cancellation verified; scores unchanged (estimated) |
+| 2026-10-12 | minor | Attributes: directly selected compound members read and change the compound fill rule; path direction stays member-local (#1197); score unchanged |
 | 2026-10-11 | minor | A marquee inside a filled shape no longer selects it: only touching its path does (#1103); score unchanged (estimated) |
 | 2026-10-11 | minor | Live Corners: corners between curved sides round too, the curve trimmed to what the cut leaves (#1144); score unchanged (estimated) |
 | 2026-10-11 | minor | Artboards: Shift-click selects several, which move, copy and delete together (#1139); score unchanged (estimated) |

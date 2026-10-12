@@ -13,9 +13,12 @@ pub mod cmyk;
 pub mod corners;
 pub mod graph;
 pub mod hit;
+mod id_index;
 pub mod inks;
 mod inline;
+pub mod shared;
 pub use inline::{SYMBOL_HALF, SYMBOL_SIZES};
+pub use shared::Shared;
 pub mod links;
 pub mod live;
 pub mod marks;
@@ -66,7 +69,10 @@ pub use appearance::{
 };
 pub use assets::ExportAsset;
 pub use corners::LiveCorners;
-pub use graph::{GraphKind, GraphSpec, MAX_GRAPH_CATEGORIES, MAX_GRAPH_SERIES, SeriesPaint, TickLength, ValueAxisSide};
+pub use graph::{
+    GraphDesign, GraphKind, GraphSpec, LabelStyles, MAX_GRAPH_CATEGORIES, MAX_GRAPH_SERIES, PiePosition, PieSort, SeriesPaint, TickLength,
+    ValueAxisSide,
+};
 pub use hit::{Hit, HitKind};
 pub use links::{LinkInfo, PlacementOptions};
 pub use live::{BlendOrientation, BlendSpacing, BlendSpec, EnvelopeKind, GradientMesh, MeshPoint};
@@ -82,7 +88,7 @@ pub use placed_document::PlacedDocument;
 pub use profiles::ColorProfiles;
 pub use puppet::{PuppetPin, PuppetPins};
 pub use rastersettings::{RasterColorModel, RasterEffectsSettings};
-pub use selection::{AnchorRef, Selection};
+pub use selection::{AnchorRef, SegmentRef, Selection};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
@@ -560,6 +566,9 @@ pub struct Document {
     pub text_threads: Vec<Vec<NodeId>>,
     #[serde(default)]
     pub symbols: Vec<Symbol>,
+    /// Object › Graph › Design…: art graphs can draw as markers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_designs: Vec<GraphDesign>,
     #[serde(default)]
     pub guides: Vec<Guide>,
     /// View → New View… (up to 25, like Illustrator).
@@ -658,6 +667,9 @@ pub struct Document {
     /// state, never saved.
     #[serde(skip)]
     pub puppet: Option<Arc<PuppetPins>>,
+    /// Where each node is in the tree, for lookups by id ([`id_index`]): a cache, never saved.
+    #[serde(skip)]
+    index: id_index::IdIndex,
 }
 
 fn ppi72() -> f64 {
@@ -700,6 +712,7 @@ impl Document {
             para_styles: vec![],
             text_threads: vec![],
             symbols: vec![],
+            graph_designs: vec![],
             guides: vec![],
             views: vec![],
             saved_selections: vec![],
@@ -729,6 +742,7 @@ impl Document {
             print_setup: None,
             assets: vec![],
             puppet: None,
+            index: Default::default(),
         };
         let id = d.alloc_id();
         d.layers.push(Arc::new(Node::layer(id, "Layer 1", LayerColor::Preset(0))));
@@ -758,24 +772,31 @@ impl Document {
 
     /// Find a node anywhere in the tree.
     pub fn node(&self, id: NodeId) -> Option<&Node> {
-        fn find(nodes: &[Arc<Node>], id: NodeId) -> Option<&Node> {
-            for n in nodes {
-                if n.id == id {
-                    return Some(n);
-                }
-                if let Some(ch) = n.children()
-                    && let Some(f) = find(ch, id)
-                {
-                    return Some(f);
-                }
-            }
-            None
-        }
-        find(&self.layers, id)
+        self.index_path(id).and_then(|p| self.node_at(&p))
     }
 
-    /// Index path from the top-level layer list to `id` (e.g. `[0, 3, 1]`).
+    /// Index path from the top-level layer list to `id` (e.g. `[0, 3, 1]`): the first place in
+    /// tree order where `id` appears.
     pub fn index_path(&self, id: NodeId) -> Option<Vec<usize>> {
+        // The cached path, while the node there still has the id ([`id_index`]).
+        let cached = self.index.get();
+        match cached.as_ref().and_then(|m| m.get(&id)) {
+            Some(Some(p)) if self.node_at(&p).is_some_and(|n| n.id == id) => return Some(p),
+            Some(None) => return self.walk_index_path(id),
+            _ => {}
+        }
+        // A stale path (the tree changed), an id the cache doesn't have (deleted or added since),
+        // or no cache yet: walk, and rebuild now and then.
+        let found = self.walk_index_path(id);
+        let stale = cached.as_ref().is_some_and(|m| m.contains_key(&id));
+        if cached.is_none() || ((stale || found.is_some()) && self.index.missed()) {
+            self.index.rebuild(&self.layers);
+        }
+        found
+    }
+
+    /// [`Document::index_path`] by walking the tree.
+    fn walk_index_path(&self, id: NodeId) -> Option<Vec<usize>> {
         fn find(nodes: &[Arc<Node>], id: NodeId, path: &mut Vec<usize>) -> bool {
             for (i, n) in nodes.iter().enumerate() {
                 path.push(i);
@@ -793,6 +814,85 @@ impl Document {
         }
         let mut p = vec![];
         find(&self.layers, id, &mut p).then_some(p)
+    }
+
+    /// [`Document::index_path`] of every id in `ids` that is in the tree, in one walk of it: an
+    /// edit of many objects looks them all up for the cost of one search instead of one each. Like
+    /// `index_path`, an id that appears twice maps to its first place in tree order.
+    pub fn index_paths(&self, ids: impl IntoIterator<Item = NodeId>) -> std::collections::HashMap<NodeId, Vec<usize>> {
+        use std::collections::{HashMap, HashSet};
+        fn walk(nodes: &[Arc<Node>], want: &HashSet<NodeId>, path: &mut Vec<usize>, out: &mut HashMap<NodeId, Vec<usize>>) -> bool {
+            for (i, n) in nodes.iter().enumerate() {
+                path.push(i);
+                if want.contains(&n.id) && !out.contains_key(&n.id) {
+                    out.insert(n.id, path.clone());
+                    if out.len() == want.len() {
+                        return true;
+                    }
+                }
+                if let Some(ch) = n.children()
+                    && walk(ch, want, path, out)
+                {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+        let mut want: HashSet<NodeId> = ids.into_iter().collect();
+        let mut out = HashMap::with_capacity(want.len());
+        // Cached paths that still check out ([`id_index`]); the rest take one walk. For a good
+        // share of the document, one walk is quicker than checking each cached path.
+        if let Some(cache) = self.index.get().filter(|c| want.len().saturating_mul(8) < c.len()) {
+            want.retain(|id| match cache.get(id) {
+                Some(Some(p)) if self.node_at(&p).is_some_and(|n| n.id == *id) => {
+                    out.insert(*id, p);
+                    false
+                }
+                _ => true,
+            });
+        }
+        if !want.is_empty() {
+            let mut rest = HashMap::with_capacity(want.len());
+            walk(&self.layers, &want, &mut Vec::new(), &mut rest);
+            out.extend(rest);
+        }
+        out
+    }
+
+    /// The node at index path `path` (as [`Document::index_path`] gives it).
+    pub fn node_at(&self, path: &[usize]) -> Option<&Node> {
+        let (first, rest) = path.split_first()?;
+        let mut cur: &Node = self.layers.get(*first)?;
+        for &i in rest {
+            cur = cur.children()?.get(i)?;
+        }
+        Some(cur)
+    }
+
+    /// Mutable access to the node at index path `path`; clones the Arc path (copy-on-write), as
+    /// [`Document::node_mut`] does.
+    pub fn node_mut_at(&mut self, path: &[usize]) -> Option<&mut Node> {
+        let (first, rest) = path.split_first()?;
+        let mut cur: &mut Arc<Node> = self.layers.get_mut(*first)?;
+        for &i in rest {
+            cur = Arc::make_mut(cur).children_mut()?.get_mut(i)?;
+        }
+        Some(Arc::make_mut(cur))
+    }
+
+    /// [`Document::ancestry`] of the node at index path `path`.
+    pub fn ancestry_at(&self, path: &[usize]) -> Option<Vec<NodeId>> {
+        let mut out = Vec::with_capacity(path.len());
+        let mut nodes = &self.layers;
+        for &i in path {
+            let n = nodes.get(i)?;
+            out.push(n.id);
+            if let Some(ch) = n.children() {
+                nodes = ch;
+            }
+        }
+        Some(out)
     }
 
     /// Ids from the top-level layer down to `id` inclusive.
@@ -1391,6 +1491,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod tests_lookups;
 #[cfg(test)]
 mod tests_slices;
 #[cfg(test)]

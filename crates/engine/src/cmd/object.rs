@@ -72,7 +72,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             shear
         ),
-        cmd!("object.transformAgain", "Transform Again", ["Object", "Transform"], Some("Cmd+D"), "{}", has_selection, transform_again),
+        cmd!(
+            "object.transformAgain",
+            "Transform Again",
+            ["Object", "Transform"],
+            Some("Cmd+D"),
+            "{copy?, strokes?, corners?, patterns?, typeAreas?: bool (as object.transform's; default: the value the transform it repeats used, else object.transform's default)} the last transform's matrix on the selection (after a perspective move or scale: that plane-space transform, without these params)",
+            has_selection,
+            transform_again
+        ),
         cmd!(
             "object.nudge",
             "Nudge",
@@ -242,7 +250,8 @@ pub(crate) fn transform_patterns(s: &mut Session, p: &Value, ids: &[NodeId]) -> 
     let on = bool_or(p, "patterns", s.prefs.transform_pattern_tiles);
     let d = &s.doc()?.doc;
     let mut uses = false;
-    for n in ids.iter().filter_map(|id| d.node(*id)) {
+    let paths = d.index_paths(ids.iter().copied());
+    for n in ids.iter().filter_map(|id| paths.get(id)).filter_map(|p| d.node_at(p)) {
         n.walk(&mut |c| uses |= vectorcraft_doc::pattern::uses_pattern(c, None));
     }
     if uses {
@@ -252,8 +261,8 @@ pub(crate) fn transform_patterns(s: &mut Session, p: &Value, ids: &[NodeId]) -> 
 }
 
 /// Apply `xf` to `ids` (`copy` param: duplicate first; `strokes`/`corners`: see [`scaling`];
-/// `patterns`: see [`transform_patterns`]; `typeAreas`: see [`resize_type_area`]). Records
-/// Transform Again.
+/// `patterns`: see [`transform_patterns`]; `typeAreas`: see [`resize_type_area`]). Outside an
+/// interaction, records `xf` and the options it used for Transform Again.
 pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf: Affine, p: &Value) -> Result<Value> {
     let copy = bool_or(p, "copy", false);
     let areas = bool_or(p, "typeAreas", false);
@@ -263,14 +272,16 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
     // nothing: the document and its undo history stay as they are, and Transform Again repeats it.
     // With a copy, the reply lists the copies, and there are none.
     let d = &s.doc()?.doc;
-    let none = ids.iter().all(|id| d.node(*id).is_none());
+    let none = d.index_paths(ids.iter().copied()).is_empty();
     let ids = if none || (!copy && xf == Affine::IDENTITY) {
         if copy { vec![] } else { ids }
     } else {
         s.edit(label, |d, sel| {
             let targets = if copy { duplicate_in(d, sel, &ids, Affine::IDENTITY)? } else { ids.clone() };
+            // Transforms don't move nodes in the tree, so the paths found up front stay right.
+            let paths = d.index_paths(targets.iter().copied());
             for id in &targets {
-                if let Some(n) = d.node_mut(*id)
+                if let Some(n) = paths.get(id).and_then(|p| d.node_mut_at(p))
                     && !(areas && resize_type_area(n, xf))
                 {
                     n.transform(xf, sc);
@@ -281,7 +292,12 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
     };
     let st = s.doc_mut()?;
     if st.interaction.is_none() {
-        st.last_transform = Some((xf, copy));
+        let mut options = json!({ "copy": copy, "typeAreas": areas, "patterns": sc.patterns });
+        if Scaling::factor(xf).is_some() {
+            options["strokes"] = json!(sc.strokes);
+            options["corners"] = json!(!sc.keep_corners);
+        }
+        st.last_transform = Some((xf, options));
         st.last_perspective = None;
     }
     Ok(json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
@@ -390,13 +406,18 @@ fn shear(s: &mut Session, p: &Value) -> Result<Value> {
     apply_transform(s, "Shear", ids, about(o, m), p)
 }
 
-fn transform_again(s: &mut Session, _: &Value) -> Result<Value> {
+/// The last transform's matrix on the selection, with the options `last_transform` keeps for it; an
+/// option that `p` sets to true or false (a recorded Transform Again's) takes precedence.
+fn transform_again(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(again) = s.doc()?.last_perspective.clone() {
         return super::distortcmds::transform_again(s, &again);
     }
-    let (m, copy) = s.doc()?.last_transform.ok_or_else(|| EngineError::Other("no previous transform".into()))?;
+    let (m, mut options) = s.doc()?.last_transform.clone().ok_or_else(|| EngineError::Other("no previous transform".into()))?;
+    if let (Some(o), Some(given)) = (options.as_object_mut(), p.as_object()) {
+        o.extend(given.iter().filter(|(_, v)| v.is_boolean()).map(|(k, v)| (k.clone(), v.clone())));
+    }
     let ids = selected_roots(s)?;
-    apply_transform(s, "Transform Again", ids, m, &json!({ "copy": copy }))
+    apply_transform(s, "Transform Again", ids, m, &options)
 }
 
 enum Arrange {
@@ -458,6 +479,11 @@ fn send_to_current_layer(s: &mut Session, _: &Value) -> Result<Value> {
     // Ids are reused after undo: the remembered current layer must still be a layer.
     let st = s.doc()?;
     let layer = st.current_layer().or_else(|| st.doc.default_layer()).ok_or_else(|| EngineError::Other("no current layer".into()))?;
+    // When the current layer is hidden or locked, or is inside a hidden or locked layer, the
+    // command fails with the error that `DocState::target_parent` gives for new art.
+    if !st.doc.is_editable(layer) {
+        return Err(EngineError::Other("the target layer is locked or hidden".into()));
+    }
     // When the selected objects are already the topmost in the current layer, in paint order, the
     // document and its undo history stay as they are.
     if st.doc.children(Some(layer)).is_some_and(|c| c.iter().rev().map(|n| n.id).take(ids.len()).eq(ids.iter().rev().copied())) {
@@ -624,9 +650,10 @@ fn show_all(s: &mut Session, _: &Value) -> Result<Value> {
 
 fn compound_make(s: &mut Session, _: &Value) -> Result<Value> {
     let ids = selected_roots(s)?;
-    let Some(top) = ids.last().copied() else { return Err(EngineError::Other("nothing selected".into())) };
+    let Some(backmost) = ids.first().copied() else { return Err(EngineError::Other("nothing selected".into())) };
+    let top = ids.last().copied().unwrap_or(backmost);
     let id = s.edit("Make Compound Path", |d, sel| {
-        let appearance = d.node(top).map(|n| n.appearance.clone()).unwrap_or_default();
+        let appearance = d.node(backmost).ok_or(EngineError::NoNode(backmost))?.appearance.clone();
         let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
         let mut paths: Vec<Arc<Node>> = vec![];
         for id in &ids {
@@ -658,7 +685,7 @@ fn compound_make(s: &mut Session, _: &Value) -> Result<Value> {
         let back = paths.first().map_or(0.0, |p| direction(p));
         for (i, mut p) in paths.into_iter().enumerate() {
             let pn = Arc::make_mut(&mut p);
-            pn.appearance = Appearance::default();
+            pn.appearance = Appearance::default().into();
             let flip = i > 0 && back != 0.0 && direction(pn) == back;
             if let NodeKind::Path { path, live, .. } = &mut pn.kind {
                 *live = None;
@@ -739,7 +766,7 @@ pub(super) fn as_clipping_path(c: &mut Node) -> Result<()> {
     if !matches!(c.kind, NodeKind::Path { guide: false, .. } | NodeKind::Compound { .. } | NodeKind::Text(_)) {
         return Err(EngineError::Other("the top object must be a path, compound path or text object to use as a clipping mask".into()));
     }
-    c.appearance = Appearance::basic(Paint::None, Paint::None, 0.0);
+    c.appearance = Appearance::basic(Paint::None, Paint::None, 0.0).into();
     match &mut c.kind {
         NodeKind::Path { clipping, .. } => *clipping = true,
         NodeKind::Text(t) => {
@@ -1140,6 +1167,12 @@ fn align_anchors(s: &mut Session, p: &Value, ids: &[NodeId], (h, v): (Option<&st
         };
         Point::new(x, y)
     };
+    if pts.iter().all(|q| {
+        let dv = target(*q) - *q;
+        dv.x.abs() <= 1e-9 && dv.y.abs() <= 1e-9
+    }) {
+        return ok();
+    }
     s.edit("Align", |d, _| {
         for (id, refs) in &targets {
             let path = super::path::path_mut(d, *id)?;
