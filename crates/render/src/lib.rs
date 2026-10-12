@@ -11,8 +11,10 @@ pub mod encode;
 mod freeform;
 mod fx;
 mod group;
+mod images;
 mod ink;
 mod live;
+mod lru;
 mod paint;
 mod pattern;
 pub mod placed_document;
@@ -29,9 +31,11 @@ use vello_cpu::{Pixmap, RenderContext, Resources};
 
 use group::Composite;
 use ink::Ink;
+use lru::FrameCache;
 
 pub use brush_fx::instance_art;
 pub use effects::stroke::width_outline;
+pub use images::{IMAGE_CACHE_MAX, image_cache_bytes, set_image_cache_budget};
 pub use live::expand_live;
 pub use pattern::render_pattern_swatch;
 pub use vectorcraft_effects as effects;
@@ -119,6 +123,19 @@ pub struct RenderOptions {
     /// edge leave no seam of the background between them (#983). Off, edges are smoothed shape by
     /// shape (the canvas).
     pub supersample: bool,
+    /// Screen views: an image drawn at half its size or smaller samples a copy shrunk by halves
+    /// (box-filtered from the full image, kept with the decoded images), so the full image needn't
+    /// stay in memory or be sampled. Off, images always sample their full pixels (exports).
+    pub image_mips: bool,
+    /// Screen views while an interaction is in progress (a drag, a dialog's preview): an object
+    /// whose content only moved since an earlier frame draws its cached drop shadows, outer glows
+    /// and filtered content from the rasters made then, at the nearest whole pixel, without
+    /// running the effects again (see `fx`). Off, no raster made that way, or made over one, is
+    /// drawn: the effects run again.
+    pub interacting: bool,
+    /// Appearance of Black's Rich Black: pure CMYK black (black ink alone at 100%) shows as RGB
+    /// black. Off, it shows through the CMYK profile, a dark grey, as other colours do.
+    pub rich_black: bool,
 }
 
 /// The opacity of the art around an isolated group or layer.
@@ -192,6 +209,9 @@ impl Default for RenderOptions {
             isolated: None,
             precise: false,
             supersample: false,
+            image_mips: false,
+            interacting: false,
+            rich_black: false,
         }
     }
 }
@@ -339,15 +359,32 @@ struct GeomEntry {
 type ClipEntry = (Arc<Node>, Option<Arc<(BezPath, FillRule)>>);
 /// A clipping path (kept alive) and what it paints: its fills and its strokes ([`Node::clip_paint`]).
 type ClipPaintEntry = (Arc<Node>, Option<Arc<Node>>, Option<Arc<Node>>);
+/// What symbol art placed by [`Renderer::placed_art`] is kept under: the art's address, the bits
+/// of the transform's coefficients, whether strokes scale with it, and the stain ([`stain_bits`]).
+type PlacedKey = (usize, [u64; 6], bool, [u32; 6]);
 
-/// Reusable renderer (keeps the render context, decoded images and glyph caches between frames).
+/// Symbol art placed by [`Renderer::placed_art`].
+struct PlacedEntry {
+    /// The symbol's art, held weakly: the reference keeps the art's allocation, so no other art can
+    /// get its address while the entry exists, and does not keep the art's content.
+    art: std::sync::Weak<Node>,
+    /// The art placed, or `None` for art placed again in every frame ([`depends_on_document`]).
+    placed: Option<Arc<Node>>,
+    /// The font generation ([`vectorcraft_text::FontDb::generation`]) the art was placed in, when
+    /// it holds type: the art is placed again when the fonts change.
+    fonts: Option<u64>,
+}
+
+/// Reusable renderer (keeps the render context, geometry and glyph caches between frames; decoded
+/// images are shared by all renderers, see [`set_image_cache_budget`]).
 pub struct Renderer {
-    texts: PtrMap<usize, (Arc<Node>, Arc<TextGeom>)>,
+    /// Glyph geometry per text object, keyed by `Arc` identity like `geom` (see [`Self::text_geom_of`]).
+    texts: FrameCache<usize, (Arc<Node>, Arc<TextGeom>)>,
     /// The [`vectorcraft_text::FontDb::generation`] `texts` was laid out with: type lays out
     /// again when fonts are added or rescanned.
     text_fonts: u64,
     /// Clip regions per clipping path (see [`Self::clip_of`]).
-    clips: PtrMap<usize, ClipEntry>,
+    clips: FrameCache<usize, ClipEntry>,
     /// Context reused when rendering single-threaded (`threads == 0`).
     ctx_st: Option<RenderContext>,
     /// Worker threads for the multithreaded rasterizer (0 = single-threaded).
@@ -367,7 +404,6 @@ pub struct Renderer {
     alpha: f32,
     ctx: Option<RenderContext>,
     resources: Resources,
-    images: HashMap<String, Arc<Pixmap>>,
     /// Statistics of the last frame.
     pub stats: FrameStats,
     /// Brush art per brushed stroke.
@@ -385,7 +421,9 @@ pub struct Renderer {
     /// opacity and without its opacity mask (see [`Self::draw_knockout`]); 0 = none.
     shape_of: usize,
     /// The art drawn for objects with effects that apply through it (see `fx::has_object_fx`).
-    fx_arts: PtrMap<usize, (Arc<Node>, Arc<Node>)>,
+    fx_arts: FrameCache<usize, (Arc<Node>, Arc<Node>)>,
+    /// Symbol art as instances and inline graphics draw it (see [`Self::placed_art`]).
+    placed_arts: FrameCache<PlacedKey, PlacedEntry>,
     /// Layers open around the drawing point in the current context: a non-isolated group can copy
     /// its backdrop only when there are none (see [`Self::group`]).
     nested: u32,
@@ -398,16 +436,12 @@ pub struct Renderer {
     /// again from a picture of it pushes them again (see [`Self::group`]).
     clip_paths: Vec<(BezPath, FillRule, Affine)>,
     /// What clipping paths paint, per clipping path (see [`Self::clip_paint_of`]).
-    clip_paints: PtrMap<usize, ClipPaintEntry>,
-    /// Placed images as painted in ink planes (see [`ink`]).
-    ink_images: ink::InkImages,
-    /// CMYK images as shown through the working CMYK profile (see [`ink`]).
-    cmyk_images: ink::CmykImages,
+    clip_paints: FrameCache<usize, ClipPaintEntry>,
     /// Gradients along or across strokes, keyed like `strokes` (see [`Self::fill_path_gradient`]).
     stroke_slices: PtrMap<(usize, i32), SliceEntry>,
-    /// The keys and sizes of the recoloured images colour adjustments made in `images`, oldest
-    /// first (see [`Self::adjusted_image`]).
-    adjusted: std::collections::VecDeque<(String, usize)>,
+    /// What the image keys colour adjustments give their recoloured images name: the image
+    /// recoloured and the adjustment, with its hash (see [`Self::adjusted_image`]).
+    adjusts: HashMap<String, (String, u64, vectorcraft_effects::ColorMap)>,
     /// Layer Options → Dim Images to, of the layer being drawn (screen views only): images show
     /// faded to this opacity over white.
     dim_images: Option<f32>,
@@ -434,6 +468,9 @@ static MISSING_INLINE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic:
 pub struct FrameStats {
     pub drawn: usize,
     pub culled: usize,
+    /// The drop shadows, outer glows and filtered contents the frame drew from rasters made before
+    /// their object moved, or made over such rasters ([`RenderOptions::interacting`]).
+    pub moved: usize,
     pub micros: u64,
 }
 
@@ -476,9 +513,9 @@ impl Frame<'_> {
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            texts: PtrMap::default(),
+            texts: FrameCache::new(lru::TEXT_BUDGET, 1024),
             text_fonts: 0,
-            clips: PtrMap::default(),
+            clips: FrameCache::new(lru::CLIP_BUDGET, 256),
             ctx_st: None,
             threads: default_threads(),
             geom: PtrMap::default(),
@@ -490,7 +527,6 @@ impl Renderer {
             alpha: 1.0,
             ctx: None,
             resources: Resources::new(),
-            images: HashMap::new(),
             stats: FrameStats::default(),
             brushes: Default::default(),
             shadows: PtrMap::default(),
@@ -498,16 +534,15 @@ impl Renderer {
             live: live::LiveCache::default(),
             knockout: false,
             shape_of: 0,
-            fx_arts: PtrMap::default(),
+            fx_arts: FrameCache::new(lru::FX_ART_BUDGET, 256),
+            placed_arts: FrameCache::new(lru::PLACED_ART_BUDGET, 256),
             nested: 0,
             backdrop: None,
             blends: PtrMap::default(),
             clip_paths: vec![],
-            clip_paints: PtrMap::default(),
-            ink_images: Default::default(),
-            cmyk_images: Default::default(),
+            clip_paints: FrameCache::new(lru::CLIP_BUDGET, 256),
             stroke_slices: PtrMap::default(),
-            adjusted: Default::default(),
+            adjusts: HashMap::new(),
             dim_images: None,
             inline_depth: 0,
             raster: vello_cpu::RasterizerSettings::default(),
@@ -546,11 +581,13 @@ impl Renderer {
         let inv = view.inverse();
         let visible = inv.transform_rect_bbox(Rect::new(0.0, 0.0, w as f64, h as f64));
         let px = 1.0 / view.determinant().abs().sqrt().max(1e-12);
-        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, ink: Ink::Display };
-        self.stamp += 1;
+        let screen = if opts.rich_black { Ink::RichBlack } else { Ink::Display };
+        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, ink: screen };
+        self.begin_frame();
         // View Opacity Mask: the mask's coverage in greyscale instead of the artwork.
-        if let Some(m) = opts.mask_view.and_then(|id| doc.node(id)).and_then(|n| n.mask.as_deref()) {
+        if let Some(m) = opts.mask_view.and_then(|id| doc.node(id)).and_then(|n| n.extras().mask.as_deref()) {
             let pixels = self.mask_values(&frame, m, w, h).into_iter().flat_map(|v| [v, v, v, 255]).collect();
+            self.end_frame();
             self.stats.micros = now().saturating_sub(start);
             return Rendered { width: w as u32, height: h as u32, pixels };
         }
@@ -560,11 +597,26 @@ impl Renderer {
             let stats = self.stats;
             let k = self.draw_frame(&Frame { ink: Ink::K, ..frame }, w, h);
             self.stats = stats;
-            if inks { ink::amounts(&cmy, &k) } else { ink::compose(&cmy, &k, opts.background) }
+            if inks { ink::amounts(&cmy, &k) } else { ink::compose(&cmy, &k, opts) }
         } else {
             self.draw_frame(&frame, w, h)
         };
-        // Drop cache entries not seen for a few frames.
+        self.end_frame();
+        if !inks {
+            proof::post(&mut pixels, opts);
+        }
+        self.stats.micros = now().saturating_sub(start);
+        Rendered { width: w as u32, height: h as u32, pixels }
+    }
+
+    /// Start a frame: cache entries used from now on are marked with its stamp.
+    fn begin_frame(&mut self) {
+        self.stamp += 1;
+    }
+
+    /// End a frame: drop cache entries not used for a few frames (every render, thumbnails too,
+    /// so the nodes they hold go with them).
+    fn end_frame(&mut self) {
         let g = self.stamp;
         if self.geom.len() > 1024 {
             self.geom.retain(|_, e| g - e.stamp <= 3);
@@ -583,11 +635,13 @@ impl Renderer {
         }
         // Filtered rasters are large: only those of the last frame stay.
         self.pixel_fx.retain(|_, e| e.stamp == g);
-        if !inks {
-            proof::post(&mut pixels, opts);
-        }
-        self.stats.micros = now().saturating_sub(start);
-        Rendered { width: w as u32, height: h as u32, pixels }
+        self.texts.sweep(g);
+        self.clips.sweep(g);
+        self.clip_paints.sweep(g);
+        self.fx_arts.sweep(g);
+        self.placed_arts.sweep(g);
+        self.brushes.entries.sweep(g);
+        self.live.sweep(g);
     }
 
     /// Draw frame `f` (`w`×`h` pixels): the background, the artboards and the page's art.
@@ -705,18 +759,37 @@ impl Renderer {
         let mut ctx = single_threaded_context(w, h);
         let opts = RenderOptions::default();
         let frame = Frame { mt: false, doc, view, visible, px, opts: &opts, ink: Ink::Display };
+        self.begin_frame();
         (self.knockout, self.nested, self.backdrop) = (false, 0, None);
         self.clip_paths.clear();
         self.draw_arc(&mut ctx, &frame, n);
         ctx.flush();
         let mut pm = Pixmap::new(w, h);
         ctx.render(&mut pm, &mut self.resources);
+        self.end_frame();
         Some(Rendered { width: w as u32, height: h as u32, pixels: pm.data_as_u8_slice().to_vec() })
     }
 
     /// Render any node (also one outside the tree, e.g. opacity-mask art) fitted into
     /// `size`×`size` pixels, optionally over a solid premultiplied background.
     pub fn render_node_thumbnail(&mut self, doc: &Document, n: &Node, size: u32, background: Option<[u8; 4]>) -> Option<Rendered> {
+        self.render_node_thumbnail_with(doc, n, size, background, &RenderOptions::default())
+    }
+
+    /// [`Self::render_thumbnail`] with `opts` (e.g. [`RenderOptions::image_mips`]).
+    pub fn render_thumbnail_with(&mut self, doc: &Document, id: NodeId, size: u32, opts: &RenderOptions) -> Option<Rendered> {
+        self.render_node_thumbnail_with(doc, doc.node(id)?, size, None, opts)
+    }
+
+    /// [`Self::render_node_thumbnail`] with `opts` (e.g. [`RenderOptions::image_mips`]).
+    pub fn render_node_thumbnail_with(
+        &mut self,
+        doc: &Document,
+        n: &Node,
+        size: u32,
+        background: Option<[u8; 4]>,
+        opts: &RenderOptions,
+    ) -> Option<Rendered> {
         let b = brush_fx::cull_bounds(n)?;
         let s = (size as f64 - 2.0) / b.width().max(b.height()).max(1e-6);
         let view = Affine::translate((size as f64 / 2.0, size as f64 / 2.0)) * Affine::scale(s) * Affine::translate(-b.center().to_vec2());
@@ -726,13 +799,15 @@ impl Renderer {
             ctx.set_paint(peniko::Color::from_rgba8(bg[0], bg[1], bg[2], bg[3]));
             ctx.fill_rect(&kurbo::Rect::new(0.0, 0.0, w as f64, w as f64));
         }
-        let frame = Frame { mt: false, doc, view, visible: b.inflate(1.0, 1.0), px: 1.0 / s, opts: &RenderOptions::default(), ink: Ink::Display };
+        let frame = Frame { mt: false, doc, view, visible: b.inflate(1.0, 1.0), px: 1.0 / s, opts, ink: Ink::Display };
+        self.begin_frame();
         (self.knockout, self.nested, self.backdrop) = (false, 0, None);
         self.clip_paths.clear();
         self.draw_node(&mut ctx, &frame, n, true);
         ctx.flush();
         let mut pm = Pixmap::new(w, w);
         ctx.render(&mut pm, &mut self.resources);
+        self.end_frame();
         Some(Rendered { width: size, height: size, pixels: pm.data_as_u8_slice().to_vec() })
     }
 
@@ -749,7 +824,7 @@ impl Renderer {
             NodeKind::Layer { children, clip: false, .. } | NodeKind::Group { children, clip: false } if !fx::has_object_fx(a) => {
                 let mut acc: Option<Rect> = None;
                 // An Image Trace object's hidden source image shows in some of its views.
-                let source = a.trace.is_some().then(|| children.first()).flatten();
+                let source = a.extras().trace.is_some().then(|| children.first()).flatten();
                 for c in children {
                     if c.visible || source.is_some_and(|s| Arc::ptr_eq(s, c)) {
                         acc = vectorcraft_geom::union_opt(acc, self.bounds_of(c));
@@ -767,16 +842,14 @@ impl Renderer {
     /// outlining text and uniting shapes is too slow to repeat every frame.
     fn clip_of(&mut self, a: &Arc<Node>) -> Option<Arc<(BezPath, FillRule)>> {
         let key = Arc::as_ptr(a) as usize;
-        if let Some((node, region)) = self.clips.get(&key)
+        if let Some((node, region)) = self.clips.get(&key, self.stamp)
             && Arc::ptr_eq(node, a)
         {
             return region.clone();
         }
         let region = effects::clip_outline(a).map(Arc::new);
-        if self.clips.len() > 1024 {
-            self.clips.clear();
-        }
-        self.clips.insert(key, (a.clone(), region.clone()));
+        let bytes = size_of::<ClipEntry>() + region.as_ref().map_or(0, |r| lru::path_bytes(&r.0));
+        self.clips.insert(key, (a.clone(), region.clone()), bytes, self.stamp);
         region
     }
 
@@ -784,17 +857,15 @@ impl Renderer {
     /// allocations between frames, so their own geometry stays cached.
     fn clip_paint_of(&mut self, a: &Arc<Node>) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
         let key = Arc::as_ptr(a) as usize;
-        if let Some((node, fill, stroke)) = self.clip_paints.get(&key)
+        if let Some((node, fill, stroke)) = self.clip_paints.get(&key, self.stamp)
             && Arc::ptr_eq(node, a)
         {
             return (fill.clone(), stroke.clone());
         }
         let paint = a.clip_paint();
         let (fill, stroke) = (paint.fill.map(Arc::new), paint.stroke.map(Arc::new));
-        if self.clip_paints.len() > 1024 {
-            self.clip_paints.clear();
-        }
-        self.clip_paints.insert(key, (a.clone(), fill.clone(), stroke.clone()));
+        let bytes = size_of::<ClipPaintEntry>() + [&fill, &stroke].iter().filter_map(|p| p.as_deref()).map(lru::node_bytes).sum::<usize>();
+        self.clip_paints.insert(key, (a.clone(), fill.clone(), stroke.clone()), bytes, self.stamp);
         (fill, stroke)
     }
 
@@ -836,7 +907,7 @@ impl Renderer {
         if self.skipped(f, a) {
             return;
         }
-        if let Some(m) = a.mask.as_deref()
+        if let Some(m) = a.extras().mask.as_deref()
             && !m.disabled
             && !f.opts.outline
             && !self.is_shape(a)
@@ -1094,8 +1165,7 @@ impl Renderer {
             NodeKind::Image(im) => self.draw_image(ctx, f, im),
             NodeKind::SymbolInstance { symbol, xf } => {
                 if let Some(sym) = f.doc.symbols.iter().find(|s| &s.name == symbol) {
-                    let mut art = brush_fx::instance_art(&sym.art, n);
-                    art.transform(*xf, false);
+                    let art = self.placed_art(&sym.art, *xf, false, Some(n));
                     self.draw_node(ctx, f, &art, true);
                 }
             }
@@ -1429,12 +1499,44 @@ impl Renderer {
         for ig in &g.inlines {
             let Some(art) = t.runs.get(ig.run).and_then(|r| r.inline.as_ref()) else { continue };
             let Some(sym) = f.doc.symbols.iter().find(|s| s.name == art.symbol) else { continue };
-            let mut node = (*sym.art).clone();
             // Strokes scale with the art (it is sized to the type, as in the SVG `<use>`).
-            node.transform(t.xf * ig.xf * f.doc.symbol_natural_xf(&art.symbol), true);
+            let node = self.placed_art(&sym.art, t.xf * ig.xf * f.doc.symbol_natural_xf(&art.symbol), true, None);
             self.draw_node(ctx, f, &node, true);
         }
         self.inline_depth -= 1;
+    }
+
+    /// Symbol art `art` as an instance or an inline graphic draws it ([`place`]). Art that is a
+    /// group or a layer without an appearance of its own is kept between frames under the art's
+    /// `Arc`, `xf`, `scale_strokes` and the stain of instance `inst`: its members keep their `Arc`s
+    /// from frame to frame, and the caches keyed by a node's address (geometry, glyphs, live-effect
+    /// geometry) hit for them. Other art is placed again in every frame, and so is art that holds
+    /// symbol instances, type with inline graphics, images, placed documents, live blends,
+    /// envelopes or repeats, or raster effects ([`depends_on_document`]). Art that holds type is
+    /// placed again when the fonts change.
+    fn placed_art(&mut self, art: &Arc<Node>, xf: Affine, scale_strokes: bool, inst: Option<&Node>) -> Arc<Node> {
+        if !matches!(art.kind, NodeKind::Group { .. } | NodeKind::Layer { .. }) || fx::has_object_fx(art) {
+            return place(art, xf, scale_strokes, inst);
+        }
+        let stain = stain_bits(inst.and_then(vectorcraft_brush::stain));
+        let key = (Arc::as_ptr(art) as usize, xf.as_coeffs().map(f64::to_bits), scale_strokes, stain);
+        if let Some(e) = self.placed_arts.get(&key, self.stamp)
+            && std::ptr::eq(e.art.as_ptr(), Arc::as_ptr(art))
+            && e.fonts.is_none_or(|g| g == vectorcraft_text::FontDb::global().generation())
+        {
+            return match &e.placed {
+                Some(placed) => placed.clone(),
+                None => place(art, xf, scale_strokes, inst),
+            };
+        }
+        let placed = place(art, xf, scale_strokes, inst);
+        let kept = (!depends_on_document(art)).then(|| placed.clone());
+        let fonts = (kept.is_some() && holds_type(art)).then(|| vectorcraft_text::FontDb::global().generation());
+        // The bytes count the key and the entry, the art's allocation that the weak reference
+        // keeps, and the kept art.
+        let bytes = size_of::<(PlacedKey, PlacedEntry, Node)>() + kept.as_deref().map_or(0, lru::node_bytes);
+        self.placed_arts.insert(key, PlacedEntry { art: Arc::downgrade(art), placed: kept, fonts }, bytes, self.stamp);
+        placed
     }
 
     /// Cached glyph geometry for a text node (keyed by Arc identity like paths).
@@ -1445,16 +1547,13 @@ impl Renderer {
             self.text_fonts = fonts;
         }
         let key = Arc::as_ptr(a) as usize;
-        if let Some((node, g)) = self.texts.get(&key)
+        if let Some((node, g)) = self.texts.get(&key, self.stamp)
             && Arc::ptr_eq(node, a)
         {
             return g.clone();
         }
         let g = Arc::new(text_geom(t));
-        if self.texts.len() > 4096 {
-            self.texts.clear();
-        }
-        self.texts.insert(key, (a.clone(), g.clone()));
+        self.texts.insert(key, (a.clone(), g.clone()), g.bytes(), self.stamp);
         g
     }
 
@@ -1503,7 +1602,8 @@ impl Renderer {
             }
         }
         for (i, run) in t.runs.iter().enumerate() {
-            let Some(path) = g.runs.get(i) else { continue };
+            let path = g.run(i);
+            let path = path.as_ref();
             if path.elements().is_empty() {
                 continue;
             }
@@ -1569,14 +1669,12 @@ impl Renderer {
         // Outline mode draws the image's frame, and with Document Setup → Show Images in Outline
         // Mode its pixels in greyscale under the frame.
         let outline = f.opts.outline;
-        // A linked image's preview is cached apart from the file's pixels, which share its key.
-        let cache_key = match f.doc.images.get(&im.key) {
-            Some(b) if b.is_proxy() => std::borrow::Cow::Owned(format!("{}\u{0}proxy", im.key)),
-            _ => std::borrow::Cow::Borrowed(im.key.as_str()),
-        };
-        let pixels = if outline && !f.doc.setup.outline_images { None } else { self.image_pixmap(f.doc, &im.key, &cache_key, outline) };
-        if let Some(pm) = pixels {
-            let pm = if outline { pm } else { self.ink_image(&cache_key, &pm, f.ink, f.doc.images.get(&im.key)) };
+        // With mips the full pixels are only looked at (not marked used) until they're drawn.
+        let mips = f.opts.image_mips;
+        let pixels = if outline && !f.doc.setup.outline_images { None } else { self.image_pixmap(f.doc, &im.key, outline, !mips) };
+        if let Some((key, pm)) = pixels {
+            let (key, pm) = if outline { (key, pm) } else { ink::ink_image(&key, &pm, f.ink, f.doc.images.get(&im.key), !mips) };
+            let pm = if mips { image_mip(&key, pm, f.view * im.xf * Affine::scale_non_uniform(im.width as f64, im.height as f64)) } else { pm };
             let sx = im.width as f64 / pm.width().max(1) as f64;
             let sy = im.height as f64 / pm.height().max(1) as f64;
             let quality = if f.opts.smooth_images { peniko::ImageQuality::Medium } else { peniko::ImageQuality::Low };
@@ -1619,60 +1717,57 @@ impl Renderer {
         }
     }
 
-    /// Cache the pixels of image blob `key` recoloured by `map` as `derived` (the key the adjusted
-    /// art's image takes). The latest ones are kept up to a memory budget: dropping one drops the
-    /// cached art too, so it is made again.
-    fn adjusted_image(&mut self, doc: &Document, key: &str, derived: String, map: &vectorcraft_effects::ColorMap) {
-        const BUDGET: usize = 256 << 20;
-        if self.images.contains_key(&derived) {
+    /// Name image `key` recoloured by `map` (its hash `hash`) as `derived` (the key the adjusted
+    /// art's image takes): drawing `derived` draws the recoloured pixels, made when first drawn and
+    /// kept with the decoded images. Names past a limit drop the art made with them too, so it is
+    /// made again.
+    fn adjusted_image(&mut self, key: &str, derived: String, hash: u64, map: &vectorcraft_effects::ColorMap) {
+        if self.adjusts.contains_key(&derived) {
             return;
         }
-        let Some(src) = self.image_pixmap(doc, key, key, false) else { return };
-        let mut pm = (*src).clone();
-        let mut memo: HashMap<[u8; 4], [u8; 3]> = HashMap::new();
-        for px in pm.data_mut().iter_mut().filter(|p| p.a > 0) {
-            let a = px.a as u32;
-            let [r, g, b] = *memo.entry([px.r, px.g, px.b, px.a]).or_insert_with(|| {
-                // Premultiplied to straight, adjusted, then premultiplied again.
-                let straight = [px.r, px.g, px.b].map(|v| ((v as u32 * 255 + a / 2) / a).min(255) as u8);
-                map.apply_rgb8(straight).map(|v| ((v as u32 * a + 127) / 255) as u8)
-            });
-            (px.r, px.g, px.b) = (r, g, b);
-        }
-        let bytes = pm.data().len() * 4;
-        self.images.insert(derived.clone(), Arc::new(pm));
-        self.adjusted.push_back((derived, bytes));
-        let mut total: usize = self.adjusted.iter().map(|(_, b)| b).sum();
-        while total > BUDGET && self.adjusted.len() > 1 {
-            let Some((old, b)) = self.adjusted.pop_front() else { break };
-            self.images.remove(&old);
+        if self.adjusts.len() >= 1024 {
+            self.adjusts.clear();
             self.fx_arts.clear();
-            total -= b;
         }
+        self.adjusts.insert(derived, (key.to_string(), hash, map.clone()));
     }
 
-    /// The decoded pixels of image blob `key` (cached as `cache_key`), or a greyscale copy of them.
-    fn image_pixmap(&mut self, doc: &Document, key: &str, cache_key: &str, grey: bool) -> Option<Arc<Pixmap>> {
-        let colour = match self.images.get(cache_key) {
-            Some(p) => p.clone(),
+    /// The pixels of image `key` (a blob of `doc`, or a recoloured one named by
+    /// [`Self::adjusted_image`]), or a greyscale copy of them, with their key in the shared store.
+    /// `touch` marks them used there.
+    fn image_pixmap(&mut self, doc: &Document, key: &str, grey: bool, touch: bool) -> Option<(images::ImageKey, Arc<Pixmap>)> {
+        let (key, colour) = match doc.images.get(key) {
+            Some(blob) => blob_pixmap(blob, touch)?,
             None => {
-                let blob = doc.images.get(key)?;
-                match self.cmyk_image(blob, cache_key) {
-                    Some(pm) => pm,
+                let (src, hash, map) = self.adjusts.get(key)?.clone();
+                let (src_key, src) = self.image_pixmap(doc, &src, false, touch)?;
+                let key = images::ImageKey { adjust: Some(hash), ..src_key };
+                match lookup(&key, touch) {
+                    Some(pm) => (key, pm),
                     None => {
-                        let pm = Arc::new(paint::decode_pixmap(&blob.bytes)?);
-                        self.images.insert(cache_key.to_string(), pm.clone());
-                        pm
+                        let mut pm = (*src).clone();
+                        let mut memo: HashMap<[u8; 4], [u8; 3]> = HashMap::new();
+                        for px in pm.data_mut().iter_mut().filter(|p| p.a > 0) {
+                            let a = px.a as u32;
+                            let [r, g, b] = *memo.entry([px.r, px.g, px.b, px.a]).or_insert_with(|| {
+                                // Premultiplied to straight, adjusted, then premultiplied again.
+                                let straight = [px.r, px.g, px.b].map(|v| ((v as u32 * 255 + a / 2) / a).min(255) as u8);
+                                map.apply_rgb8(straight).map(|v| ((v as u32 * a + 127) / 255) as u8)
+                            });
+                            (px.r, px.g, px.b) = (r, g, b);
+                        }
+                        let pm = images::store().insert(key.clone(), Arc::new(pm));
+                        (key, pm)
                     }
                 }
             }
         };
         if !grey {
-            return Some(colour);
+            return Some((key, colour));
         }
-        let grey_key = format!("{cache_key}\u{0}grey");
-        if let Some(p) = self.images.get(&grey_key) {
-            return Some(p.clone());
+        let key = images::ImageKey { grey: true, ..key };
+        if let Some(p) = lookup(&key, touch) {
+            return Some((key, p));
         }
         let mut pm = (*colour).clone();
         for px in pm.data_mut() {
@@ -1680,10 +1775,60 @@ impl Renderer {
             let l = (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32 + 0.5) as u8;
             (px.r, px.g, px.b) = (l, l, l);
         }
-        let pm = Arc::new(pm);
-        self.images.insert(grey_key, pm.clone());
-        Some(pm)
+        let pm = images::store().insert(key.clone(), Arc::new(pm));
+        Some((key, pm))
     }
+}
+
+/// `key`'s pixels in the shared image store; `touch` marks them used.
+fn lookup(key: &images::ImageKey, touch: bool) -> Option<Arc<Pixmap>> {
+    let mut s = images::store();
+    if touch { s.get(key) } else { s.peek(key) }
+}
+
+/// The decoded pixels of `blob` (a CMYK image's inks shown through the working CMYK profile, again
+/// when the colour settings change), from the shared store, and their key there.
+fn blob_pixmap(blob: &vectorcraft_doc::ImageBlob, touch: bool) -> Option<(images::ImageKey, Arc<Pixmap>)> {
+    let id = images::blob_id(blob);
+    let lut = id.cmyk.then(ink::display_lut);
+    let key =
+        images::ImageKey { content: id.content, adjust: None, grey: false, ink: Ink::Display, luts: (lut.as_ref().map_or(0, |l| l.1), 0), mip: 0 };
+    if let Some(pm) = lookup(&key, touch) {
+        return Some((key, pm));
+    }
+    // Decoded outside the lock: other renderers carry on meanwhile.
+    let pm = match lut.and_then(|(lut, _)| ink::cmyk_pixmap(blob, &lut)) {
+        Some(pm) => pm,
+        None => paint::decode_pixmap(&blob.bytes)?,
+    };
+    let pm = images::store().insert(key.clone(), Arc::new(pm));
+    Some((key, pm))
+}
+
+/// Image pixels `pm` (stored as `key`) to draw through `m` (unit square → device pixels), shrunk
+/// by halves while still at least as fine as the device pixels ([`images::mip_level`]); the
+/// pixels drawn are marked used in the store.
+fn image_mip(key: &images::ImageKey, pm: Arc<Pixmap>, m: Affine) -> Arc<Pixmap> {
+    let (w, h) = (pm.width(), pm.height());
+    let level = images::mip_level(m * Affine::scale_non_uniform(1.0 / w.max(1) as f64, 1.0 / h.max(1) as f64), w, h);
+    let mut s = images::store();
+    if level == 0 {
+        let _ = s.get(key); // Marks the full pixels used (they were only looked at).
+        return pm;
+    }
+    let at = |l: u8| images::ImageKey { mip: l, ..key.clone() };
+    if let Some(p) = s.get(&at(level)) {
+        return p;
+    }
+    // From the finest level kept below it.
+    let (mut l, mut cur) = (1..level).rev().find_map(|l| s.peek(&at(l)).map(|p| (l, p))).unwrap_or((0, pm));
+    drop(s);
+    while l < level {
+        l += 1;
+        let half = Arc::new(images::half(&cur));
+        cur = images::store().insert(at(l), half);
+    }
+    cur
 }
 
 /// Can image node `n` (`im`) clipped by `region` be painted straight into the region: visible,
@@ -1759,6 +1904,61 @@ fn painted_items(n: &Node) -> usize {
         .max(if n.appearance.items.iter().any(|i| matches!(i, AppearanceItem::Fill(f) if f.visible && !matches!(f.paint, vectorcraft_color::Paint::Solid { .. } | vectorcraft_color::Paint::None)) || matches!(i, AppearanceItem::Stroke(s) if s.visible && !matches!(s.paint, vectorcraft_color::Paint::Solid { .. } | vectorcraft_color::Paint::None))) { 2 } else { 0 })
 }
 
+/// Symbol art `art` stained by instance `inst` ([`instance_art`]) and placed by `xf`, with
+/// strokes scaled by `xf` when `scale_strokes`.
+fn place(art: &Node, xf: Affine, scale_strokes: bool, inst: Option<&Node>) -> Arc<Node> {
+    let mut placed = match inst {
+        Some(i) => brush_fx::instance_art(art, i),
+        None => art.clone(),
+    };
+    placed.transform(xf, scale_strokes);
+    Arc::new(placed)
+}
+
+/// Does `n` hold, in it or in the opacity masks of the objects in it, a symbol instance, type
+/// with an inline graphic, an image, a placed document, a blend, an envelope, a repeat, or an
+/// object or a fill or stroke with a visible raster effect?
+fn depends_on_document(n: &Node) -> bool {
+    let raster = |fx: &[vectorcraft_doc::Effect]| fx.iter().any(|e| e.visible && effects::is_raster(&e.id));
+    let mut depends = false;
+    n.walk(&mut |c| {
+        depends |= match &c.kind {
+            NodeKind::SymbolInstance { .. }
+            | NodeKind::Image(_)
+            | NodeKind::PlacedDocument(_)
+            | NodeKind::Blend { .. }
+            | NodeKind::Envelope { .. }
+            | NodeKind::Repeat(_) => true,
+            NodeKind::Text(t) => t.runs.iter().any(|r| r.inline.is_some()),
+            _ => false,
+        } || raster(&c.appearance.effects)
+            || c.appearance.items.iter().any(|i| raster(i.effects()))
+            || c.extras().mask.as_ref().is_some_and(|m| depends_on_document(&m.art));
+    });
+    depends
+}
+
+/// Does `n` hold type, in it or in the opacity masks of the objects in it?
+fn holds_type(n: &Node) -> bool {
+    let mut holds = false;
+    n.walk(&mut |c| holds |= matches!(c.kind, NodeKind::Text(_)) || c.extras().mask.as_ref().is_some_and(|m| holds_type(&m.art)));
+    holds
+}
+
+/// A symbol instance's stain ([`vectorcraft_brush::stain`]) as bits for a cache key: its color
+/// model, the color's components and the amount (all 0 without a stain).
+fn stain_bits(stain: Option<(vectorcraft_color::Color, f32)>) -> [u32; 6] {
+    use vectorcraft_color::Color;
+    let Some((color, amount)) = stain else { return [0; 6] };
+    let (model, [p, q, r, s]) = match color {
+        Color::Rgb { r, g, b } => (1, [r, g, b, 0.0]),
+        Color::Cmyk { c, m, y, k } => (2, [c, m, y, k]),
+        Color::Gray { k } => (3, [k, 0.0, 0.0, 0.0]),
+        Color::Lab { l, a, b } => (4, [l, a, b, 0.0]),
+    };
+    [model, p.to_bits(), q.to_bits(), r.to_bits(), s.to_bits(), amount.to_bits()]
+}
+
 /// Preferred rasterizer thread count set by the app (Preferences → Performance); negative = automatic.
 static THREADS_OVERRIDE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
@@ -1788,10 +1988,12 @@ pub fn default_threads() -> u16 {
     }
 }
 
-/// Glyph outlines grouped by run, plus the whole text as one path.
+/// The whole text's glyph outlines as one path, and which of them each run draws.
 struct TextGeom {
-    runs: Vec<BezPath>,
     all: BezPath,
+    /// Spans of `all`'s elements drawn by a run, in order: (run, start, end). Outlines of runs
+    /// the text doesn't have are in `all` only.
+    spans: Vec<(usize, usize, usize)>,
     bounds: Rect,
     /// The boxes of characters whose font is missing (drawn in a substitute), and of glyphs the
     /// font lacks (drawn from a fallback font): Document Setup's substitution highlights.
@@ -1799,6 +2001,33 @@ struct TextGeom {
     substituted_glyphs: BezPath,
     /// Inline graphics placed by the layout.
     inlines: Vec<vectorcraft_text::InlineGlyph>,
+}
+
+impl TextGeom {
+    /// The outlines run `i` draws: the glyphs of `all` it has, in their order. Kept once rather
+    /// than per run as well, which held every outline twice.
+    fn run(&self, i: usize) -> std::borrow::Cow<'_, BezPath> {
+        let els = self.all.elements();
+        if let [(r, 0, end)] = self.spans[..]
+            && r == i
+            && end == els.len()
+        {
+            return std::borrow::Cow::Borrowed(&self.all);
+        }
+        let mut p = BezPath::new();
+        for &(_, start, end) in self.spans.iter().filter(|s| s.0 == i) {
+            p.extend(els.get(start..end).unwrap_or_default().iter().copied());
+        }
+        std::borrow::Cow::Owned(p)
+    }
+
+    /// Approximate heap bytes, for the cache's budget.
+    fn bytes(&self) -> usize {
+        size_of::<Self>()
+            + [&self.all, &self.substituted_fonts, &self.substituted_glyphs].into_iter().map(lru::path_bytes).sum::<usize>()
+            + self.spans.len() * size_of::<(usize, usize, usize)>()
+            + self.inlines.len() * size_of::<vectorcraft_text::InlineGlyph>()
+    }
 }
 
 fn text_geom(t: &TextObject) -> TextGeom {
@@ -1812,8 +2041,21 @@ fn text_geom_snapped(t: &TextObject, snap: Option<Affine>) -> TextGeom {
     if let Some(xf) = snap {
         layout.snap_to_pixels(xf);
     }
-    let mut runs = vec![BezPath::new(); t.runs.len()];
     let mut all = BezPath::new();
+    let mut spans: Vec<(usize, usize, usize)> = vec![];
+    // Append `outline` to `all`, drawn by `run` when the text has that run.
+    let mut push = |all: &mut BezPath, run: usize, outline: &BezPath| {
+        let start = all.elements().len();
+        all.extend(outline.iter());
+        let end = all.elements().len();
+        if run >= t.runs.len() || start == end {
+            return;
+        }
+        match spans.last_mut() {
+            Some((r, _, e)) if *r == run && *e == start => *e = end,
+            _ => spans.push((run, start, end)),
+        }
+    };
     // Per run: is its family missing, and the face its glyphs should come from.
     let faces: Vec<(bool, Option<u32>)> = t
         .runs
@@ -1829,10 +2071,7 @@ fn text_geom_snapped(t: &TextObject, snap: Option<Affine>) -> TextGeom {
         .collect();
     let (mut substituted_fonts, mut substituted_glyphs) = (BezPath::new(), BezPath::new());
     for g in &layout.glyphs {
-        if let Some(r) = runs.get_mut(g.run) {
-            r.extend(g.outline.iter());
-        }
-        all.extend(g.outline.iter());
+        push(&mut all, g.run, &g.outline);
         let Some(&(missing, face)) = faces.get(g.run) else { continue };
         let target = if missing {
             &mut substituted_fonts
@@ -1848,12 +2087,9 @@ fn text_geom_snapped(t: &TextObject, snap: Option<Affine>) -> TextGeom {
     }
     // Underline and strikethrough bars, painted as their run's type is (#847).
     for (run, bar) in vectorcraft_text::decorations(&layout, db, t) {
-        if let Some(r) = runs.get_mut(run) {
-            r.extend(bar.iter());
-        }
-        all.extend(bar.iter());
+        push(&mut all, run, &bar);
     }
-    TextGeom { runs, all, bounds: layout.bounds, substituted_fonts, substituted_glyphs, inlines: layout.inlines }
+    TextGeom { all, spans, bounds: layout.bounds, substituted_fonts, substituted_glyphs, inlines: layout.inlines }
 }
 
 /// Document Setup's highlight behind substituted fonts and glyphs (screen only).
@@ -1933,6 +2169,8 @@ mod tests_isolation;
 mod tests_knockout;
 #[cfg(test)]
 mod tests_layeropts;
+#[cfg(test)]
+mod tests_memory;
 #[cfg(test)]
 mod tests_objectfx;
 #[cfg(test)]

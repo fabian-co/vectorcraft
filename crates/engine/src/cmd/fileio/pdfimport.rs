@@ -96,7 +96,9 @@ impl LoadOptions {
         self.pages.is_some() || self.crop != CropTo::default() || self.password.is_some() || !self.layers
     }
 
-    /// The PDF import options: `pages` resolved against the file's page count.
+    /// The PDF import options: `pages` resolved against the file's page count. A PDF-compatible
+    /// `.ai`, or a PDF saved with its editing data, asked for its crop box opens on its trim boxes,
+    /// its editor's artboards, with the bleed round them (its crop box takes the bleed in).
     fn import_options(&self, bytes: &[u8]) -> Result<ImportOptions> {
         let pages = match &self.pages {
             None => None,
@@ -105,9 +107,10 @@ impl LoadOptions {
                 Some(parse_range(range, count).map_err(|e| err(format!("pages: {e}")))?)
             }
         };
+        let is_ai = self.crop == CropTo::Crop && vectorcraft_pdf::has_illustrator_data(bytes, self.password.as_deref());
         Ok(ImportOptions {
             pages,
-            crop: self.crop,
+            crop: if is_ai { CropTo::Trim } else { self.crop },
             password: self.password.clone(),
             text_as: self.text_as,
             layers: self.layers,
@@ -127,10 +130,9 @@ fn choice<T: Choice + Default>(cmd: &str, key: &str, id: Option<&str>) -> Result
         .ok_or_else(|| bad(cmd, format!("{key} must be one of {}", T::IDS.join(", "))))
 }
 
-/// Import the pages `o` pick → the document and import notes.
-pub(super) fn import(bytes: &[u8], o: &LoadOptions) -> Result<(Document, Vec<String>)> {
-    let r = vectorcraft_pdf::import_with_report(bytes, &o.import_options(bytes)?).map_err(err)?;
-    Ok((r.document, r.warnings))
+/// Import the pages `o` pick → the document, import notes and what else the import tells.
+pub(super) fn import(bytes: &[u8], o: &LoadOptions) -> Result<vectorcraft_pdf::ImportReport> {
+    vectorcraft_pdf::import_with_report(bytes, &o.import_options(bytes)?).map_err(err)
 }
 
 /// Page `page` (0-based) of a PDF as a document of one artboard (its `o.crop` box) and one

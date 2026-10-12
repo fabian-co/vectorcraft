@@ -298,6 +298,60 @@ fn selection_preferences_drive_the_selection_tool() {
     assert!(double(&mut s).is_some(), "on: the group is isolated");
 }
 
+/// Double Click To Isolate: a double-click with the Selection tool isolates a single object too,
+/// not only a group. Inside, only it is hit, marqueed and selected by Select All; new art goes
+/// beside it; a double-click on the empty canvas leaves, with it selected. Type isn't isolated:
+/// a double-click on it switches to the Type tool.
+#[test]
+fn double_clicking_a_single_object_isolates_it() {
+    use vectorcraft_tools::{PointerEvent, PointerKind};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+    let id = |v: Value| NodeId(v["id"].as_u64().unwrap());
+    let rect = |s: &mut Session, x: f64| id(s.execute("shape.rectangle", &json!({"x": x, "y": 100, "width": 50, "height": 50})).unwrap());
+    let (a, b) = (rect(&mut s, 100.0), rect(&mut s, 200.0));
+    s.select_tool("selection", ViewInfo::default()).unwrap();
+    let ev = |s: &mut Session, kinds: &[PointerKind], x: f64, y: f64| {
+        for k in kinds {
+            s.pointer(&PointerEvent::new(*k, x, y), ViewInfo::default()).unwrap();
+        }
+    };
+    let click = [PointerKind::Down, PointerKind::Up];
+    let double = [PointerKind::DoubleClick];
+    ev(&mut s, &double, 125.0, 125.0);
+    assert_eq!(s.doc().unwrap().isolation, Some(a));
+    // Only the isolated object is hit: a click on the other selects nothing.
+    ev(&mut s, &click, 225.0, 125.0);
+    assert!(s.doc().unwrap().selection.objects.is_empty());
+    ev(&mut s, &click, 125.0, 125.0);
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a]);
+    // A marquee over both and Select All take it alone.
+    s.execute("select.none", &json!({})).unwrap();
+    ev(&mut s, &[PointerKind::Down], 90.0, 90.0);
+    ev(&mut s, &[PointerKind::Move, PointerKind::Up], 300.0, 300.0);
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a]);
+    s.execute("select.none", &json!({})).unwrap();
+    s.execute("select.all", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.objects, vec![a]);
+    // A second double-click on it stays in isolation; new art lands on its layer.
+    ev(&mut s, &double, 125.0, 125.0);
+    assert_eq!(s.doc().unwrap().isolation, Some(a));
+    let c = rect(&mut s, 300.0);
+    let st = s.doc().unwrap();
+    assert_eq!(st.doc.parent_of(c), st.doc.parent_of(a));
+    // A double-click on the empty canvas leaves isolation, the object selected.
+    ev(&mut s, &double, 50.0, 350.0);
+    let st = s.doc().unwrap();
+    assert_eq!((st.isolation, st.selection.objects.clone()), (None, vec![a]));
+    assert!(st.doc.node(b).is_some());
+    // Type is not isolated.
+    let t = id(s.execute("text.create", &json!({"x": 100, "y": 300, "text": "Type"})).unwrap());
+    assert!(s.execute("object.isolate", &json!({"id": t.0})).is_err());
+    s.execute("prefs.set", &json!({"key": "doubleClickToIsolate", "value": false})).unwrap();
+    ev(&mut s, &double, 225.0, 125.0);
+    assert_eq!(s.doc().unwrap().isolation, None, "off: no isolation");
+}
+
 /// General › Use Precise Cursors (#394): the Pen's pointer becomes a crosshair; the Selection
 /// tool's arrow stays.
 #[test]
@@ -695,6 +749,59 @@ fn art_moved_with_its_artboard_follows_transform_pattern_tiles() {
         let id = run(&mut s, &p);
         assert_eq!(tiles(&s, id), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "{cmd}: the param wins");
         s.execute("edit.undo", &json!({})).unwrap();
+        set_pref(&mut s, "transformPatternTiles", json!(false));
+    }
+}
+
+/// General › Transform Pattern Tiles (#394) applies to the objects selected whole that move with
+/// direct-selected anchors (an arrow key, `path.moveAnchors` or a Direct Selection drag of an
+/// anchor): off, the tiles of a pattern-filled square stay in place; on, they move with it, and
+/// `patterns: false` keeps them in place for one call.
+#[test]
+fn whole_objects_moved_with_selected_anchors_follow_transform_pattern_tiles() {
+    use vectorcraft_tools::PointerKind::{Down, Drag, Up};
+    let mut s = new_doc();
+    let filled = patterned_square(&mut s);
+    let other = square(&mut s, 300.0, 100.0);
+    let v = ViewInfo { smart_guides: false, snap_to_point: false, corner_widgets: false, ..ViewInfo::default() };
+    s.select_tool("directSelection", v).unwrap();
+    // The square is selected whole with the top-left anchor of `other`, as a click on the square's
+    // fill and a Shift-click on that anchor select them. Each move takes both 10 pt right: Shift
+    // with an arrow key, `path.moveAnchors`, and a drag of the anchor (no params).
+    for (cmd, p) in [
+        ("object.nudge", Some(json!({"dx": 1, "dy": 0, "big": true}))),
+        ("path.moveAnchors", Some(json!({"dx": 10, "dy": 0}))),
+        ("path.moveAnchors", None),
+    ] {
+        let run = |s: &mut Session, p: Option<&Value>| {
+            s.execute("select.set", &json!({"ids": [filled.0]})).unwrap();
+            s.execute("select.anchors", &json!({"id": other.0, "anchors": [[0, 0]], "mode": "add"})).unwrap();
+            match p {
+                Some(p) => {
+                    s.execute(cmd, p).unwrap();
+                }
+                None => gesture(s, v, &[(Down, 300.0, 100.0), (Drag, 305.0, 100.0), (Drag, 310.0, 100.0), (Up, 310.0, 100.0)]),
+            }
+            assert_eq!(top_left(s, filled), (110.0, 100.0), "{cmd}: the square moves whole");
+            let anchors = &s.doc().unwrap().doc.node(other).unwrap().path_data().unwrap().subpaths[0].anchors;
+            assert_eq!((anchors[0].p.x, anchors[1].p.x), (310.0, 350.0), "{cmd}: the selected anchor moves alone");
+            assert_eq!(s.journal.last().unwrap().0, cmd);
+        };
+        run(&mut s, p.as_ref());
+        assert_eq!(pattern_tiles(&s, filled), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "{cmd}: off, the tiles stay");
+        assert_eq!(s.journal.last().unwrap().1["patterns"], json!(false), "{cmd}: the journal keeps the choice");
+        s.execute("edit.undo", &json!({})).unwrap();
+        set_pref(&mut s, "transformPatternTiles", json!(true));
+        run(&mut s, p.as_ref());
+        assert_eq!(pattern_tiles(&s, filled), [1.0, 0.0, 0.0, 1.0, 10.0, 0.0], "{cmd}: on, they move with the square");
+        assert_eq!(s.journal.last().unwrap().1["patterns"], json!(true), "{cmd}: the journal keeps the choice");
+        s.execute("edit.undo", &json!({})).unwrap();
+        if let Some(mut p) = p {
+            p["patterns"] = json!(false);
+            run(&mut s, Some(&p));
+            assert_eq!(pattern_tiles(&s, filled), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "{cmd}: the param wins");
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
         set_pref(&mut s, "transformPatternTiles", json!(false));
     }
 }

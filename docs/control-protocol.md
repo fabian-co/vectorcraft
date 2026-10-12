@@ -1,6 +1,8 @@
 # Control protocol
 
-`vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). One JSON request per line:
+`vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). The port must be a number
+from 1 to 65535 (`--control=<port>` works too), given once; otherwise the app prints an error and exits
+before it starts. One JSON request per line:
 `{"id": 1, "method": "ui.inspect", "params": {}}` → `{"id": 1, "ok": true, "result": {...}}` or `{"id":1,"ok":false,"error":"..."}`.
 
 Set `VECTORCRAFT_CONFIG_DIR` to a dedicated directory for an isolated native test profile. Preferences,
@@ -55,7 +57,7 @@ the two can still win that race.
 |---|---|---|
 | `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | | every command with label, shortcut, params doc, enablement |
-| `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, the key object (`key`, null without one), history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does |
+| `document.inspect` | `{depth?, childLimit?}` | layer tree, selection, the key object (`key`, null without one), history, paint defaults; the options slice the layer tree as `document.node {summary: true}` does. Each node reports `opacity` below 1 and `blend` when it isn't Normal; objects and compound paths report `fill`, `stroke` and `strokeWidth`, a compound path's members `compoundMember: true` instead |
 | `ui.inspect` | | tool, UI state, `screenMode` (0 normal, 1 full screen with menu bar, 2 full screen, 3 Presentation Mode), `taskBar` (`pinned`, and `rect` `[x, y, w, h]` while the Contextual Task Bar shows), `freeTransformWidget` (`[x, y, w, h]` while the Free Transform widget shows), view, canvas rect, window size, perf, background saves and exports still running, `nativeMenuBar` (true when the menus are in the macOS menu bar rather than the window; `ui.menu.list` lists the in-window menus either way), `fileDialog` (`"open"`, `"place"`, `"save"` or `"folder"` while a native file dialog is open, `null` otherwise; see below) |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
 | `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
@@ -366,6 +368,14 @@ Use Preview Bounds: the Align panel flyout's Use Preview Bounds item shows and t
 preference (`prefs.set`); while it is on, the bounding box and the Transform panel, Properties and Control bar
 fields measure visual bounds.
 
+Align To: the Align panel's Align To choice is saved with the preferences, and `ui.inspect` reports it as
+`ui.align_to` (`"selection"` or `"artboard"`; Align to Key Object stores no choice). The align buttons of the Align
+panel, the Control bar and the Properties panel run `object.align` with `to: "artboard"` when one object is selected,
+else with `"key"` while the selection has a key object, else with that choice. The Object → Align items send the same
+`to` while every selected object is selected whole. With direct-selected anchor points or segments they send no `to`,
+and the points align to their own bounds. `object.align` from `engine.execute` or `ui.menu.invoke` without `to` keeps
+the engine's default: the key object while there is one, else the selection.
+
 Width Point Edit: double-clicking a width point with the Width tool, or `ui.widthPointEdit {id, index}`, opens the
 `widthPoint` dialog (fields `id`, `index`, `t`, `side1` and `side2`: the left and right widths in points, `linked`,
 `adjustAdjoining`). `ui.dialog.confirm` runs `stroke.widthPoint.set` with them; `ui.dialog.set {field: "discard",
@@ -612,7 +622,17 @@ print queue (the web: the browser's print dialog), else, with `toFile` or no pri
 PDF. With `discard: true` it is Done: it only keeps the settings. Settings that can't print (a missing artboard, a
 range of no tiles) answer with an error and keep the dialog open. `file.print {settings?, printer?, toFile?, path?}`
 prints without the dialog; `print.printers` lists the printers and `print.printerSetup {printer?}` opens their system
-settings (Setup…).
+settings (Setup…). Desktop submission returns `{background: true, printed: false, printer, status}`
+while the spooler runs on a worker. `ui.inspect` lists it under `background`; completion or refusal
+appears in `ui.status`. Quit waits for submissions. PDF/PostScript export and the browser's print
+dialog retain their existing command results.
+
+Agents still get `{printers: [{name, default}], service, setup}` from `print.printers`;
+discovery failure yields an empty list. Print replies preserve `pages`, `bytes`, `format` and
+`warnings` alongside the pending fields above. Validation/start failures use the existing control
+reply `{ok: false, error: "…"}`; later spooler failures appear in `ui.inspect` → `ui.status`, with
+no second reply or structured backend error object. Headless MCP keeps its engine-only `file.print`
+result (`path` or `dataBase64`, plus the same print metadata); no spooler fields are added there.
 
 Print presets: in the `print` dialog, `preset` names the print preset whose settings were loaded last; setting it
 (`ui.dialog.set {field: "preset", value: "Posters"}`) loads that preset's settings, and the list reads `[Custom]` once

@@ -4128,6 +4128,8 @@ effect	Regular	Pravidelný
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	přechod „{name}“ není v souboru definován: zastupuje ho plná barva
 @msg	an image VectorCraft can't read was left out	obrázek, který VectorCraft neumí přečíst, byl vynechán
 @msg	an image whose data is cut short was left out	obrázek s useknutými daty byl vynechán
+@msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	propojené obrázky se zobrazují jako náhled v nízkém rozlišení uložený v souboru, dokud se nenajdou jejich soubory: znovu je propojte v panelu Propojení
+@msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	text v oblasti v rámcích příliš nízkých pro řádek písma, ve kterém se zde zobrazuje, dostal vyšší rámce ({_1}): jinak by nebyl vidět
 @msg	its editing data doesn't say where its art is	z jeho dat pro úpravy není zřejmé, kde je kresba
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	tento soubor byl uložen bez kompatibility s PDF a jeho data pro úpravy nelze přečíst ({why})
 @msg	No fonts are missing in this document	V tomto dokumentu nechybí žádná písma
@@ -4198,6 +4200,8 @@ effect	Regular	Pravidelný
 @msg	missing panel layout	chybí rozložení panelů
 @msg	unsupported native docking operation	nepodporovaná nativní operace ukotvení
 @msg	this kind of brush has no options dialog yet	tento druh štětce zatím nemá dialogové okno možností
+	Ruler Origin	Počátek pravítek
+	Reset Ruler Origin	Obnovit počátek pravítek
 	Column Width:	Šířka sloupce:
 	Import Data…	Importovat data…
 	Number of Decimals:	Počet desetinných míst:
@@ -4493,3 +4497,15 @@ diagnostics	ui	rozhraní
 @plural	{n} commit|{n} commits	{n} commit|{n} commity|{n} commitů
 gradient-kind	Radial	Kruhový
 mark-style	Japanese	Japonské
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	komprimovaný soubor se rozbalí na více, než VectorCraft přečte ({_1} MB dokumentu, {_2} MB na obrázek)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	dokument je příliš velký pro komprimované uložení ({0}): uložte ho s vypnutou volbou Použít kompresi
+@msg	the file stopped being read (please report this bug)	čtení souboru se přerušilo (nahlaste prosím tuto chybu)
+	Concentric Dividers:	Soustředné dělicí čáry:
+	Radial Dividers:	Radiální dělicí čáry:
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Zkosení:
+	Inside	Uvnitř
+	Outside	Vně
+	Use Outside Rectangle As Frame	Použít vnější obdélník jako rámeček
+	Create Compound Path From Ellipses	Vytvořit složenou cestu z elips
+	Fill Grid	Vyplnit mřížku

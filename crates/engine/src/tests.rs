@@ -571,13 +571,13 @@ fn selection_tool_drag_is_one_undo_step() {
 }
 
 /// How many steps there are to undo and to redo, and whether the document has unsaved changes.
-fn history(s: &Session) -> (usize, usize, bool) {
+pub(crate) fn history(s: &Session) -> (usize, usize, bool) {
     let st = s.doc().unwrap();
     (st.history.undo.len(), st.history.redo.len(), st.is_dirty())
 }
 
 /// Select `ids` with a move of them left to redo, and mark the document saved.
-fn select_with_a_step_to_redo(s: &mut Session, ids: &[NodeId]) {
+pub(crate) fn select_with_a_step_to_redo(s: &mut Session, ids: &[NodeId]) {
     s.execute("select.set", &json!({"ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()})).unwrap();
     s.execute("object.move", &json!({"dx": 5, "dy": 0})).unwrap();
     s.execute("edit.undo", &json!({})).unwrap();
@@ -981,7 +981,7 @@ fn live_shape_properties_already_set_record_no_undo_step() {
         let d = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
         let NodeKind::Path { path, live: Some(live), .. } = &mut d.node_mut(r).unwrap().kind else { panic!("not a live rectangle") };
         let xf = Affine::scale_non_uniform(2.0, 1.0);
-        *live = vectorcraft_doc::LiveShape::Rectangle { w: 50.0, h: 60.0, radii: [10.0; 4], kinds: Default::default(), xf };
+        **live = vectorcraft_doc::LiveShape::Rectangle { w: 50.0, h: 60.0, radii: [10.0; 4], kinds: Default::default(), xf };
         *path = live.to_path();
     }
     let shown = vectorcraft_doc::LiveCorners::of(s.doc().unwrap().doc.node(r).unwrap()).unwrap().radius(0);
@@ -1517,6 +1517,28 @@ fn inspect_lists_everything() {
     assert!(s.commands().len() > 100);
 }
 
+/// A compound path reports the paint that lives on it, and any node reports a blend other than Normal.
+#[test]
+fn inspect_reports_compound_paint_and_blend() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 40.0, 40.0);
+    let b = rect(&mut s, 10.0, 10.0, 10.0, 10.0);
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+    let c = s.execute("object.compoundPath.make", &json!({})).unwrap()["id"].as_u64().unwrap();
+    s.execute("object.setProps", &json!({"id": c, "blend": "Multiply"})).unwrap();
+    let v = s.execute("document.inspect", &json!({})).unwrap();
+    let node = &v["layers"][0]["children"][0];
+    assert_eq!(node["id"], c);
+    assert_eq!(node["kind"], "Compound Path");
+    assert!(node["fill"].as_str().is_some_and(|f| f != "None"), "compound paint: {node}");
+    assert!(node.get("stroke").is_some() && node.get("strokeWidth").is_some(), "{node}");
+    assert_eq!(node["blend"], "Multiply");
+    let plain = rect(&mut s, 80.0, 0.0, 10.0, 10.0);
+    let v = s.execute("document.inspect", &json!({})).unwrap();
+    let plain = v["layers"][0]["children"].as_array().unwrap().iter().find(|n| n["id"] == plain.0).unwrap();
+    assert!(plain.get("blend").is_none(), "Normal is omitted: {plain}");
+}
+
 /// `document.node {summary: true}` answers the `document.inspect` shape for one node:
 /// the same fields the full-tree summary carries, without serializing the whole tree.
 #[test]
@@ -1530,6 +1552,55 @@ fn document_node_summary_matches_inspect() {
     let node = v["layers"][0]["children"].as_array().unwrap().iter().find(|n| n["id"] == id).cloned().unwrap();
     assert_eq!(summary, node, "{summary} vs {node}");
     assert!(s.execute("document.node", &json!({"id": 999999, "summary": true})).is_err());
+}
+
+/// #1389: the paint of a compound path is on the compound, which reports it; its members report
+/// that they are members instead of a paint they don't have. Every node reports a blend mode
+/// that isn't Normal, as it does an opacity below 100%.
+#[test]
+fn inspect_reports_a_compound_paths_paint_and_blend_modes() {
+    let mut s = session();
+    let plain = rect(&mut s, 300.0, 0.0, 50.0, 50.0).0;
+    let (a, b) = (rect(&mut s, 0.0, 0.0, 200.0, 200.0), rect(&mut s, 50.0, 50.0, 100.0, 100.0));
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+    s.execute("object.compoundPath.make", &json!({})).unwrap();
+    s.execute("paint.setFill", &json!({"color": "#ff0000"})).unwrap();
+    s.execute("paint.setStroke", &json!({"color": "#0000ff"})).unwrap();
+    s.execute("stroke.set", &json!({"weight": 3})).unwrap();
+    s.execute("object.setProps", &json!({"opacity": 80, "blend": "Color Burn"})).unwrap();
+    let v = s.execute("document.inspect", &json!({})).unwrap();
+    let nodes = v["layers"][0]["children"].as_array().unwrap();
+    let compound = nodes.iter().find(|n| n["kind"] == "Compound Path").unwrap();
+    assert_eq!((&compound["fill"], &compound["stroke"], &compound["strokeWidth"]), (&json!("#ff0000"), &json!("#0000ff"), &json!(3.0)), "{compound}");
+    assert_eq!(compound["blend"], "Color Burn", "{compound}");
+    // The label is what `object.setProps` takes.
+    s.execute("object.setProps", &json!({"blend": compound["blend"]})).unwrap();
+    let members = compound["children"].as_array().unwrap();
+    assert_eq!(members.len(), 2);
+    for m in members {
+        assert_eq!(m["compoundMember"], true, "{m}");
+        assert!(["fill", "stroke", "strokeWidth", "strokeOptions", "blend"].iter().all(|k| m.get(k).is_none()), "{m}");
+        // One member read on its own says the same.
+        assert_eq!(&s.execute("document.node", &json!({"id": m["id"], "summary": true})).unwrap(), m);
+    }
+    assert_eq!(s.execute("document.node", &json!({"id": compound["id"], "summary": true})).unwrap(), *compound);
+    // A plain object: no blend while it is Normal, nothing about compound paths.
+    let plain = nodes.iter().find(|n| n["id"] == plain).unwrap();
+    assert!(plain.get("blend").is_none() && plain.get("compoundMember").is_none() && plain.get("fill").is_some(), "{plain}");
+    // A group has a blend mode too, and still no paint.
+    s.execute("select.set", &json!({"ids": [plain["id"]]})).unwrap();
+    let g = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    s.execute("object.setProps", &json!({"ids": [g], "blend": "Multiply"})).unwrap();
+    let group = s.execute("document.node", &json!({"id": g, "summary": true})).unwrap();
+    assert!(group["blend"] == "Multiply" && group.get("fill").is_none(), "{group}");
+}
+
+#[test]
+fn isolating_an_object_that_doesnt_exist_says_so() {
+    let mut s = session();
+    let e = s.execute("object.isolate", &json!({"id": 999_999})).unwrap_err();
+    assert_eq!(e.to_string(), EngineError::NoNode(NodeId(999_999)).to_string());
+    assert!(!e.to_string().contains("type"), "{e}");
 }
 
 /// `depth` and `childLimit` slice a summary read; a level that shows fewer children
@@ -1762,8 +1833,8 @@ fn graph_tool_drag_creates_a_graph_and_asks_for_data() {
     let st = s.doc().unwrap();
     assert_eq!(st.history.undo.len(), undo_before + 1);
     let g = st.doc.node(st.selection.objects[0]).unwrap();
-    assert_eq!(g.graph.as_ref().unwrap().kind, vectorcraft_doc::GraphKind::Pie);
-    assert_eq!(g.graph.as_ref().unwrap().rect, vectorcraft_geom::Rect::new(100.0, 100.0, 300.0, 250.0));
+    assert_eq!(g.extras().graph.as_ref().unwrap().kind, vectorcraft_doc::GraphKind::Pie);
+    assert_eq!(g.extras().graph.as_ref().unwrap().rect, vectorcraft_geom::Rect::new(100.0, 100.0, 300.0, 250.0));
 }
 
 #[test]
@@ -1857,17 +1928,13 @@ fn shaper_turns_rough_strokes_into_live_shapes_and_scribbles_punch_fills() {
     stroke(&mut s, &rect);
     let id = s.doc().unwrap().selection.objects[0];
     let n = s.doc().unwrap().doc.node(id).unwrap().clone();
-    assert!(
-        matches!(n.kind, vectorcraft_doc::NodeKind::Path { live: Some(vectorcraft_doc::LiveShape::Rectangle { .. }), .. }),
-        "{:?}",
-        n.kind_label()
-    );
+    assert!(matches!(n.live_shape(), Some(vectorcraft_doc::LiveShape::Rectangle { .. })), "{:?}", n.kind_label());
     // A zig-zag inside it clears its fill while retaining the editable original and stroke.
     let zig: Vec<(f64, f64)> = (0..30).map(|i| (150.0 + (i % 2) as f64 * 80.0, 120.0 + i as f64 * 2.0)).collect();
     stroke(&mut s, &zig);
     assert_eq!(s.doc().unwrap().doc.node(id).unwrap(), &n);
     let group = s.doc().unwrap().doc.node(s.doc().unwrap().selection.objects[0]).unwrap();
-    assert!(group.shaper.is_some());
+    assert!(group.extras().shaper.is_some());
     assert!(group.children().unwrap().iter().skip(1).all(|n| n.appearance.fill_paint().is_none()));
     assert!(group.children().unwrap().iter().skip(1).any(|n| !n.appearance.stroke_paint().is_none()));
 }
@@ -1889,10 +1956,7 @@ fn shaper_square_started_mid_edge_closes_on_pointer_release_and_undoes_once() {
         s.pointer(&PointerEvent::new(kind, x, y), v).unwrap();
     }
     let id = *s.doc().unwrap().selection.objects.first().expect("recognized square");
-    assert!(matches!(
-        s.doc().unwrap().doc.node(id).unwrap().kind,
-        vectorcraft_doc::NodeKind::Path { live: Some(vectorcraft_doc::LiveShape::Rectangle { .. }), .. }
-    ));
+    assert!(matches!(s.doc().unwrap().doc.node(id).unwrap().live_shape(), Some(vectorcraft_doc::LiveShape::Rectangle { .. })));
     assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1);
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.node(id).is_none());
@@ -1928,7 +1992,7 @@ fn shaper_creates_upright_or_inverted_live_triangles_with_one_undo_step() {
         s.pointer(&PointerEvent::new(PointerKind::Up, pts[0].x, pts[0].y), v).unwrap();
         let id = *s.doc().unwrap().selection.objects.first().expect("recognized triangle");
         let node = s.doc().unwrap().doc.node(id).unwrap().clone();
-        let vectorcraft_doc::NodeKind::Path { live: Some(vectorcraft_doc::LiveShape::Polygon { sides: 3, xf, .. }), .. } = &node.kind else {
+        let Some(vectorcraft_doc::LiveShape::Polygon { sides: 3, xf, .. }) = node.live_shape() else {
             panic!("expected live triangle, got {:?}", node.kind_label());
         };
         let [a, b, c, d, _, _] = xf.as_coeffs();

@@ -49,7 +49,7 @@ pub(super) fn length(ui: &mut egui::Ui, d: &mut Dialog, key: &str, unit: Unit, w
 fn lengths(kind: &str) -> &'static [&'static str] {
     match kind {
         "move" => &["dx", "dy"],
-        "rectangle" | "ellipse" | "rectangularGrid" | "artboardOptions" => &["width", "height"],
+        "rectangle" | "ellipse" | "rectangularGrid" | "polarGrid" | "artboardOptions" => &["width", "height"],
         "roundedRectangle" => &["width", "height", "radius"],
         "polygon" => &["radius"],
         "star" => &["radius1", "radius2"],
@@ -67,9 +67,22 @@ fn order(kind: &str) -> &'static [&'static str] {
     match kind {
         "offsetPath" => &["offset", "joins", "miterLimit"],
         "splitIntoGrid" => &["rows", "columns", "gutter"],
-        "rectangularGrid" => &["width", "height", "rows", "columns"],
+        "rectangularGrid" => &["width", "height", "rows", "rowSkew", "columns", "columnSkew"],
+        "polarGrid" => &["width", "height", "concentric", "concentricSkew", "radial", "radialSkew"],
         "artboardOptions" => &["name", "width", "height"],
         _ => &[],
+    }
+}
+
+/// The form dialog ([`grid`]) fields that are a grid tool's divider skew, a slider in percent: the
+/// words at the two ends of its rail (where the dividers crowd to), in the UI language.
+fn skew_ends(kind: &str, key: &str) -> Option<(&'static str, &'static str)> {
+    match (kind, key) {
+        ("rectangularGrid", "rowSkew") => Some((tl!("Bottom"), tl!("Top"))),
+        // The radial dividers gather on that side of the top one.
+        ("rectangularGrid", "columnSkew") | ("polarGrid", "radialSkew") => Some((tl!("Left"), tl!("Right"))),
+        ("polarGrid", "concentricSkew") => Some((tl!("Inside"), tl!("Outside"))),
+        _ => None,
     }
 }
 
@@ -162,8 +175,10 @@ fn dropdown(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, options: &
 }
 
 /// The generic dialog body: a field per non-boolean value (positions, indices and UI-only keys
-/// hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as dropdowns.
+/// hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as dropdowns and the
+/// [`skew_ends`] fields as sliders.
 pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
+    let rail = Tokens::get(ui.ctx()).input_border;
     let (lengths, first) = (lengths(&d.kind), order(&d.kind));
     let mut keys: Vec<String> = d
         .fields
@@ -178,10 +193,20 @@ pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
             let options = choices(&d.kind, &k);
             if lengths.contains(&k.as_str()) {
                 length_field(ui, d, &k, &humanized(&k), unit);
+            } else if let Some(ends) = skew_ends(&d.kind, &k) {
+                let max = vectorcraft_geom::shapes::GRID_SKEW_MAX;
+                row_label(ui, tl!("Skew:"));
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| slider_field(ui, d, &k, -max..=max, "%", &|_| rail));
+                    rail_ends(ui, ends);
+                });
+                ui.end_row();
             } else if options.is_empty() {
                 let label = match (d.kind.as_str(), k.as_str()) {
                     ("rectangularGrid", "rows") => tl!("Horizontal Dividers:").into(),
                     ("rectangularGrid", "columns") => tl!("Vertical Dividers:").into(),
+                    ("polarGrid", "concentric") => tl!("Concentric Dividers:").into(),
+                    ("polarGrid", "radial") => tl!("Radial Dividers:").into(),
                     _ => humanized(&k),
                 };
                 field(ui, d, &k, &label);
@@ -322,8 +347,19 @@ pub(super) fn schema_fields(ui: &mut egui::Ui, d: &mut Dialog, specs: &[(String,
                     crate::widgets::range_field(ui, ("plugin-num", k), x, *min..=*max, "", 2, 100.0).map(|x| json!(x))
                 }
                 ParamSpec::Int { min, max, .. } => {
-                    let x = cur.as_i64().unwrap_or(*min) as f64;
-                    crate::widgets::range_field(ui, ("plugin-int", k), x, *min as f64..=*max as f64, "", 0, 100.0).map(|x| json!(x as i64))
+                    let x = cur.as_i64().unwrap_or(*min).clamp(*min, *max);
+                    // An f64 holds every whole number up to 2^53, so the numeric field (arrows, wheel, arithmetic) is exact there.
+                    // Past it, the number typed is read as an integer.
+                    const EXACT: i64 = 1 << 53;
+                    if -EXACT <= *min && *max <= EXACT {
+                        crate::widgets::range_field(ui, ("plugin-int", k), x as f64, *min as f64..=*max as f64, "", 0, 100.0).map(|x| json!(x as i64))
+                    } else {
+                        let shown = x.to_string();
+                        crate::widgets::take_dialog_focus(ui, ui.id().with(("plugin-int", k)), &shown);
+                        crate::widgets::text_field(ui, ("plugin-int", k), Some(&shown), 100.0, 1)
+                            .and_then(|text| text.parse::<i64>().ok())
+                            .map(|x| json!(x.clamp(*min, *max)))
+                    }
                 }
                 ParamSpec::Bool { .. } => {
                     let b = cur.as_bool().unwrap_or(false);
@@ -451,15 +487,20 @@ pub(super) fn slider_rail(ui: &mut egui::Ui, d: &mut Dialog, key: &str, range: s
 
 /// The words at the two ends of a slider's rail (Less … More), under a slider whose label column
 /// is `label_w` wide.
-pub(super) fn slider_ends(ui: &mut egui::Ui, label_w: f32, (left, right): (&str, &str)) {
-    let t = Tokens::get(ui.ctx());
+pub(super) fn slider_ends(ui: &mut egui::Ui, label_w: f32, ends: (&str, &str)) {
     ui.horizontal(|ui| {
         ui.add_space(label_w + ui.spacing().item_spacing.x);
-        let (r, _) = ui.allocate_exact_size(egui::vec2(SLIDER_WIDTH, 14.0), egui::Sense::hover());
-        let font = egui::FontId::proportional(11.0);
-        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
-        ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
+        rail_ends(ui, ends);
     });
+}
+
+/// The words of [`slider_ends`] under a rail that starts where the next widget does.
+fn rail_ends(ui: &mut egui::Ui, (left, right): (&str, &str)) {
+    let t = Tokens::get(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(egui::vec2(SLIDER_WIDTH, 14.0), egui::Sense::hover());
+    let font = egui::FontId::proportional(11.0);
+    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
+    ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
 }
 
 /// The field where [`preview`] keeps the parameters it last previewed.

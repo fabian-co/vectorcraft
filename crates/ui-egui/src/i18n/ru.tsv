@@ -3939,6 +3939,8 @@ axis	Both	Оба
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	градиент «{name}» не определён в файле: вместо него используется сплошной цвет
 @msg	an image VectorCraft can't read was left out	изображение, которое VectorCraft не может прочитать, пропущено
 @msg	an image whose data is cut short was left out	изображение с обрезанными данными пропущено
+@msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	связанные изображения показываются как сохранённый в файле просмотр низкого разрешения, пока их файлы не найдены: восстановите связи на панели «Связи»
+@msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	текст в области в рамках, слишком низких для строки шрифта, которым он отображается, получил более высокие рамки ({_1}): иначе он не был бы виден
 @msg	its editing data doesn't say where its art is	в его данных редактирования не указано, где находится графика
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	этот файл сохранён без совместимости с PDF, и его данные редактирования не удаётся прочитать ({why})
 @msg	No fonts are missing in this document	В этом документе нет отсутствующих шрифтов
@@ -4182,6 +4184,20 @@ lighting	Light	Свет
 @msg	unsupported native docking operation	Неподдерживаемая собственная операция прикрепления
 	Linux Display Server	Дисплейный сервер Linux
 	X11 (XWayland)	X11 (XWayland)
+	Ruler Origin	Начало координат линеек
+	Reset Ruler Origin	Сбросить начало координат линеек
 	Artistic	Художественные
 	Film Grain…	Зернистость плёнки…
 	Highlight Area	Область светов
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	сжатый файл распаковывается в объём больше, чем читает VectorCraft ({_1} МБ документа, {_2} МБ на изображение)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	документ слишком велик для сохранения со сжатием ({0}): сохраните его с выключенным параметром «Использовать сжатие»
+@msg	the file stopped being read (please report this bug)	чтение файла прервалось (пожалуйста, сообщите об этой ошибке)
+	Concentric Dividers:	Концентрические разделители:
+	Radial Dividers:	Радиальные разделители:
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Скос:
+	Inside	Внутри
+	Outside	Снаружи
+	Use Outside Rectangle As Frame	Использовать внешний прямоугольник как рамку
+	Create Compound Path From Ellipses	Создать составной контур из эллипсов
+	Fill Grid	Залить сетку

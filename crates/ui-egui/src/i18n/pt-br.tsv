@@ -3668,7 +3668,21 @@ axis	Both	Ambos
 @msg	invalid native panel set	conjunto de painéis nativos inválido
 @msg	missing panel layout	layout de painéis ausente
 @msg	unsupported native docking operation	operação de encaixe nativa não suportada
+	Ruler Origin	Origem das réguas
+	Reset Ruler Origin	Redefinir origem das réguas
 	Artistic	Artístico
 	Film Grain…	Granulação de filme…
 	Grain	Grão
 	Highlight Area	Área de realces
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	o arquivo compactado se expande para mais do que o VectorCraft lê ({_1} MB de documento, {_2} MB por imagem)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	o documento é grande demais para ser salvo compactado ({0}): salve-o com Usar Compressão desativado
+@msg	the file stopped being read (please report this bug)	a leitura do arquivo foi interrompida (informe este erro)
+	Concentric Dividers:	Divisórias concêntricas:
+	Radial Dividers:	Divisórias radiais:
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Inclinação:
+	Inside	Dentro
+	Outside	Fora
+	Use Outside Rectangle As Frame	Usar Retângulo Externo como Moldura
+	Create Compound Path From Ellipses	Criar Caminho Composto a partir das Elipses
+	Fill Grid	Preencher Grade

@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged; Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged; Simplify preview/counts and valid rewritten-path selection (#1272); parity remains partial; Texture-effect drag redraws optimized (#1257); idle Windows interaction still unverified; scores unchanged; Curvature point display improved (#1236, in part); scores unchanged; Direct Selection: no-op anchor Align preserves Undo, Redo and saved state (#1180 follow-up); Eyedropper cursor distinguished from precise crosshair (#1269); scores unchanged; Eyedropper can read visible locked and outside-isolation sources (#1251); scores unchanged; Direct Selection: independent segment picks and Delete (#1278); scores unchanged; Adding paint to an unpainted zero-width stroke restores the 1 pt default (#1253); scores unchanged; macOS save sheets offer a Format menu, #866; Attributes fill-rule controls edit the compound when a member is selected, #1197; a marquee needs to touch a path, not just lie inside its fill, #1103; earlier: Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (dialogs focus their first field on every open, #1367, and a first field that starts greyed out once it is enabled, #1395; scores unchanged; Rectangular Grid and Polar Grid click dialogs take the skew, frame, compound path and Fill Grid options, #1377 in part, score unchanged; Live Corners: a Direct Selection click on a widget selects its corner, #1239; custom ruler origin, #1212; Artboard tool clicks fit the topmost editable object in one undo step (#1227); scores unchanged; Pathfinder single-result source names and SVG IDs retained, #1293; DXF control-point SPLINE closure read, #1299 follow-up; Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged; Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged; Simplify preview/counts and valid rewritten-path selection (#1272); parity remains partial; Texture-effect drag redraws optimized (#1257); idle Windows interaction still unverified; scores unchanged; Curvature point display improved (#1236, in part); scores unchanged; Direct Selection: no-op anchor Align preserves Undo, Redo and saved state (#1180 follow-up); Eyedropper cursor distinguished from precise crosshair (#1269); scores unchanged; Eyedropper can read visible locked and outside-isolation sources (#1251); scores unchanged; Direct Selection: independent segment picks and Delete (#1278); scores unchanged; Adding paint to an unpainted zero-width stroke restores the 1 pt default (#1253); scores unchanged; macOS save sheets offer a Format menu, #866; Attributes fill-rule controls edit the compound when a member is selected, #1197; a marquee needs to touch a path, not just lie inside its fill, #1103; earlier: Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -72,9 +72,9 @@ tools, never checked side by side) isn't captured row by row.
 | Show handles when multiple anchors are selected; Highlight anchors on mouse over; anchor and handle size | done | Preferences › Selection & Anchor Display |
 | Convert selected anchors to corner/smooth from the Control bar and Properties | done | |
 | Cut path at selected anchors, Remove Anchor Points, Delete removes segments | done | #1278: segment Delete preserves neighboring edges and endpoint anchors; a second Delete removes the remainder; explicit anchor Delete retains its behavior |
-| Live Corners widgets (radius readout, Alt-click cycles kind, double-click the Corners dialog) | done | clicking a widget without pre-selecting the anchor (#908) missing |
+| Live Corners widgets (radius readout, Alt-click cycles kind, double-click the Corners dialog) | done | a Direct Selection click on a widget selects its corner (#1239); a press-and-drag on a widget of a path selected whole still rounds every corner (#908), and adding widgets to the selection by Shift-click (#1232) is missing |
 | Corners between curved sides (#1144), Relative rounding | partial | Relative rounding missing |
-| Isolation mode by double-click, breadcrumbs, Esc to exit | done | |
+| Isolation mode by double-click (groups and single objects), breadcrumbs, Esc to exit | done | Single paths, compound paths, images, meshes and placed files isolate too ([helpx: Isolate objects](https://helpx.adobe.com/africa/illustrator/desktop/manage-objects/select-objects/isolate-objects.html)) |
 | "Magnetic" moves of selected anchors with a modifier (#955 request) | missing | not an Illustrator feature as documented; under discussion |
 
 ## Smart guides and snapping
@@ -94,9 +94,10 @@ tools, never checked side by side) isn't captured row by row.
 | Snapping panel/popover consolidating the snap options (30.0) | missing | |
 | Customisable rotation snap angle (#973) | missing | Illustrator: Constrain Angle and construction angles only |
 | Ruler guides: drag out, select, move, delete, lock, Make/Release Guides | done | #414, #451 |
+| Ruler origin: corner drag with preview, double-click reset to the active artboard, relative X/Y fields, native save/reopen | done | #1212; `document.setRulerOrigin`, `document.resetRulerOrigin`; geometry and command coordinates stay absolute |
 | Ruler guides as Layers rows: shown, hidden, locked and deleted with their layer; rows dragged to another layer | done | `guide.setLayer`; guides from older files go on a layer |
 | Alt swaps a ruler guide's orientation while dragging | missing | |
-| Global and video rulers | missing | menu stubs |
+| Global/artboard ruler mode switch and video rulers | missing | menu stubs; custom document origin is done (#1212) |
 
 ## Transform handles, bounding box, Free Transform
 
@@ -118,10 +119,12 @@ tools, never checked side by side) isn't captured row by row.
 | Arrow keys nudge by Keyboard Increment (0.001–1296 pt); Shift ×10; Alt copies | done | |
 | Number fields: Up/Down step, Shift ×10, Cmd/Ctrl ÷10, wheel over a focused field | done | Shift+arrow in the Stroke weight field doesn't step by 10 (#991) |
 | Arithmetic in fields (`+ - * /`) and unit suffixes (`3 mm`, `1in`, `2p6`) | done | `Unit::parse`; mixed units in one expression not verified |
+| Numeric fields: focus click selects the whole value; dragging selects from the pressed character | partial | #1326; select-all waits for click release; px/pt/plain/optional fields, both directions and replacement text tested; native API input, 17 px partial replacement, Undo/Redo, saved-file round trip and screenshots verified; Tab, double-click, arrows and wheel preserved; short movements still classified as clicks can select all and remain open |
 | Units: pt, pc, in, mm, cm, px, ft-in, m, yd, ft; General/Stroke/Type units | done | units preference reverting to points on SVG output reported (#864) |
 | Field precision: 3 decimals for steps; values kept as f64 | done | |
 | Scrubby labels (beyond Illustrator) | done | #400 |
-| Dialogs open with the first field focused and selected; Enter confirms | done | |
+| Dialogs open with the first field focused and selected; Enter confirms | done | on every open, not only the first (#1367); a first field that starts greyed out takes the focus once enabled (#1395) |
+| Rectangular Grid and Polar Grid click dialogs: size, divider counts with a skew slider each, Use Outside Rectangle As Frame / Create Compound Path From Ellipses, Fill Grid; kept as the tool's options, used by drags too | partial | #1377. The options are the documented ones; how far a skew percentage moves the dividers and which way the radial skew turns are our own choice (the public documentation gives neither), and the reference point locator and a double-click on the tool are missing |
 
 ## Modifier keys and temporary tools
 
@@ -135,6 +138,7 @@ tools, never checked side by side) isn't captured row by row.
 | Document Setup → Edit Artboards applies valid settings, closes the dialog and activates the Artboard tool | done | Pointer-click tests cover successful handoff, invalid settings, OK, Cancel and Undo in `dialogs/document_setup.rs`. |
 | Escape leaves Artboard editing for Selection; during a drag it first cancels the gesture | done | Headless egui key events cover idle Escape, active-drag cancellation and a subsequent Escape in `tests_distortkeys.rs`. |
 | Shift-click selects several artboards (Artboard tool, Artboards panel); they move, Alt-copy and delete together | done | `artboard.move`/`artboard.delete` `indices` (#1139) |
+| Click an object with the Artboard tool to create an artboard fitted to its visible bounds | done | Topmost editable object or group; drag and modified clicks retain their meaning; one undo step (`artboard_click.rs`, #1227) |
 | Shape tools: Shift constrains, Alt from centre, Space moves while dragging, arrows change sides/points/rows | done | |
 | Tool double-click opens its options | done | |
 | Per-platform mapping (Cmd ↔ Ctrl, Option ↔ Alt) | done | |
@@ -161,13 +165,16 @@ Layers panel.
 | Properties panel per context (every selection type's Quick Actions) | partial | |
 | Contextual task bar | done | |
 | Control bar with Transform and Stroke popovers | done | |
+| Pathfinder shape results keep their source names and SVG IDs | done | #1293; Minus Front keeps the back name, Minus Back the front name; Unite/Intersect/Exclude use the backmost named input; compound output carries it once; geometry and paint unchanged |
 | Attributes fill-rule controls with a compound member selected | done | Edits the compound's rule; direction still edits only the member; rendered-hole and Undo/Redo regression tests (#1197) |
+| Pathfinder Divide: an open cutting line splits a filled path | done | #1307; straight, crossed, bent and curved cutters, holes and frontmost appearance regression-tested; native automation: independent piece movement, one Undo/Redo, saved-document round trip and window capture; existing bounded-map fallback remains |
 | Canvas context menu | done | Layers rows, panels and type have none (gap) |
 | Blend panel (30.7) | missing | Blend Options dialog exists |
 | SVG Interactivity, Retype, Comments, Version History panels | missing | the last two are cloud features (out of scope) |
 | Workspaces (save, reset, switch) | done | |
+| DXF export/import preserves intended curve closure | done | #1299; R13–2018 closed SPLINE bit set/read; an open curve ending at its start stays open; knots and control points unchanged; native CIRCLE/ARC export and CNC preset remain pending |
 | macOS save sheet: choose the format from a menu | done | #866; `apps/vectorcraft/src/mac_save_format.rs`; current suffix selects the initial format, changing it updates the filename; native SVG save and cancel after changing to PDF checked |
-| Preferences: every option acts | partial | ~17 stored but unused (#394) |
+| Preferences: every option acts | partial | ~16 stored but unused (#394) |
 
 ## Look and feel
 
@@ -180,6 +187,13 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Dialogs opened from a menu take the keyboard focus every time they open (#1367); a first field that starts greyed out takes it once enabled (#1395); art flush with an artboard within a rounding error moves, copies and scales with it (#1375, from #1295); scores and hours unchanged |
+| 2026-10-12 | minor | Rectangular Grid and Polar Grid tool options (skew, frame, compound path, Fill Grid; #1377, in part): a skew slider under each divider count, kept as tool options and used by drags; the skew curve is our own; score unchanged (estimated) |
+| 2026-10-12 | minor | Live Corners: a Direct Selection click on a widget selects its corner, Shift-click toggles it (#1239); #908 and #1232 stay open; score unchanged (estimated) |
+| 2026-10-12 | minor | Custom ruler origin (#1212): corner drag previews and sets it; double-click resets to the active artboard; X/Y fields use it and native files keep it; scores unchanged (estimated) |
+| 2026-10-12 | minor | Artboard tool clicks fit the topmost editable object in one undo step (#1227); scores unchanged |
+| 2026-10-12 | minor | Pathfinder single-result booleans preserve source names and SVG IDs (#1293); paint-order, grouped/compound sources, unchanged geometry/appearance and Undo/Redo regression tests; scores and estimates unchanged |
+| 2026-10-12 | minor | DXF reads control-point SPLINE closure (#1299 follow-up after #1320); open curves stay open and curves retained; rational/non-rational import and export versions regression-tested; scores/hours unchanged |
 | 2026-10-12 | minor | Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged |
 | 2026-10-12 | minor | Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged |
 | 2026-10-12 | minor | Simplify previews and shows original/new point counts; refits/subdivisions select changed paths whole (#1272); auto/slider/corner-angle UI and Show Original remain partial |
@@ -192,6 +206,9 @@ re-measure of the panels added since.
 | 2026-10-12 | minor | Adding paint to an unpainted zero-width stroke restores the 1 pt default (#1253); scores unchanged |
 | 2026-10-12 | minor | macOS native save sheets gain a localised Format menu (#866); filename regression tests and an actual SVG save, PDF selection and cancellation verified; scores unchanged (estimated) |
 | 2026-10-12 | minor | Attributes: directly selected compound members read and change the compound fill rule; path direction stays member-local (#1197); score unchanged |
+| 2026-10-12 | minor | Pathfinder Divide: open cutting lines split filled paths with one Undo (#1307); scores and hours unchanged |
+| 2026-10-12 | minor | Numeric entry: click-to-focus selection waits for release so text drags keep their start (#1326, in part); keyboard focus, double-click, arrows and wheel preserved; scores and hours unchanged; short movements below the click threshold remain open |
+| 2026-10-12 | minor | Double Click To Isolate: the Selection tool also isolates a single path, compound path, image, mesh or placed file; only it is hit, marqueed and selected inside; scores and hours unchanged |
 | 2026-10-11 | minor | A marquee inside a filled shape no longer selects it: only touching its path does (#1103); score unchanged (estimated) |
 | 2026-10-11 | minor | Live Corners: corners between curved sides round too, the curve trimmed to what the cut leaves (#1144); score unchanged (estimated) |
 | 2026-10-11 | minor | Artboards: Shift-click selects several, which move, copy and delete together (#1139); score unchanged (estimated) |

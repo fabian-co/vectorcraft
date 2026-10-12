@@ -3943,6 +3943,8 @@ axis	Both	Entrambi
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	la sfumatura “{name}” non è definita nel file: la sostituisce un colore pieno
 @msg	an image VectorCraft can't read was left out	un'immagine che VectorCraft non può leggere è stata omessa
 @msg	an image whose data is cut short was left out	un'immagine con dati incompleti è stata omessa
+@msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	le immagini collegate mostrano l'anteprima a bassa risoluzione salvata nel file finché i loro file non vengono trovati: ricollegale nel pannello Collegamenti
+@msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	il testo in area in cornici troppo basse per una riga del font in cui viene mostrato ha ricevuto cornici più alte ({_1}): altrimenti non sarebbe visibile
 @msg	its editing data doesn't say where its art is	i suoi dati di modifica non dicono dove si trova la grafica
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	questo file è stato salvato senza compatibilità PDF e i suoi dati di modifica non si possono leggere ({why})
 @msg	No fonts are missing in this document	In questo documento non mancano font
@@ -4186,6 +4188,20 @@ lighting	Light	Luce
 @msg	unsupported native docking operation	Operazione nativa di ancoraggio non supportata
 	Linux Display Server	Server di visualizzazione Linux
 	X11 (XWayland)	X11 (XWayland)
+	Ruler Origin	Origine dei righelli
+	Reset Ruler Origin	Ripristina origine dei righelli
 	Artistic	Artistico
 	Film Grain…	Grana della pellicola…
 	Highlight Area	Area luci
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	il file compresso, una volta decompresso, supera ciò che VectorCraft legge ({_1} MB di documento, {_2} MB per immagine)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	il documento è troppo grande per essere salvato compresso ({0}): salvalo con Usa compressione disattivato
+@msg	the file stopped being read (please report this bug)	la lettura del file si è interrotta (segnala questo errore)
+	Concentric Dividers:	Divisori concentrici:
+	Radial Dividers:	Divisori radiali:
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Inclinazione:
+	Inside	Interno
+	Outside	Esterno
+	Use Outside Rectangle As Frame	Usa rettangolo esterno come cornice
+	Create Compound Path From Ellipses	Crea tracciato composto dalle ellissi
+	Fill Grid	Riempi griglia

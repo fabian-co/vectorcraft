@@ -3940,6 +3940,8 @@ axis	Both	Les deux
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	le dégradé « {name} » n’est pas défini dans le fichier : une couleur unie le remplace
 @msg	an image VectorCraft can't read was left out	une image que VectorCraft ne peut pas lire a été ignorée
 @msg	an image whose data is cut short was left out	une image aux données tronquées a été ignorée
+@msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	les images liées affichent l’aperçu basse résolution enregistré dans le fichier tant que leurs fichiers ne sont pas trouvés : liez-les à nouveau dans le panneau Liens
+@msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	le texte captif dans des cadres trop bas pour une ligne de la police dans laquelle il s’affiche a reçu des cadres plus hauts ({_1}) : il ne s’afficherait pas autrement
 @msg	its editing data doesn't say where its art is	ses données d’édition ne disent pas où se trouve son illustration
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	ce fichier a été enregistré sans compatibilité PDF et ses données d’édition sont illisibles ({why})
 @msg	No fonts are missing in this document	Aucune police ne manque dans ce document
@@ -4194,6 +4196,20 @@ lighting	Light	Lumière
 @msg	unsupported native docking operation	Opération native d’ancrage non prise en charge
 	Linux Display Server	Serveur d’affichage Linux
 	X11 (XWayland)	X11 (XWayland)
+	Ruler Origin	Origine des règles
+	Reset Ruler Origin	Réinitialiser l’origine des règles
 	Artistic	Artistique
 	Film Grain…	Grain photographique…
 	Highlight Area	Zone des tons clairs
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	le fichier compressé dépasse une fois décompressé ce que VectorCraft lit ({_1} Mo de document, {_2} Mo par image)
+@msg	the document is too large to save compressed ({0}): save it with Use Compression off	le document est trop volumineux pour être enregistré compressé ({0}) : enregistrez-le avec Utiliser la compression désactivé
+@msg	the file stopped being read (please report this bug)	la lecture du fichier s’est interrompue (veuillez signaler ce bogue)
+	Concentric Dividers:	Divisions concentriques :
+	Radial Dividers:	Divisions radiales :
+# Grid tool options (the Rectangular Grid and Polar Grid click dialogs).
+	Skew:	Inclinaison :
+	Inside	Intérieur
+	Outside	Extérieur
+	Use Outside Rectangle As Frame	Utiliser le rectangle extérieur comme cadre
+	Create Compound Path From Ellipses	Créer un tracé transparent à partir des ellipses
+	Fill Grid	Remplir la grille

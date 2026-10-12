@@ -31,6 +31,10 @@ impl Hit {
     /// The object the Selection tool selects: the child of the layer (the outermost group).
     /// Inside isolation mode (`scope`), the child of the isolated container instead.
     pub fn top_object(&self, scope: Option<NodeId>) -> NodeId {
+        // A single object isolated: it is the only object.
+        if scope == Some(self.leaf) {
+            return self.leaf;
+        }
         // The innermost of the isolated container and an envelope whose contents are edited.
         let at = |s: Option<NodeId>| s.and_then(|s| self.ancestry.iter().position(|x| *x == s));
         if let Some(i) = at(scope).max(at(self.contents_of)) {
@@ -101,10 +105,16 @@ fn hit_test_skipping(doc: &Document, p: Point, opt: HitOptions, skip: &dyn Fn(No
     // locked, and clicks pass through it (#833).
     if editable_only
         && let Some(scope) = opt.scope
-        && let Some(container) = doc.node(scope).filter(|n| n.is_container())
+        && let Some(isolated) = doc.node(scope)
         && let Some(mut chain) = doc.ancestry(scope)
     {
-        return hit_children(container, p, opt, skip, &mut chain, editable_only).map(finish);
+        if isolated.is_container() {
+            return hit_children(isolated, p, opt, skip, &mut chain, editable_only).map(finish);
+        }
+        // A single object isolated (a path, an image…): only it hits, among its siblings.
+        chain.pop();
+        let parent = chain.last().and_then(|id| doc.node(*id))?;
+        return hit_children(parent, p, opt, &|id| id != scope || skip(id), &mut chain, editable_only).map(finish);
     }
     let mut chain = Vec::new();
     for layer in doc.layers.iter().rev() {
@@ -157,7 +167,7 @@ fn hit_children(
         return None;
     }
     for (i, c) in children.iter().enumerate().rev() {
-        if parent.shaper.is_some() {
+        if parent.extras().shaper.is_some() {
             let construction = children.first().is_some_and(|source| Some(source.id) == opt.scope);
             if (i == 0) != construction {
                 continue;
@@ -169,7 +179,7 @@ fn hit_children(
         }
         // (An envelope's content sits where it was, not where the envelope draws it.)
         if !(edits_contents(c)
-            || c.shaper.is_some() && c.children().and_then(|children| children.first()).is_some_and(|source| Some(source.id) == opt.scope))
+            || c.extras().shaper.is_some() && c.children().and_then(|children| children.first()).is_some_and(|source| Some(source.id) == opt.scope))
             && let Some(b) = c.reach_bounds()
             && !b.inflate(opt.tol, opt.tol).contains(p)
         {
@@ -283,7 +293,11 @@ fn hit_any(n: &Node, p: Point, opt: HitOptions) -> Option<HitKind> {
 pub fn marquee(doc: &Document, r: Rect, scope: Option<NodeId>, leaves: bool) -> Vec<NodeId> {
     let mut out = Vec::new();
     let tops: Vec<&std::sync::Arc<Node>> = match scope.and_then(|s| doc.node(s)) {
-        Some(s) => s.children().map(|c| c.iter().collect()).unwrap_or_default(),
+        Some(s) => match s.children() {
+            Some(c) => c.iter().collect(),
+            // A single object isolated: only it.
+            None => doc.parent_of(s.id).and_then(|p| doc.node(p)).and_then(Node::children).into_iter().flatten().filter(|c| c.id == s.id).collect(),
+        },
         // The objects of the layers, looking through sublayers (hidden, locked and template ones
         // are left out).
         None => doc
@@ -534,7 +548,7 @@ mod tests {
         let l = d.layers[0].id;
         let mut add = |t: TextObject, perspective: Option<Affine>| {
             let mut n = Node::new(d.alloc_id(), NodeKind::Text(Box::new(t)));
-            n.perspective = perspective.map(|a| {
+            n.extras_mut().perspective = perspective.map(|a| {
                 Box::new(PerspectiveAttachment { projection: Some(Homography::from_affine(a).to_array()), ..PerspectiveAttachment::new("left", 0.0) })
             });
             let id = n.id;

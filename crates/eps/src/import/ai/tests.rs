@@ -281,6 +281,23 @@ fn gradients() {
     assert_eq!((geom.start, geom.end), (Point::new(100.0, 50.0), Point::new(150.0, 50.0)));
     // The gradient was the one object's.
     assert_eq!(fill(&a[1]).color(), Some(Color::rgb(1.0, 0.0, 0.0)));
+    // A linear gradient with a stop in the middle: `Xm` places its whole ramp, a `Bm` each of its
+    // two parts. The object's own note of its gradient after it paints nothing.
+    let defs = "(L) 0 3 Bd\n%_1 0 50 100 Bs\n%_0.5 0 50 40 Bs\n%_0 0 50 0 Bs\nBD\n";
+    let art_ = format!(
+        "{RED}{}Bb\n1 (L) 0 0 -90 1 1 0 0 1 0 0 1 Bg\n0 -100 -100 0 150 100 Xm\n0 -9000 -100 0 150 9100 Bc\n0 -40 -100 0 150 100 Bm\n\
+         0 -60 -100 0 150 60 Bm\n0 -9000 -100 0 150 0 Bc\nf\n0 BB\n0 1 Xd\nBb\n2 (L) 0 0 -90 1 1 0 0 1 0 0 1 Bg\n0 BB\n6 () XW\n{}f\n",
+        rect_path(50.0, 0.0, 150.0, 100.0),
+        rect_path(0.0, 0.0, 10.0, 10.0),
+    );
+    let doc = read_ok(&format!("{defs}{}", layer(&art_))).doc;
+    let a = art(&doc);
+    let Paint::Gradient(g) = fill(&a[0]) else { panic!("{:?}", fill(&a[0])) };
+    assert_eq!(g.gradient.stops.len(), 3);
+    // Art space has y up from the crop marks' bottom.
+    let geom = g.geom.unwrap();
+    assert!(geom.start.distance(Point::new(150.0, 0.0)) < 1e-9 && geom.end.distance(Point::new(150.0, 100.0)) < 1e-9, "{geom:?}");
+    assert_eq!(fill(&a[1]).color(), Some(Color::rgb(1.0, 0.0, 0.0)), "the note after the object isn't the next path's paint");
 }
 
 #[test]
@@ -371,6 +388,81 @@ fn images_with_alpha_channels() {
     assert!(art(&r.doc).is_empty() && r.warnings.iter().any(|w| w.contains("cut short")));
 }
 
+/// Editing data with one layer (showing or not) holding a placed file: its matrix, the file at
+/// `path` in the box 10 20 14 22, and `preview` (what its preview section holds), then `after`.
+fn placed(visible: bool, matrix: &str, path: &str, preview: Option<&[u8]>, after: &str) -> Vec<u8> {
+    let text = stream(&layer("@@").replacen("1 1 1 1", if visible { "1 1 1 1" } else { "0 1 1 1" }, 1));
+    let (head, tail) = text.split_once("@@").unwrap();
+    let mut s = format!(
+        "{head}%AI5_BeginPlace\r%%FileType: 1\r{matrix} 10 20 14 22 4 4 0\r({path})`\r%%IncludeFile:{path}\r\
+         %AI17_Begin_Content_if_version_gt:24 12\r%AI28_BeginPlacedRelativePath\r()\r%AI28_EndPlacedRelativePath\r%AI17_Alternate_Content\r%AI17_End_Versioned_Content\r\
+         %AI17_Begin_Content_if_version_gt:24 5\r"
+    )
+    .into_bytes();
+    if let Some(p) = preview {
+        s.extend_from_slice(b"%AI26_BeginPlacedObjectPreview\r");
+        s.extend_from_slice(p);
+        s.extend_from_slice(b"\r%AI26_EndPlacedObjectPreview\r");
+    }
+    s.extend_from_slice(format!("%AI17_End_Versioned_Content\r~\r%AI5_EndPlace\r{after}{tail}").as_bytes());
+    s
+}
+
+#[test]
+fn placed_files_are_linked_images_showing_their_preview() {
+    // A 2×1 preview (premultiplied ARGB, a padded row) of a file of 4×2 pixels.
+    let preview = [&b"2 1 12 32 17 "[..], &[255, 255, 0, 0, 128, 0, 64, 0, 9, 9, 9, 9]].concat();
+    let name = "%_/ArtDictionary :\r%_(Photo) /String (AIArtName) ,\r%_;\r";
+    let r = read(&placed(true, "[5 0 0 -5 0 200]", "/pics/photo.png", Some(&preview), name)).unwrap();
+    let a = art(&r.doc);
+    let NodeKind::Image(im) = &a[0].kind else { panic!("{:?}", a[0].kind) };
+    assert_eq!((im.link.as_ref().map(|l| l.path.as_str()), im.width, im.height), (Some("/pics/photo.png"), 2, 1));
+    assert_eq!(a[0].name.as_deref(), Some("Photo"));
+    assert!(r.doc.images[&im.key].is_proxy(), "the preview is what a missing link shows");
+    let (img, xf) = pixels(&r.doc);
+    assert_eq!((img.get_pixel(0, 0).0, img.get_pixel(1, 0).0), ([255, 0, 0, 255], [0, 127, 0, 128]));
+    // Without a template box the pixels start at the box's corner, the first row the top one:
+    // (10, 20) is at (50, 100) in art space, the page's top.
+    assert_eq!((xf * Point::ZERO, xf * Point::new(2.0, 1.0)), (Point::new(50.0, 0.0), Point::new(70.0, 10.0)));
+    assert!(r.warnings.iter().any(|w| w.contains("low-resolution preview")), "{:?}", r.warnings);
+    // With a template box, the pixels start at the canvas point of art space's origin (8091.5,
+    // 8241.5 here), wherever the box is.
+    let mut data = placed(true, "[5 0 0 -5 -40407.5 41307.5]", "a.png", Some(&preview), "");
+    let at = data.windows(15).position(|w| w == b"%AI5_BeginLayer").unwrap();
+    data.splice(at..at, *b"%AI3_TemplateBox: 100 50 100 50\n");
+    let xf = pixels(&read(&data).unwrap().doc).1;
+    assert_eq!((xf * Point::ZERO, xf * Point::new(2.0, 1.0)), (Point::new(50.0, 0.0), Point::new(70.0, 10.0)));
+    // Turned a quarter: the box's rows run along x.
+    let r = read(&placed(true, "[0 5 5 0 0 0]", "a.png", Some(&preview), "")).unwrap();
+    let xf = pixels(&r.doc).1;
+    assert_eq!((xf * Point::ZERO, xf * Point::new(2.0, 1.0)), (Point::new(100.0, 50.0), Point::new(110.0, 30.0)));
+
+    // Without a preview it can read (none, cut short, not 32 bits, absurd sizes), without a path or
+    // a matrix, the file isn't read from its editing data.
+    let cut = &preview[..preview.len() - 6];
+    let huge = b"70000 70000 280000 32 17 \0\0\0\0";
+    let overflow = b"1 2 18446744073709551615 32 17 \0\0\0\0\0\0\0\0";
+    for (matrix, path, preview) in [
+        ("[5 0 0 -5 0 200]", "a.png", None),
+        ("[5 0 0 -5 0 200]", "a.png", Some(cut)),
+        ("[5 0 0 -5 0 200]", "a.png", Some(&b"2 1 2 8 17 \0\0"[..])),
+        ("[5 0 0 -5 0 200]", "a.png", Some(&huge[..])),
+        ("[5 0 0 -5 0 200]", "a.png", Some(&overflow[..])),
+        ("[5 0 0 -5 0 200]", "a.png", Some(&b"2 1"[..])),
+        ("[5 0 0 -5 0 200]", "", Some(&preview[..])),
+        ("[0 0 0 0 0 0]", "a.png", Some(&preview[..])),
+        ("[1 2 3]", "a.png", Some(&preview[..])),
+    ] {
+        let e = read(&placed(true, matrix, path, preview, "")).unwrap_err();
+        assert!(e.contains("placed files"), "{matrix} {path} {preview:?}: {e}");
+    }
+    // On a layer that doesn't show, such a file is left out of it.
+    let r = read(&placed(false, "[5 0 0 -5 0 200]", "a.png", None, "")).unwrap();
+    assert!(r.hidden_unread.contains("placed files") && art(&r.doc).is_empty());
+    // `~` ends nothing else.
+    assert!(read(stream(&layer("~\n")).as_bytes()).unwrap_err().contains("`~`"));
+}
+
 #[test]
 fn text_objects_are_slots_named_after_their_story() {
     let words = "/AI11Text :\n0 /FreeUndo ,\n0 /FrameIndex ,\n3 /StoryIndex ,\n;\n%_/ArtDictionary :\n%_/XMLUID : (Title) ; (AI10_ArtUID) ,\n%_;\n";
@@ -384,6 +476,20 @@ fn text_objects_are_slots_named_after_their_story() {
     let r = read_ok(&layer(&format!("/AI11Text :\n0 /StoryIndex ,\n;\n{}{}", commented(0), commented(1))));
     let stories: Vec<_> = art(&r.doc).iter().map(|n| slot_of(n.name.as_deref())).collect();
     assert_eq!(stories, [Some(Some(0)), Some(Some(1))]);
+    // A text object with an appearance: its drawn look (a group whose type is a story of the
+    // undo-free text document, which counts its own), then the object on `%_` lines, which is
+    // the type.
+    let look = "0 Ae\nu\n/AI11Text :\n1 /FreeUndo ,\n0 /FrameIndex ,\n0 /StoryIndex ,\n;\nU\n0 0 Xd\n6 () XW\n";
+    let own: String = "/AI11Text :\n0 /FreeUndo ,\n0 /FrameIndex ,\n7 /StoryIndex ,\n;\n".lines().map(|l| format!("%_{l}\n")).collect();
+    let plain = "/AI11Text :\n0 /FreeUndo ,\n0 /FrameIndex ,\n0 /StoryIndex ,\n;\n";
+    let r = read_ok(&layer(&format!("{look}{own}1 (Style) XW\n{plain}")));
+    let stories: Vec<_> = art(&r.doc).iter().map(|n| slot_of(n.name.as_deref())).collect();
+    assert_eq!(stories, [Some(Some(7)), Some(Some(0))], "the look's story 0 isn't the text document's");
+    // What else the look draws stays, under the type.
+    let look = look.replace("U\n", &format!("{RED}{}f\nU\n", rect_path(0.0, 0.0, 10.0, 10.0)));
+    let r = read_ok(&layer(&format!("{look}{own}1 (Style) XW\n")));
+    let a = art(&r.doc);
+    assert_eq!((a.len(), a[0].children().map(Vec::len), slot_of(a[1].name.as_deref())), (2, Some(1), Some(Some(7))));
 }
 
 #[test]

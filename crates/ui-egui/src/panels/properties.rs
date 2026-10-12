@@ -97,7 +97,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
     let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
-    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(l, LiveShape::Path { .. }));
+    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(**l, LiveShape::Path { .. }));
     let mut actions: Vec<(&str, &str)> = vec![];
     if n_sel > 1 {
         actions.push((tl!("Group"), "object.group"));
@@ -199,6 +199,7 @@ fn multi_color(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
 /// Exit back to the Selection tool (#530).
 fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     let units = app.session.general_unit();
+    let origin = app.ruler_origin();
     let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
     let i = super::artboards::selected(app, n);
     let scale_art = super::artboards::scale_art(app);
@@ -214,8 +215,13 @@ fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             {
                 for (label, key, v) in [(l1, k1, v1), (l2, k2, v2)] {
                     dim_label(ui, label);
-                    if let Some(v) = widgets::num_field(ui, ("ab", key, row), Some(v), units, fw) {
-                        app.run("artboard.setProps", json!({"index": i, key: v, "scaleArt": scale_art, "moveArt": move_art})).ok();
+                    let offset = match key {
+                        "x" => origin.x,
+                        "y" => origin.y,
+                        _ => 0.0,
+                    };
+                    if let Some(v) = widgets::num_field(ui, ("ab", key, row), Some(v - offset), units, fw) {
+                        app.run("artboard.setProps", json!({"index": i, key: v + offset, "scaleArt": scale_art, "moveArt": move_art})).ok();
                     }
                 }
                 ui.end_row();
@@ -393,6 +399,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let units = app.session.general_unit();
+    let origin = app.ruler_origin();
     // The bounding box, rotated with rotated objects (as in the Transform panel).
     let Some(bx) = app.selection_box() else {
         dim_label(ui, tl!("No Selection"));
@@ -411,8 +418,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         let link = app.session.prefs.constrain_proportions;
         egui::Grid::new("xf-grid").num_columns(4).spacing([4.0, 6.0]).min_col_width(0.0).show(ui, |ui| {
             dim_label(ui, "X:");
-            if let Some(v) = widgets::num_field(ui, "tx", Some(rp.x), units, fw) {
-                app.run("object.setBounds", json!({"x": v, "reference": refi})).ok();
+            if let Some(v) = widgets::num_field(ui, "tx", Some(rp.x - origin.x), units, fw) {
+                app.run("object.setBounds", json!({"x": v + origin.x, "reference": refi})).ok();
             }
             dim_label(ui, "W:");
             if let Some(v) = widgets::num_field(ui, "tw", Some(b.width()), units, fw) {
@@ -420,8 +427,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
             ui.end_row();
             dim_label(ui, "Y:");
-            if let Some(v) = widgets::num_field(ui, "ty", Some(rp.y), units, fw) {
-                app.run("object.setBounds", json!({"y": v, "reference": refi})).ok();
+            if let Some(v) = widgets::num_field(ui, "ty", Some(rp.y - origin.y), units, fw) {
+                app.run("object.setBounds", json!({"y": v + origin.y, "reference": refi})).ok();
             }
             dim_label(ui, "H:");
             if let Some(v) = widgets::num_field(ui, "th", Some(b.height()), units, fw) {
@@ -465,7 +472,7 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     if let Some(n) = first_selected(app)
         && let NodeKind::Path { live: Some(live), .. } = &n.kind
     {
-        match live {
+        match &**live {
             vectorcraft_doc::LiveShape::Rectangle { .. } => corner_radius_row(app, ui, &n, "radius"),
             vectorcraft_doc::LiveShape::Polygon { .. } => super::transform::polygon_rows(app, ui, &n, live, "props-polygon"),
             vectorcraft_doc::LiveShape::Ellipse { pie, .. } => super::transform::pie_rows(app, ui, *pie, "props-pie"),

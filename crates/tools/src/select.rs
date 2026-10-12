@@ -3,8 +3,8 @@
 //! Guides, or with them off View › Snap to Point, snap it),
 //! bounding-box scale (Shift proportional, Alt from centre) and rotate (outside corners, Shift 45°),
 //! drag a live rectangle's or polygon's corner widget to round its corners (Alt-click cycles their kind,
-//! double-click opens the Corners dialog), double-click to enter isolation mode (Double Click To
-//! Isolate), Cmd/Ctrl-click to select the object behind (Command Click to Select Objects Behind),
+//! double-click opens the Corners dialog), double-click a group or an object to enter isolation
+//! mode (Double Click To Isolate), Cmd/Ctrl-click to select the object behind (Command Click to Select Objects Behind),
 //! click or drag a ruler guide ([`crate::rulerguide`]), drag the brackets of type on a path
 //! ([`crate::pathtype`]), double-click the type widget to convert point type to area type and back
 //! ([`crate::typewidget`]).
@@ -234,7 +234,11 @@ impl Tool for SelectionTool {
     }
 
     fn transforming(&self) -> bool {
-        matches!(self.state, State::Moving { began: true, .. } | State::Scaling { .. } | State::Rotating { .. })
+        match &self.state {
+            State::Moving { began: true, .. } | State::Scaling { .. } | State::Rotating { .. } => true,
+            State::Corner(c) => c.adjusting(),
+            _ => false,
+        }
     }
 
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
@@ -260,11 +264,18 @@ impl Tool for SelectionTool {
                 }
                 if let Some(h) = hit_test(cx.doc, p, cx.hit_options()) {
                     let top = h.top_object(cx.isolation);
-                    if cx.double_click_isolate && cx.doc.node(top).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Group { .. })) {
-                        return vec![Action::Exec("object.isolate".into(), json!({ "id": top.0 }))];
-                    }
                     if cx.doc.node(top).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Text(_))) {
                         return vec![Action::SwitchTool("type".into())];
+                    }
+                    // A group, a compound path or a single path, image, mesh or placed file, not
+                    // the one already isolated. Blends, envelopes, repeats and symbol instances
+                    // aren't: they have editing modes of their own.
+                    use vectorcraft_doc::NodeKind as K;
+                    let isolates = cx.doc.node(top).is_some_and(|n| {
+                        matches!(n.kind, K::Group { .. } | K::Compound { .. } | K::Path { .. } | K::Image(_) | K::Mesh(_) | K::PlacedDocument(_))
+                    });
+                    if cx.double_click_isolate && isolates && cx.isolation != Some(top) {
+                        return vec![Action::Exec("object.isolate".into(), json!({ "id": top.0 }))];
                     }
                 } else if cx.isolation.is_some() {
                     return vec![Action::Exec("object.exitIsolation".into(), json!({}))];
@@ -540,7 +551,8 @@ fn can_be_key(cx: &ToolContext, id: NodeId) -> bool {
 /// Is `n` area type (text in a frame) whose frame the tools reshape? Type in perspective isn't:
 /// it transforms whole.
 pub(crate) fn is_area_type(n: &vectorcraft_doc::Node) -> bool {
-    n.perspective.is_none() && matches!(&n.kind, vectorcraft_doc::NodeKind::Text(t) if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }))
+    n.extras().perspective.is_none()
+        && matches!(&n.kind, vectorcraft_doc::NodeKind::Text(t) if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }))
 }
 
 /// The resize cursor for handle `h` of a box turned by `angle` (counter-clockwise degrees): the
@@ -589,6 +601,36 @@ mod tests {
         let Some(Action::Preview(_, v)) = a.get(1) else { panic!("{a:?}") };
         let (x, y) = (v["matrix"][4].as_f64().unwrap(), v["matrix"][5].as_f64().unwrap());
         assert!((200.0 + x - 350.3).abs() < 1e-9 && (200.0 + y - 250.0).abs() < 1e-9, "the corner lands at ({}, {})", 200.0 + x, 200.0 + y);
+    }
+
+    /// A corner-radius drag is a transform, so the sharp selection box hides while the radius changes.
+    #[test]
+    fn a_corner_drag_counts_as_transforming_once_it_moves() {
+        use vectorcraft_doc::{Appearance, LiveShape, Node, NodeKind};
+        let live = LiveShape::Rectangle {
+            w: 100.0,
+            h: 100.0,
+            radii: [0.0; 4],
+            kinds: Default::default(),
+            xf: vectorcraft_geom::Affine::translate((100.0, 100.0)),
+        };
+        let mut d = vectorcraft_doc::Document::new(500.0, 500.0);
+        let id = d.alloc_id();
+        let mut n = Node::path(id, live.to_path(), Appearance::default_art());
+        if let NodeKind::Path { live: slot, .. } = &mut n.kind {
+            *slot = Some(Box::new(live));
+        }
+        d.insert(Some(d.layers[0].id), 0, n).unwrap();
+        let mut s = Selection::default();
+        s.add(id);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        assert!(!t.transforming());
+        t.pointer(&cx, &ev(PointerKind::Down, 190.0, 191.0));
+        assert!(!t.transforming(), "a press is still a click");
+        t.pointer(&cx, &ev(PointerKind::Drag, 175.0, 176.0));
+        assert!(t.transforming());
     }
 
     /// #812: with Smart Guides on, hovering near an object's centre or an anchor labels it, and a

@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Czech render-site localization follow-up; scores and estimates unchanged; Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged; Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged; G11: valid selection after Simplify and Add Anchor Points (#1272); estimates unchanged; G2: Film Grain added; Photoshop effects 29/57; 28 filters remain; G10: RPM runtime dependency metadata (#1275); estimates unchanged; G15: texture-effect distance searches optimized (#1257); idle-machine/platform drag QA still pending; estimate unchanged; G1: Curvature point display improved (#1236, in part); estimates unchanged; G4: full-name font matching (#1258); Windows font-service QA pending; estimate unchanged; G11: no-op anchor Align keeps history and saved state (#1180 follow-up); estimates unchanged; G1: dedicated Eyedropper cursor and precise-cursor checks (#1269); estimates unchanged; G1: Eyedropper reads visible locked and outside-isolation sources (#1251); estimate unchanged; G11: Direct Selection segment Delete (#1278); estimates unchanged; G1: painted strokes regain the existing default after None/zero-width inheritance (#1253); estimate unchanged; G15: large-selection edits, cached live effects and faster Pathfinder, #1173; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G9: `.ai` editing-data follow-ups (gradient stops, type placement, short area-type frames), #1390, #1391, #1392; G15: symbol instance art kept between frames, #1386; G1: dialog keyboard focus, #1367 and #1395; estimates unchanged; G9: placed (linked) files read from `.ai` editing data, #1264; G9: gradient shapes import as paths, #1304, and white constant alpha masks, #1286 in part; G15: linear deselect on hide or lock, #1353; estimates unchanged; G7: custom ruler origin done, #1212; G1: Artboard object clicks create a fitted artboard (#1227); remaining interaction pass and estimate unchanged; Pathfinder single-result source names and SVG IDs retained, #1293; DXF control-point SPLINE closure read, #1299 follow-up; G16: Korean catalog added, 70–110 → 60–100 h; Czech render-site localization follow-up; scores and estimates unchanged; Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged; Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged; G11: valid selection after Simplify and Add Anchor Points (#1272); estimates unchanged; G2: Film Grain added; Photoshop effects 29/57; 28 filters remain; G10: RPM runtime dependency metadata (#1275); estimates unchanged; G15: texture-effect distance searches optimized (#1257); idle-machine/platform drag QA still pending; estimate unchanged; G1: Curvature point display improved (#1236, in part); estimates unchanged; G4: full-name font matching (#1258); Windows font-service QA pending; estimate unchanged; G11: no-op anchor Align keeps history and saved state (#1180 follow-up); estimates unchanged; G1: dedicated Eyedropper cursor and precise-cursor checks (#1269); estimates unchanged; G1: Eyedropper reads visible locked and outside-isolation sources (#1251); estimate unchanged; G11: Direct Selection segment Delete (#1278); estimates unchanged; G1: painted strokes regain the existing default after None/zero-width inheritance (#1253); estimate unchanged; G15: large-selection edits, cached live effects and faster Pathfinder, #1173; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -30,7 +30,7 @@ stage ([ROADMAP.md](../ROADMAP.md)).
 | 13 | [G7 Views and windows](#g7-views-and-windows) | 15–25 | no | [ui-parity.md](ui-parity.md) |
 | 14 | [G6 Automation and scripting](#g6-automation-and-scripting) | 8–14 | no | [target-app-parity.md](target-app-parity.md) |
 | 15 | [G15 Performance budgets and a GPU renderer](#g15-performance-budgets-and-a-gpu-renderer) | 15–25 | budgets only | [hardware-parity.md](hardware-parity.md) |
-| 16 | [G16 Localization: the five missing key languages](#g16-localization-the-five-missing-key-languages) | 70–110 | no | [localization-parity.md](localization-parity.md) |
+| 16 | [G16 Localization: the four missing key languages](#g16-localization-the-four-missing-key-languages) | 60–100 | no | [localization-parity.md](localization-parity.md) |
 | 17 | [G17 Ecosystem: third-party plug-ins](#g17-ecosystem-third-party-plug-ins) | 20–45 | no | — |
 | 18 | [G18 Generative AI features](#g18-generative-ai-features) | 30–60 | no | — |
 | 19 | [G19 Accessibility](#g19-accessibility) | 15–25 | no | [ui-parity.md](ui-parity.md) |
@@ -43,6 +43,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G1 Interaction fidelity
 
+- **Done (#1227):** object clicks with the Artboard tool create a fitted artboard, preserving art and selection; handles, modified clicks and drags retain their meaning. Covered by tool-event regression tests and undo/cancellation checks.
 - **Done:** Document Setup → Edit Artboards applies valid settings, closes the dialog and activates the Artboard tool. Pointer-click tests cover successful handoff, invalid settings, OK, Cancel and Undo in `dialogs/document_setup.rs`.
 
 - **Improved:** Curvature uses circular point markers without direction handles or duplicate markers
@@ -64,10 +65,11 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 ## G9 Illustrator `.ai` and EPS files from real users
 
 - **Missing:** faithful layer and group structure from the editing data in real files (#951: 109 layers instead
-  of 14; #868: round trip with Illustrator 2018 loses layers and groups), guides and non-printing construction
+  of 14), guides and non-printing construction
   lines (#779), open speed on large files (#758), legacy type in `.ai` files in PostScript form (those without
-  their prolog open since #1027), live effects, brushes and symbols as live objects (#637; pattern fills and global colours are read since #1025). Writing Illustrator's own editing data is out of scope
-  (undocumented); Save As `.ai` stays PDF-compatible.
+  their prolog open since #1027), live effects, brushes and symbols as live objects (#637; pattern fills and global colours are read since #1025, placed (linked) files since #1264). Writing Illustrator's own editing data is out of scope
+  (undocumented); Save As `.ai` stays PDF-compatible, and Illustrator 2018 opens such a file without its layers and
+  groups (#868).
 - **Evidence:** the issues above; 28 of the 350 issues are about `.ai`/EPS (about 22 people, the most common single
   format theme), 20 fixed, and the 8 open ones are about structure (layers, guides, speed, live objects), not missing
   art. No real-file `.ai` corpus (users' files may be used locally, never committed).
@@ -97,7 +99,11 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G11 Correctness bugs in core tools
 
-- **Done:** Escape leaves Artboard editing for Selection; during a drag it first cancels the gesture. Headless egui key events cover idle Escape, active-drag cancellation and a subsequent Escape in `tests_distortkeys.rs`.
+- **Done:** Divide splits filled paths along open cutting lines and curves (#1307), preserving the frontmost filled appearance, implicit filled closure, holes, unrelated objects and one Undo/Redo; the existing bounded-map fallback remains.
+
+- **Done:** Numeric fields keep a text drag's start when the pointer gains focus and movement exceeds the click threshold (#1326, in part). A completed focus click selects the whole value; keyboard focus, double-click and numeric stepping remain regression-tested. Short movements still classified as clicks can select all; that case remains open.
+
+- **Done:** DXF reads control-point SPLINE closure (#1299 follow-up after #1320); open curves keep their open state. Escape leaves Artboard editing for Selection; during a drag it first cancels the gesture. Headless egui key events cover idle Escape, active-drag cancellation and a subsequent Escape in `tests_distortkeys.rs`.
 
 - **Done:** Simplify and Add Anchor Points clear stale component selections on rewritten paths; Simplify previews and reports original/new point counts (#1272).
 - **Done:** no-op anchor Align preserves Undo, Redo, saved state and path geometry (#1180 follow-up),
@@ -106,6 +112,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 - **Done:** Direct Selection picks a segment independently of its anchors and Delete preserves neighboring edges (#1278);
   scaled text's size and horizontal-scale controls account for object/group transforms (#1034),
   including exact sizes across grouped labels and resetting horizontal stretch while keeping editable text.
+  Single-result Pathfinder booleans keep source names and SVG IDs, including named groups/compound paths (#1293).
 - **Missing:** Shape Builder misses planar regions and targets whole shapes (#937); Transform effect dialog's invisible checkboxes and missing options (#885);
   PDF text boxes moving on open (#722); SVG units reverting to points (#864); bezier drag preview freezing (#834).
 - **Impact:** wrong output in everyday work.
@@ -124,8 +131,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G12 Preferences and panels that don't act yet
 
-- **Missing:** ~17 Preferences options stored but not acted on (#394: Highlight Alternate Glyphs, Open
-  Documents As Tabs, Real-time Drawing, hyphenation language, Appearance of Black, devices…), Properties panel per
+- **Missing:** ~16 Preferences options stored but not acted on (#394: Highlight Alternate Glyphs, Open
+  Documents As Tabs, Real-time Drawing, hyphenation language, Appearance of Black for output, devices…), Properties panel per
   context, context menus beyond the canvas, Layers panel row menus and Collect for Export, SVG Interactivity.
 - **Impact:** settings that silently do nothing erode trust.
 - **Estimate:** 13–20 h.
@@ -172,8 +179,9 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G7 Views and windows
 
+- **Done:** custom document ruler origin (#1212): corner drag with preview, double-click reset to the active artboard, relative X/Y inputs and native save/reopen.
 - **Missing:** multiple windows and Window › Arrange (Cascade, Tile, Float in Window, Consolidate All Windows),
-  panels on another monitor, New View/Edit Views, global and video rulers.
+  panels on another monitor, New View/Edit Views, global/artboard ruler mode switch and video rulers.
 - **Estimate:** 15–25 h.
 
 ## G6 Automation and scripting
@@ -192,14 +200,14 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   Crop and Outline landed in #1173.
 - **Estimate:** 15–25 h (the budget run and fixes block beta).
 
-## G16 Localization: the five missing key languages
+## G16 Localization: the four missing key languages
 
 - **Evidence:** Czech render-site bypasses reduced in file dialogs, diagnostics, preset names and contributor tooltips; gradient grammar and printer-mark context corrected (see [localization-parity.md](localization-parity.md)). Native review and the missing-language work remain; estimate unchanged.
 
-- **Missing:** Hindi, Arabic, Indonesian, Korean, Vietnamese catalogs; a right-to-left interface and interface
+- **Missing:** Hindi, Arabic, Indonesian, Vietnamese catalogs; a Korean UI font for the web build; a right-to-left interface and interface
   shaping for Arabic and Devanagari; messages for Simplified Chinese and Brazilian Portuguese; native review of
   every catalog. Measured in [localization-parity.md](localization-parity.md).
-- **Estimate:** 70–110 h plus human review.
+- **Estimate:** 60–100 h plus human review (Korean landed 2026-10-12).
 
 ## G17 Ecosystem: third-party plug-ins
 
@@ -226,6 +234,14 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | G9: in `.ai` editing data, gradients with middle stops (#1390), type of objects with an appearance, hidden layers and later artboards (#1391) and area type in a frame too short for the fallback font (#1392) open as saved; G15: the art placed for symbol instances and inline graphics is kept between frames (#1386; the budget run on an idle machine remains); G1: dialogs take the keyboard focus on every open (#1367, #1395); estimates unchanged |
+| 2026-10-12 | minor | G9: placed (linked) files in `.ai` editing data come in as linked images showing their saved preview, so such files open through their layers with their guides (#1264); estimate unchanged |
+| 2026-10-12 | minor | G9: gradient-filled shapes from a PDF or `.ai` open as paths, not clip groups (#1304); CMYK files with transparency show in applications reading soft masks by luminosity (#1286, in part: the layer groups' bounding boxes remain); G15: hiding or locking a layer deselects in linear time (#1353); estimates unchanged |
+| 2026-10-12 | minor | G7: custom document ruler origin (#1212) done; global/artboard mode switching and video rulers remain, estimate unchanged |
+| 2026-10-12 | minor | G1: Artboard object clicks create a fitted artboard (#1227); remaining interaction pass and estimate unchanged |
+| 2026-10-12 | minor | Pathfinder single-result booleans preserve source names and SVG IDs (#1293); paint-order, grouped/compound sources, unchanged geometry/appearance and Undo/Redo regression tests; scores and estimates unchanged |
+| 2026-10-12 | minor | DXF reads control-point SPLINE closure (#1299 follow-up after #1320); open curves stay open and curves retained; rational/non-rational import and export versions regression-tested; scores/hours unchanged |
+| 2026-10-12 | minor | G16: Korean catalog added (complete under the tests); four key languages remain, 60–100 h |
 | 2026-10-11 | minor | Czech render-site follow-up: file-dialog filters, diagnostics, preset numbering, contributor tooltips/plurals, gradient grammar and contextual printer mark styles; estimates unchanged |
 | 2026-10-12 | minor | Document Setup: Edit Artboards closes the modal after applying valid settings; pointer-click regressions; scores and hours unchanged |
 | 2026-10-12 | minor | Artboards: Escape exits editing; an active drag cancels first; shortcut-routing regression; scores and hours unchanged |
@@ -240,6 +256,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 | 2026-10-12 | minor | G1: Eyedropper reads visible locked and outside-isolation sources (#1251); estimate unchanged |
 | 2026-10-12 | minor | G11: Direct Selection segment Delete retains neighboring geometry and appearance (#1278); estimates unchanged |
 | 2026-10-12 | minor | G1: painted strokes regain the existing default after None/zero-width inheritance (#1253); estimate unchanged |
+| 2026-10-12 | minor | G11: Divide uses open cutting paths without taking their paint (#1307); implicit filled closure, holes and history regression-tested; estimates unchanged |
+| 2026-10-12 | minor | G11: numeric fields keep the text-drag start instead of replacing it with select-all on press (#1326, in part); keyboard and click selection regression-tested; estimates unchanged; short movements below the click threshold remain open |
 | 2026-10-11 | minor | G15: large-selection edits, cached live effects and faster Pathfinder (#1173); a 25k-path perf run meets every budget; estimate unchanged |
 | 2026-10-11 | minor | G4: Middle Eastern digit types done (Character panel menu › Digits); estimate unchanged |
 | 2026-10-11 | minor | G4: proportional vertical metrics (#966) done; estimate unchanged |

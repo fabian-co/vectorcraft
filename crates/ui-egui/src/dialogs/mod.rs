@@ -209,7 +209,7 @@ macro_rules! registry {
 
 registry! {
     NewDocument: [new_document::KIND] => new_document::SPEC,
-    Shape: ["rectangle", "roundedRectangle", "ellipse", "polygon", "star", "lineSegment", "rectangularGrid"] => shapes::SPEC,
+    Shape: ["rectangle", "roundedRectangle", "ellipse", "polygon", "star", "lineSegment", "rectangularGrid", "polarGrid"] => shapes::SPEC,
     Transform: ["move", "rotate", "scale", "reflect", "shear"] => transform::SPEC,
     PathOp: ["average", "offsetPath", "simplify", "splitIntoGrid"] => path_ops::SPEC,
     DocumentSetup: ["documentSetup"] => document_setup::SPEC,
@@ -383,6 +383,13 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         m.get_temp::<bool>(focus_id).unwrap_or(false)
     });
+    // Not in the frame of a click (the one on the menu item that opened it): egui takes the focus
+    // from a field the click missed, so the field takes it a frame later (#1367).
+    let clicked = ctx.input(|i| i.pointer.any_click());
+    if focus_first && clicked {
+        ctx.request_repaint();
+    }
+    let focus_first = focus_first && !clicked;
     let spec = spec(&d.kind);
     if let Some(window) = spec.window {
         return window(app, ctx);
@@ -405,8 +412,8 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         ui.set_max_width(spec.max_width.map_or(room, |w| w.min(room)));
         modal::heading(ui, &heading);
         ui.add_space(12.0);
-        // Just opened: its first field takes the keyboard focus, as in the reference app (type a
-        // value, press Enter). Only the body's fields can take it.
+        // Just opened: its first enabled field takes the keyboard focus, as in the reference app
+        // (type a value, press Enter). Only the body's fields can take it.
         if focus_first {
             ui.data_mut(|m| m.insert_temp(widgets::dialog_focus_flag(), true));
         }

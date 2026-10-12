@@ -280,16 +280,17 @@ fn step_value(ui: &Ui, resp: &Response, buf: &mut String, read: impl Fn(&str) ->
 }
 
 /// The flag `dialogs::show` raises while it draws the body of a dialog that has just opened; the
-/// first field drawn takes it ([`take_dialog_focus`]).
+/// first enabled field drawn takes it ([`take_dialog_focus`]).
 pub(crate) fn dialog_focus_flag() -> egui::Id {
     egui::Id::new("dialog-focus-first-field")
 }
 
-/// If field `id` (showing `text`) is the first field of a dialog that has just opened, give it the
-/// keyboard focus with all of `text` selected: typing replaces the value and Enter applies it.
+/// If field `id` (showing `text`) is the first enabled field of a dialog that has just opened, give
+/// it the keyboard focus with all of `text` selected: typing replaces the value and Enter applies it.
 pub(crate) fn take_dialog_focus(ui: &Ui, id: egui::Id, text: &str) {
-    // A new window's first frame only measures its contents: nothing can take focus yet.
-    if ui.is_sizing_pass() || ui.data_mut(|d| d.remove_temp::<bool>(dialog_focus_flag())).is_none() {
+    // A new window's first frame only measures its contents: nothing can take focus yet. Nor can a
+    // greyed-out field (egui drops its focus): the flag stays for the first field that is enabled.
+    if ui.is_sizing_pass() || !ui.is_enabled() || ui.data_mut(|d| d.remove_temp::<bool>(dialog_focus_flag())).is_none() {
         return;
     }
     focus_field(ui, id, text);
@@ -309,13 +310,33 @@ fn select_all(ui: &Ui, id: egui::Id, text: &str) {
     st.store(ui.ctx(), id);
 }
 
-/// Numeric fields take the whole text, unit included, when they gain focus or are double-clicked
-/// (egui would select one word): typing a number or an expression replaces it.
+/// Numeric fields select the whole text on keyboard focus, a completed focus click or a
+/// double-click. A pointer press keeps its caret so dragging selects from the pressed position.
 fn select_all_on_focus(ui: &Ui, resp: &Response, text: &str) {
-    if !(resp.gained_focus() || resp.double_clicked()) {
+    let pending = resp.id.with("select-all-on-focus-click");
+    let (pressed, released) =
+        ui.input(|i| (i.pointer.button_pressed(egui::PointerButton::Primary), i.pointer.button_released(egui::PointerButton::Primary)));
+    if resp.gained_focus() {
+        ui.data_mut(|d| {
+            if pressed {
+                d.insert_temp(pending, true);
+            } else {
+                d.remove_temp::<bool>(pending);
+            }
+        });
+    }
+    let clicked_focus = released && ui.data_mut(|d| d.remove_temp::<bool>(pending)).unwrap_or(false) && resp.clicked_by(egui::PointerButton::Primary);
+    if resp.lost_focus() {
+        ui.data_mut(|d| d.remove_temp::<bool>(pending));
+    }
+    if !(resp.gained_focus() && !pressed || resp.double_clicked() || clicked_focus) {
         return;
     }
-    if egui::TextEdit::load_state(ui.ctx(), resp.id).is_some() {
+    if let Some(st) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+        // Preserve a text selection if the focus click already produced one.
+        if clicked_focus && !resp.double_clicked() && st.cursor.char_range().is_some_and(|r| !r.as_sorted_char_range().is_empty()) {
+            return;
+        }
         select_all(ui, resp.id, text);
         ui.ctx().request_repaint();
     }
