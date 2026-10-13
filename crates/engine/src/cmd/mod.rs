@@ -48,6 +48,7 @@ mod overprint;
 mod package;
 mod paint;
 mod panelcmds;
+pub mod params;
 mod path;
 mod pathops;
 mod patterncmds;
@@ -63,6 +64,7 @@ pub mod printtiling;
 pub mod rasterfx;
 mod recolor;
 pub mod recovery;
+pub mod scripts;
 mod select;
 pub(crate) mod shaper;
 pub(crate) mod slices;
@@ -277,6 +279,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(printpresets::specs());
         v.extend(printtiling::specs());
         v.extend(plugin::specs());
+        v.extend(scripts::specs());
         v.extend(cut::specs());
         v.extend(halftone::specs());
         v.extend(perspgrid::specs());
@@ -489,6 +492,9 @@ pub use flatten::FlattenOptions;
 
 /// A built-in or saved flattener preset ([`crate::Prefs::flattener_presets`]).
 pub use flatten::FlattenerPreset;
+
+/// The shapes a group selected alone gives the Pathfinder panel.
+pub use pathops::shape_count;
 
 /// Command ids kept only so older scripts keep working: `(alias, the command it duplicates)`.
 /// They run as before but the command palette leaves them out (it lists the command once).

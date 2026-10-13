@@ -9,6 +9,42 @@ use vectorcraft_doc::Unit;
 
 use crate::widgets;
 
+/// #1457: a focused field follows its value when that changes from outside (the slider beside
+/// it), so the arrow keys step from the value shown and losing focus doesn't put the old one back.
+#[test]
+fn a_focused_field_follows_a_value_changed_from_outside() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let mut time = 0.0;
+    let mut frame = |value: f64, events: Vec<Event>| {
+        time += 0.05;
+        let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0)));
+        let mut got = (None, Rect::NOTHING);
+        let mut out = ctx.run_ui(egui::RawInput { events, time: Some(time), screen_rect, focused: true, ..Default::default() }, |ui| {
+            got.0 = widgets::range_field(ui, "f", value, 0.0..=1000.0, "%", 2, 80.0);
+            got.1 = ui.min_rect();
+        });
+        out.textures_delta.clear();
+        got
+    };
+    let key = |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+    let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    // Click into the field showing 100 %.
+    let at = frame(100.0, vec![]).1.center();
+    frame(100.0, vec![Event::PointerMoved(at), button(at, true)]);
+    frame(100.0, vec![button(at, false)]);
+    assert_eq!(frame(100.0, vec![]).0, None);
+    // The value changes under the focused field (a slider dragged to 142): ↓ steps from 142, not
+    // from the 100 the field held when it took the focus.
+    frame(142.0, vec![]);
+    assert_eq!(frame(142.0, vec![key(Key::ArrowDown)]).0, Some(141.0));
+    // And changed again, losing focus leaves the value alone.
+    frame(50.0, vec![]);
+    let away = at + vec2(0.0, 150.0);
+    frame(50.0, vec![Event::PointerMoved(away), button(away, true)]);
+    assert_eq!(frame(50.0, vec![button(away, false)]).0, None);
+}
+
 /// Headless frames of one field: its rect and id as last drawn.
 struct Field {
     ctx: egui::Context,
@@ -371,4 +407,74 @@ fn keyboard_focus_keeps_selecting_the_entire_numeric_field() {
         f.frame(vec![], &draw);
         assert_eq!(f.selection(), Some((0, field_text(mode).chars().count())), "mode {mode}");
     }
+}
+
+/// #1637: text typed into a field is committed when the focus leaves it by a click on empty space
+/// or by a press on a field drawn before it (another channel of the Color panel), whether the
+/// window reports keyboard focus or not, as Enter commits it. Escape still drops it.
+#[test]
+fn typed_text_is_committed_when_the_focus_moves_away() {
+    for focused in [true, false] {
+        for onto_field_above in [false, true] {
+            let mut f = Field::new();
+            f.focused = focused;
+            let above = Cell::new(Rect::NOTHING);
+            let draw = |ui: &mut egui::Ui| {
+                widgets::range_field(ui, "above", 50.0, 0.0..=1000.0, "%", 0, 80.0);
+                above.set(ui.min_rect());
+                widgets::range_field(ui, "f", 100.0, 0.0..=1000.0, "%", 0, 80.0)
+            };
+            f.frame(vec![], &draw);
+            let field = Pos2::new(above.get().center().x, (above.get().bottom() + f.rect.get().bottom()) / 2.0);
+            let away = if onto_field_above { above.get().center() } else { Pos2::new(field.x, 180.0) };
+            let case = format!("window focus {focused}, onto the field above {onto_field_above}");
+            f.frame(vec![Event::PointerMoved(field), pointer_button(field, true)], &draw);
+            f.frame(vec![pointer_button(field, false)], &draw);
+            f.frame(vec![Event::Text("42".into())], &draw);
+            let committed = [
+                f.frame(vec![Event::PointerMoved(away), pointer_button(away, true)], &draw),
+                f.frame(vec![pointer_button(away, false)], &draw),
+                f.frame(vec![], &draw),
+            ];
+            assert_eq!(committed.iter().flatten().copied().collect::<Vec<_>>(), [42.0], "{case}");
+
+            f.frame(vec![Event::PointerMoved(field), pointer_button(field, true)], &draw);
+            f.frame(vec![pointer_button(field, false)], &draw);
+            f.frame(vec![Event::Text("7".into())], &draw);
+            let escaped = [f.frame(vec![key(Key::Escape, Modifiers::NONE)], &draw), f.frame(vec![], &draw)];
+            assert_eq!(escaped, [None, None], "{case}");
+        }
+    }
+}
+
+/// Text typed into a field is committed in the frame of a press elsewhere, before what is drawn
+/// after the field (the canvas) acts on the press: a click that selects another object must not
+/// get the typed value, even when both objects show the same one.
+#[test]
+fn a_press_on_the_canvas_commits_to_the_object_being_edited() {
+    let mut f = Field::new();
+    // The object the panel shows; both have the value 100.
+    let selected = Cell::new(1);
+    let committed = Cell::new(None);
+    let draw = |ui: &mut egui::Ui| {
+        let got = widgets::range_field(ui, "f", 100.0, 0.0..=1000.0, "%", 0, 80.0);
+        if let Some(v) = got {
+            committed.set(Some((selected.get(), v)));
+        }
+        // The canvas: a press ends text input and selects the other object.
+        if ui.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|p| p.y > 100.0)) {
+            ui.memory_mut(|m| m.stop_text_input());
+            selected.set(2);
+        }
+        got
+    };
+    f.frame(vec![], &draw);
+    let (field, canvas) = (f.rect.get().center(), Pos2::new(200.0, 180.0));
+    f.frame(vec![Event::PointerMoved(field), pointer_button(field, true)], &draw);
+    f.frame(vec![pointer_button(field, false)], &draw);
+    f.frame(vec![Event::Text("42".into())], &draw);
+    f.frame(vec![Event::PointerMoved(canvas), pointer_button(canvas, true)], &draw);
+    f.frame(vec![pointer_button(canvas, false)], &draw);
+    f.frame(vec![], &draw);
+    assert_eq!((committed.get(), selected.get()), (Some((1, 42.0)), 2));
 }

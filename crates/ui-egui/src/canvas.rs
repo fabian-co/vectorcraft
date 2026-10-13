@@ -234,7 +234,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // File Handling › Display Bitmaps as Anti-aliased Images in Pixel Preview: off, images show
     // their pixels as they rasterize, hard-edged.
     let smooth_images = pixel.is_none() || app.session.prefs.anti_aliased_bitmaps;
+    // Paths made into guides are drawn as the ruler guides are (Preferences › Guides & Grid).
+    let guide_look = LineLook::guides(&app.session.prefs, &t);
     let key = CacheKey {
+        guide: ([guide_look.color.r(), guide_look.color.g(), guide_look.color.b()], guide_look.dots),
         doc: st.uid as usize,
         revision: st.revision,
         interacting: st.interaction.is_some(),
@@ -297,6 +300,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let [r, g, b, _] = c.to_rgba8(1.0);
                 [r, g, b]
             }),
+            guide: key.guide,
             mask_view,
             highlight_substitutions: true,
             // General › Anti-aliased Artwork: off, edges are hard on screen (raster effects and
@@ -488,7 +492,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             match ui.input(|i| i.pointer.hover_pos()) {
                 // An OS cursor: the system moves it at once, where a painted one trails the pointer
                 // (#444). The system cursor stands in for cursors without a glyph.
-                Some(_) if custom && crate::cursors::OS_CURSORS => {
+                Some(_) if custom && crate::cursors::os_cursors(crate::cursors::OS_CURSORS, app.services.wayland) => {
                     let ppp = ui.ctx().pixels_per_point() / ui_scale;
                     ui.ctx().set_cursor_image(app.canvas.cursors.get(c, ppp));
                     cursor_icon(c)

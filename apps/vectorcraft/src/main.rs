@@ -489,6 +489,8 @@ fn start_pick(request: PickRequest, parent: &Parent, ui: &egui::Context) -> Opti
 
 /// The host's services; `ui` is woken when a file dialog answers.
 fn services(parent: Parent, ui: egui::Context) -> Services {
+    use winit::raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    let wayland = parent.as_ref().and_then(|w| w.window_handle().ok()).is_some_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
     let (p1, p2, p3, p4, p5) = (parent.clone(), parent.clone(), parent.clone(), parent.clone(), parent);
     Services {
         pick_open: Some(Box::new(move |pick: &FilePick| pick_now(PickRequest::Open(pick.clone()), &p1).into_iter().next())),
@@ -498,6 +500,7 @@ fn services(parent: Parent, ui: egui::Context) -> Services {
         // dialogs run the window's events while they are open.
         start_pick: cfg!(unix).then(|| Box::new(move |request: PickRequest| start_pick(request, &p5, &ui)) as vectorcraft_ui_egui::picks::StartPick),
         dialogs_are_sheets: cfg!(target_os = "macos"),
+        wayland,
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(write_file)),
         // Background Save and Export write from a worker thread.
@@ -752,6 +755,16 @@ fn main() -> std::process::ExitCode {
             // losing the device before the first frame (#1194). `WGPU_DX12_COMPILER` picks another.
             create.instance_descriptor.backend_options.dx12.shader_compiler =
                 eframe::wgpu::Dx12Compiler::from_env().unwrap_or(eframe::wgpu::Dx12Compiler::Fxc);
+            // The window's surface may be as large as the adapter allows, not eframe's fixed
+            // 8192 px: a window stretched over several monitors, or grown by a display scale
+            // change, otherwise fails to configure its surface and the app closes (#1459).
+            let device = create.device_descriptor.clone();
+            create.device_descriptor = std::sync::Arc::new(move |adapter: &eframe::wgpu::Adapter| {
+                let mut descriptor = device(adapter);
+                let limit = &mut descriptor.required_limits.max_texture_dimension_2d;
+                *limit = gpu::surface_limit(*limit, adapter.limits().max_texture_dimension_2d);
+                descriptor
+            });
         }
         options
     };

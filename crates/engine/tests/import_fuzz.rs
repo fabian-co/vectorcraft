@@ -8,7 +8,8 @@
 //! Illustrator EPS and `.ai` files (the layers they carry, damaged or hostile), nor Affinity documents
 //! (mutated object streams, archives and indexed PNG previews, hostile image dimensions), nor the
 //! font files a folder search reads (damaged fonts, collections whose headers give any count of
-//! faces).
+//! faces), nor scripts written for the reference app checked without running them (garbage,
+//! generated script text and mutated scripts).
 //!
 //! `PROPTEST_CASES=20000 cargo test -p vectorcraft-engine --test import_fuzz` runs a deeper search.
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Robustness).
@@ -1290,6 +1291,13 @@ proptest! {
         survive("mutated EPS PostScript", || vectorcraft_eps::import(&bytes).ok().map(|r| r.document))?;
     }
 
+    /// A damaged EPS another app copied: Paste reads it as an error or as objects.
+    #[test]
+    fn pasted_eps_never_panics(cut in 0usize..400_000, edits in prop::collection::vec((0usize..400_000, any::<u8>()), 0..12)) {
+        static SAMPLE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        paste_from_elsewhere("clipboard.importEps", json!({"dataBase64": mutated_b64(SAMPLE.get_or_init(foreign_eps_sample).clone(), cut, &edits)}))?;
+    }
+
     /// Hostile PostScript programs: operators in any order with any operands, opened and placed;
     /// as files in the legacy Illustrator format too (the creator line is what turns on its
     /// documented `u` … `U` groups), the groups unbalanced, deep and among clips; in a layer, which
@@ -1838,6 +1846,24 @@ fn the_frames_fixture_reads_as_threaded_area_type_and_type_on_a_path() {
     assert_eq!(l.doc.text_threads.len(), 1);
 }
 
+/// The smallest failing input `eps_text_frames_never_panic` found: the first frame's bottom edge
+/// has a control point at x = 8e115 (`8e0115`). That frame holds no text, and the story flows on
+/// into the second frame.
+#[test]
+fn a_text_frame_with_a_control_point_at_8e115_opens_with_its_story_in_the_next_frame() {
+    let text = mutate_text(&frames_document_text(), 1397, &[(191, '1'), (1586, 'e')]);
+    assert!(text.contains(" 8e0115 "));
+    let l = vectorcraft_engine::cmd::fileio::load("x.eps", &text_eps_of(&text, FRAME_OBJECTS)).unwrap();
+    let mut texts = vec![];
+    l.doc.walk(|n| {
+        if let vectorcraft_doc::NodeKind::Text(t) = &n.kind {
+            texts.push(t.plain_text());
+        }
+    });
+    assert_eq!(texts, ["", "A story in two frames\nand more", "On a path"], "{:?}", l.warnings);
+    survive("a frame with a control point at 8e115 pt", || Some(l.doc)).unwrap();
+}
+
 /// An EPS with a hidden text object whose story is in `document`.
 fn text_eps(document: &str) -> Vec<u8> {
     text_eps_of(document, "/AI11Text :\n0 /FrameIndex ,\n0 /StoryIndex ,\n;\n")
@@ -1894,7 +1920,7 @@ proptest! {
                 *x = b;
             }
         }
-        survive("mutated .ai editing data", || Some(vectorcraft_eps::layered_ai(&private, Document::new(100.0, 100.0), vec![], false).0))?;
+        survive("mutated .ai editing data", || Some(vectorcraft_eps::layered_ai(&private, Document::new(100.0, 100.0), vec![], false, false).0))?;
     }
 }
 
@@ -2073,6 +2099,56 @@ fn arb_ai_token() -> impl Strategy<Value = String> {
             "`",
             "~",
             "\n%AI5_EndPlace\n",
+            "Xm",
+            "50 -50 -100 -100 5000 -2000 Xm",
+            "0 0 0 0 1e308 -1e308 Xm",
+            "Xd",
+            "0 1 Xd",
+            "1 0 Xd",
+            "XD",
+            "(00800080) Xt 0 XD",
+            "X!",
+            "/Mesh X!",
+            "/End X!",
+            "X#",
+            "(DeviceRGB) /CS X#",
+            "[0 0] /P X#",
+            "[1 0 0 1 0 0 10 10 12 10 1 8 10 1] /N X#",
+            "[1e308 -1e308 0] /N X#",
+            "0 /E X#",
+            "\n%AI9_BeginArtStyles\n",
+            "\n%AI9_EndArtStyles\n",
+            "/KnownStyle :",
+            "(style) /Name ,",
+            "/ActiveStyle :",
+            "/CompoundFilter :",
+            "/BasicFilter :",
+            "(Stroke Style Filter) 0 0 /Filter ,",
+            "(Fill Style Filter) 0 0 /Filter ,",
+            "(Adobe Outer Glow) 1 0 /Filter ,",
+            "(Adobe Drop Shadow) 1 0 /Filter ,",
+            "1 /Visible ,",
+            "2 /FillOrStroke ,",
+            "1 /Bool (BSDashAdj) ,",
+            "0.75 /Real (opac) ,",
+            "1e308 /Real (blur) ,",
+            "0 /Real ,",
+            "; (BSVariableWidthTValuesArray) ,",
+            "; (BSCenteredWidthsArray) ,",
+            "/StrokeStyle : 0 R",
+            "/FillStyle : 0 O",
+            "/Def ;",
+            "/Execution ;",
+            "[5 5] 1e308 d",
+            "-0.5 /Real ,",
+            "1.5 /Real ,",
+            "-2 /Real ,",
+            "; (BSLeftWidthsArray) ,",
+            "; (BSRightWidthsArray) ,",
+            "[0.5 1e308 0 0 0 0 1 0 0 1] /N X#",
+            "(DeviceGray) /CS X#",
+            "\n%\n",
+            "\n%AI5_EndPlace\n",
             "\n%%PageTrailer\n",
         ])
         .prop_map(str::to_string),
@@ -2096,8 +2172,9 @@ proptest! {
     fn ai_hostile_editing_data_never_panics(tokens in prop::collection::vec(arb_ai_token(), 0..80)) {
         use vectorcraft_testkit::ai;
         let data = ai::editing_data(200.0, 100.0, &format!("%AI5_BeginLayer\n1 1 1 1 0 0 1 0 79 128 255 0 50 0 Lb\n(L) Ln\n{}\nLB\n", tokens.join(" ")));
-        survive("hostile editing data", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false).0))?;
-        survive("hostile editing data, type as outlines", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], true).0))?;
+        survive("hostile editing data", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, false).0))?;
+        survive("hostile editing data, type as outlines", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], true, false).0))?;
+        survive("hostile editing data, trusted", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, true).0))?;
         let eps = ai::eps(data.as_bytes(), ai::page_ps());
         survive("hostile editing data in an EPS", || vectorcraft_engine::cmd::fileio::load("x.eps", &eps).ok().map(|l| l.doc))?;
         // An EPS whose page is its art's box, not its artboard: what prints outside it is compared too.
@@ -2249,5 +2326,117 @@ proptest! {
             bytes.truncate(cut);
         }
         search_reads("mutated font file", &bytes)?;
+    }
+}
+
+// ---------- scripts checked without running them ----------
+
+/// A script written for these tests, with invented names: directives in both forms, member chains,
+/// files, a dialog, menu commands, E4X, an operator and a message to another app.
+const SCRIPT_SAMPLE: &str = concat!(
+    "#target acme_2-12-en_US\n",
+    "//@include \"lib/util.jsxinc\"\n",
+    "#includepath \"lib;shared\"\n",
+    "#targetengine session\n",
+    "var doc = app.activeDocument;\n",
+    "var w = new Window(\"dialog { text: 'Tidy' }\");\n",
+    "var f = File.saveDialog('Save'); f.open('w'); f.write(doc.acmeName); f.close();\n",
+    "app.executeMenuCommand('acmecopyall');\n",
+    "var x = <root><item id=\"1\">{doc.acmeName}</item></root>;\n",
+    "for each (var i in x..item) { $.writeln(i.@id); }\n",
+    "Vec.prototype['+'] = function (o) { return o; };\n",
+    "var bt = new BridgeTalk(); bt.target = 'acme'; bt.send();\n",
+    "if (item.typename == 'AcmeShape') { alert(/a[/]b/g.test(s) ? 'yes' : \"no\"); }\n",
+);
+
+/// The pieces generated scripts are made of.
+const SCRIPT_PIECES: &[&str] = &[
+    "#target acme",
+    "//@include 'a.jsxinc'",
+    "#includepath 'x;..'",
+    "#pragma",
+    "app",
+    "activeDocument",
+    "selection",
+    "var doc = ",
+    ".",
+    ".acmeItems",
+    "(",
+    ")",
+    "[",
+    "]",
+    "{",
+    "}",
+    ";",
+    "=",
+    "'str'",
+    "\"open",
+    "/re[/]x/g",
+    "/",
+    "<a b=\"{v}\">",
+    "</a>",
+    "<!--",
+    ".@",
+    "..",
+    "`t",
+    "=>",
+    "\n",
+    "\r",
+    "\u{2028}",
+    "@JSXBIN@",
+    "executeMenuCommand",
+    "new File(p)",
+    "Window(",
+    "import",
+    "/*",
+    "\\",
+    "0x1F",
+    " ",
+];
+
+/// `script.check` with `p`, which mustn't panic, and whose lists keep to their limit.
+fn checked(what: &str, p: Value) -> Result<(), TestCaseError> {
+    let r = catch_quiet(|| no_panic(vectorcraft_engine::Session::new().execute("script.check", &p)))
+        .map_err(|e| TestCaseError::fail(format!("{what}: script.check panicked: {e}")))?;
+    if let Ok(r) = r {
+        for list in [&r["targets"], &r["directives"], &r["includes"], &r["problems"], &r["dom"]["members"], &r["menuCommands"]["strings"]] {
+            prop_assert!(list.as_array().is_some_and(|l| l.len() <= 1000), "{}: {}", what, list);
+        }
+    }
+    Ok(())
+}
+
+/// The sample the properties mutate reaches every part of the check.
+#[test]
+fn the_script_sample_is_checked_whole() {
+    let r = vectorcraft_engine::Session::new().execute("script.check", &json!({"data": SCRIPT_SAMPLE})).unwrap();
+    assert_eq!(r["kind"], "script");
+    assert_eq!(r["needs"], json!(["language", "dom", "files", "menuCommands", "dialogs", "hostOnly"]));
+    assert_eq!(r["problems"], json!([]));
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn script_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2_000), compiled in any::<bool>()) {
+        let name = if compiled { "garbage.jsxbin" } else { "garbage.jsx" };
+        checked("script garbage", json!({"dataBase64": vectorcraft_format::base64_encode(&bytes), "name": name}))?;
+    }
+
+    #[test]
+    fn generated_scripts_never_panic(pieces in prop::collection::vec(prop::sample::select(SCRIPT_PIECES.to_vec()), 0..120)) {
+        checked("generated script", json!({"data": pieces.concat()}))?;
+    }
+
+    #[test]
+    fn mutated_scripts_never_panic(cut in 0usize..1_200, edits in prop::collection::vec((0usize..1_200, any::<u8>()), 0..12)) {
+        let mut bytes = SCRIPT_SAMPLE.as_bytes().to_vec();
+        for (at, b) in edits {
+            let n = bytes.len();
+            bytes[at % n] = b;
+        }
+        bytes.truncate(cut);
+        checked("mutated script", json!({"dataBase64": vectorcraft_format::base64_encode(&bytes), "name": "sample.jsx"}))?;
     }
 }

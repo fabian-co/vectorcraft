@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Data…",
             ["Object", "Graph"],
             None,
-            "{id?, series?, categories?, rows?, csv?: first row = series labels (first cell empty), then one row per category: label, values…; an empty cell or a null is a blank value, a quoted number a label, a `|` in a label a line break; transpose?: true swaps rows and columns (Transpose row/column), switchXY?: true swaps each scatter series' y and x columns (Switch x/y)} replace the graph's data; no data → the current {csv, series, categories, rows}",
+            "{id?, series?, categories?, rows?, csv?: first row = series labels (first cell empty); then one row per category: label; values…; an empty cell or a null is a blank value; a quoted number a label; a `|` in a label a line break, transpose?: true swaps rows and columns (Transpose row/column), switchXY?: true swaps each scatter series' y and x columns (Switch x/y)} replace the graph's data; no data → the current {csv, series, categories, rows}",
             has_selection,
             set_data
         ),
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Design…",
             ["Object", "Graph"],
             None,
-            "{new?: name|true (New Design: the selected art becomes a graph design, named \"New Design\" when true; put a rectangle at the back to set the size it draws at), rename?: name, to?: new name (the graphs drawing it follow), paste?: name (Paste Design: a copy of the design's art into the document, selected, to edit and save again), delete?: name|[names] (graphs drawing them go back to their default marks)}; no params or selectUnused → {designs: [names], unused: [the names no graph draws with]}",
+            "{new?: name|true (New Design: the selected art becomes a graph design, named \"New Design\" when true; put a rectangle at the back to set the size it draws at), rename?: name, to?: new name (the graphs drawing it follow), paste?: name (Paste Design: a copy of the design's art into the document, selected, to edit and save again), delete?: name|[names] (graphs drawing them go back to their default marks), ids?|id?: object ids (default: the selection), selectUnused?: bool (Select Unused: just the list)}; no params or selectUnused → {designs: [names], unused: [the names no graph draws with]}",
             has_doc,
             design
         ),
@@ -146,7 +146,7 @@ fn to_csv(g: &GraphSpec) -> String {
             }
             out.push(',');
         }
-        out.push_str(&r.iter().map(|v| v.map(fmt_value).unwrap_or_default()).collect::<Vec<_>>().join(","));
+        out.push_str(&r.iter().map(|v| v.map(|v| v.to_string()).unwrap_or_default()).collect::<Vec<_>>().join(","));
         out.push('\n');
     }
     out
@@ -890,13 +890,14 @@ fn generate(d: &mut Document, g: &GraphSpec) -> Vec<Arc<Node>> {
                 }
             } else {
                 // Scatter: a horizontal value axis too.
-                let (xl, xh, xs) = nice_axis(if xlo == f64::MAX { 0.0 } else { xlo.min(0.0) }, if xhi == f64::MIN { 1.0 } else { xhi }, g.ticks);
-                let mut x = xl;
-                while x <= xh + xs * 1e-6 {
+                // Like the value axis: finite, and a counted (capped) list of ticks, so data near f64::MAX can't loop forever.
+                let x_lo = if xlo == f64::MAX { 0.0 } else { xlo.min(0.0) };
+                let x_hi = if xhi == f64::MIN { 1.0 } else { xhi };
+                let (xl, xh, xs) = value_axis(g.ticks, None, None, x_lo, x_hi);
+                for x in tick_values(xl, xh, xs) {
                     let q = r.x0 + (x - xl) / (xh - xl) * r.width();
                     axes.push(b.line(Point::new(q, r.y1), Point::new(q, r.y1 + 4.0)));
                     axes.push(b.text(Role::Value, Point::new(q, r.y1 + 4.0 + vs * 1.1), &fmt_value(x), Justify::Center));
-                    x += xs;
                 }
                 for (si, s) in (0..nser).step_by(2).enumerate() {
                     let pts: Vec<Option<Point>> = (0..ncat)
@@ -2044,6 +2045,23 @@ mod tests {
     }
 
     #[test]
+    fn a_scatter_x_axis_that_overflows_does_not_hang() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 800, "height": 800})).unwrap();
+        // Finite x values whose rounded axis end is infinite: this used to add ticks forever. Now the
+        // command returns: points that far off the plot can't be drawn, which is an error.
+        let csv = ",y1,x1\nP,1,1.7e308\nQ,2,1.5e308";
+        let refused = |r: crate::Result<serde_json::Value>| assert!(r.unwrap_err().to_string().contains("exceed the canvas"));
+        refused(s.execute("graph.create", &json!({"type": "scatter", "x": 100, "y": 100, "width": 300, "height": 200, "csv": csv})));
+        // The same data through Graph Data, on an ordinary scatter graph: it stays as it was.
+        let axes = |s: &Session, id: NodeId| group(s.doc().unwrap().doc.node(id).unwrap(), "Axes").children().unwrap().len();
+        let id = make(&mut s, "scatter", ",y1,x1\nP,1,10\nQ,2,20");
+        let before = axes(&s, id);
+        refused(s.execute("graph.setData", &json!({"id": id.0, "csv": csv})));
+        assert_eq!(axes(&s, id), before);
+    }
+
+    #[test]
     fn tick_values_end_on_the_maximum_and_never_run_away() {
         // Counted, not accumulated: an offset range keeps its last tick.
         let t = super::tick_values(1e10, 1e10 + 1.0, 0.01);
@@ -2336,6 +2354,15 @@ mod tests {
         assert!(s.is_empty() && c.is_empty());
         assert_eq!(r.len(), 2);
         assert_eq!(super::nice_axis(0.0, 7.0, 0), (0.0, 8.0, 2.0));
+    }
+
+    #[test]
+    fn numeric_csv_cells_round_trip_without_rounding_or_saturation() {
+        let mut g = GraphSpec::default();
+        g.set_cells(vec![vec![Some(1.2345), Some(-1.2345)], vec![Some(1e-6), Some(-1e-6)], vec![Some(1e20), Some(-1e20)], vec![Some(0.0), None]]);
+        let csv = super::to_csv(&g);
+        let (_, _, cells) = super::parse_csv(&csv);
+        assert_eq!(cells, g.cells(), "{csv}");
     }
 
     #[test]

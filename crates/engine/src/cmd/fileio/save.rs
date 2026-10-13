@@ -93,7 +93,10 @@ impl SavePlan {
 /// File Info's dates for a save to a file: the modified date (and the created date, when it has
 /// none) become `at`. Not an undo step.
 pub fn stamp_save_dates(st: &mut DocState, at: i64) {
-    let d = std::sync::Arc::make_mut(&mut st.doc);
+    stamp_doc_dates(std::sync::Arc::make_mut(&mut st.doc), at);
+}
+
+fn stamp_doc_dates(d: &mut Document, at: i64) {
     d.metadata.created.get_or_insert(at);
     d.metadata.modified = Some(at);
 }
@@ -296,6 +299,10 @@ pub struct SaveJob {
     params: Value,
     /// The document when the job was made: what counts as saved once the file is written.
     snapshot: Arc<Document>,
+    /// The live document `snapshot` was made from, and the date stamped on `snapshot` (not on the
+    /// live document until the file is written).
+    source: Arc<Document>,
+    stamped: Option<i64>,
     /// The artboards also saved to files of their own (`separateArtboards`).
     boards: Vec<usize>,
 }
@@ -417,24 +424,29 @@ pub(super) fn encode_ai(cmd: &str, f: &Format, doc: &Document, p: &Value) -> Res
     Ok(Encoded { warnings, ..Encoded::one(bytes) })
 }
 
-/// Snapshot the active document for `plan` (stamping File Info's dates when the file becomes the
-/// document's own). Bad options fail here, before anything is encoded.
+/// Snapshot the active document for `plan` (stamping File Info's dates on the snapshot when the
+/// file becomes the document's own; the live document gets them in [`SaveJob::finish`]). Bad
+/// options fail here, before anything is encoded.
 pub fn save_job(s: &mut Session, plan: SavePlan) -> Result<SaveJob> {
     // The web build, without a clock, leaves the dates unless given one.
-    if plan.path.is_some()
-        && plan.retargets()
-        && let Some(at) = clock_date(s, "modified", plan.modified)
-    {
-        stamp_save_dates(s.doc_mut()?, at);
-    }
-    job_for(s, s.doc()?, plan)
+    let at = if plan.path.is_some() && plan.retargets() { clock_date(s, "modified", plan.modified) } else { None };
+    job_for_stamped(s, s.doc()?, plan, at)
 }
 
 /// Snapshot `st` (any open document of `s`) for `plan`, without stamping dates (Data Recovery
 /// snapshots documents that aren't active).
 pub(crate) fn job_for(s: &Session, st: &DocState, plan: SavePlan) -> Result<SaveJob> {
+    job_for_stamped(s, st, plan, None)
+}
+
+fn job_for_stamped(s: &Session, st: &DocState, plan: SavePlan, stamped: Option<i64>) -> Result<SaveJob> {
     let cmd = plan.mode.command();
-    let own = doc_to_save(st, plan.format);
+    let mut own = doc_to_save(st, plan.format);
+    let mut snapshot = st.doc.clone();
+    if let Some(at) = stamped {
+        stamp_doc_dates(Arc::make_mut(&mut own), at);
+        stamp_doc_dates(Arc::make_mut(&mut snapshot), at);
+    }
     // A native file records its links' paths relative to where it is written.
     let relative = plan.path.as_deref().filter(|_| is_native(plan.format)).and_then(|p| crate::cmd::links::with_relative_paths(&own, p));
     let doc = relative.map_or(own, Arc::new);
@@ -455,7 +467,7 @@ pub(crate) fn job_for(s: &Session, st: &DocState, plan: SavePlan) -> Result<Save
         // Save keeps every artboard; exports may choose a subset instead.
         o.insert("range".into(), json!("all"));
     }
-    Ok(SaveJob { plan, doc, params, snapshot: st.doc.clone(), boards })
+    Ok(SaveJob { plan, doc, params, snapshot, source: st.doc.clone(), stamped, boards })
 }
 
 impl SaveJob {
@@ -593,6 +605,17 @@ impl SaveJob {
             st.save_options = self.plan.options;
             st.converted = false;
             st.recovered = false;
+            if let Some(at) = self.stamped {
+                if Arc::ptr_eq(&st.doc, &self.source) {
+                    st.doc = self.snapshot.clone();
+                } else {
+                    // Edited while the save ran: the dates still go on, the edits stay unsaved. The
+                    // undo history holds the document as it was before the dates, so that is the
+                    // saved state: undoing back to it leaves the document unmodified.
+                    stamp_save_dates(st, at);
+                    return st.mark_saved_as(&self.source);
+                }
+            }
             st.mark_saved_as(&self.snapshot);
         }
     }
@@ -688,7 +711,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Save Document",
             [],
             None,
-            "{path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own format), options?: {…the format's options, see file.formatOptions; default: as last saved}, svg?: {…SVG options} (SVG options may also be given flat; an SVG save keeps hidden layers, display:none, unless hiddenLayers is false), native (also flat): compress?: bool (gzip; default: the useCompression preference), version?: 4 (3, 2 or 1: for older VectorCraft versions; 1 and 2 are never compressed), preview?: false (embed a PNG of the first artboard, at most 256 px), native and .ai: separateArtboards?: false (also save each artboard of range?: \"1-3, 5\"|\"all\" (default) to <name>-<artboard>.<ext> beside the file, holding that artboard and the art touching it; the result's files lists every file written), includeLinked?: false (keep linked files' own pixels, not just their previews; they stay linked), embedProfiles?: true (carry the ICC profiles loaded from files that the document is tagged with; opening the file installs them where missing), pdfCompatible?: false for native (also carry a PDF of every artboard) | true for .ai (false: blank pages, only the native document), .ai: compress?: true (compression.compressText), modified?: Unix seconds|null (the File Info modified date, and created date when there is none, a save to a file stamps; default now, recorded in the journal so a replay matches; null: leave the dates)} → {path, format, bytes, warnings, files?: [path…] (the file and its artboards' files), linked?: [path…] (images an SVG links to)}. Save writes one artboard, except a .ai file: a PDF-compatible file of every artboard carrying the native document (preserveEditing always on; PDF options flat or in options), which document.open restores exactly; separateArtboards writes more files, one per artboard. Without a path it writes the document's own file in its own format: a document opened from or saved as SVG/PDF saves as that again (warnings name what the format loses). No path known (never saved, converted from an older version, restored by Data Recovery, or another format) → {dataBase64, format, name, folder?, warnings} and the document stays modified",
+            "{path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own format), options?: {…the format's options, see file.formatOptions; default: as last saved}, svg?: {…SVG options} (an SVG save keeps hidden layers, display:none, unless hiddenLayers is false), …the SVG and PDF options given flat instead, compress?: bool (native, also in options: gzip; default: the useCompression preference), version?: 4 (3, 2 or 1: for older VectorCraft versions; 1 and 2 are never compressed), preview?: false (embed a PNG of the first artboard, at most 256 px), separateArtboards?: false (native and .ai: also save each artboard of `range` to <name>-<artboard>.<ext> beside the file, holding that artboard and the art touching it; the result's files lists every file written), range?: \"1-3, 5\"|\"all\" (default; with separateArtboards), includeLinked?: false (keep linked files' own pixels, not just their previews; they stay linked), embedProfiles?: true (carry the ICC profiles loaded from files that the document is tagged with; opening the file installs them where missing), pdfCompatible?: false for native (also carry a PDF of every artboard) | true for .ai (false: blank pages, only the native document; a .ai file's compress, default true, is its compression.compressText), modified?: Unix seconds|null (the File Info modified date, and created date when there is none, a save to a file stamps; default now, recorded in the journal so a replay matches; null: leave the dates)} → {path, format, bytes, warnings, files?: [path…] (the file and its artboards' files), linked?: [path…] (images an SVG links to)}. Save writes one artboard, except a .ai file: a PDF-compatible file of every artboard carrying the native document (preserveEditing always on; PDF options flat or in options), which document.open restores exactly; separateArtboards writes more files, one per artboard. Without a path it writes the document's own file in its own format: a document opened from or saved as SVG/PDF saves as that again (warnings name what the format loses). No path known (never saved, converted from an older version, restored by Data Recovery, or another format) → {dataBase64, format, name, folder?, warnings} and the document stays modified",
             has_doc,
             |s, p| save(s, SaveMode::Save, p)
         ),
@@ -697,7 +720,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Save As…",
             ["File"],
             Some("Cmd+Shift+S"),
-            "{path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own), options?, svg?, modified? (as document.save)} the document takes on the new path, name and format (except a template, which is always a copy) → {path, format, bytes, warnings}; no path → {dataBase64, format, name, folder?, warnings}",
+            "{…as document.save} {path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own), options?, svg?, modified?} the document takes on the new path, name and format (except a template, which is always a copy) → {path, format, bytes, warnings}; no path → {dataBase64, format, name, folder?, warnings}",
             has_doc,
             |s, p| save(s, SaveMode::SaveAs, p)
         ),
@@ -706,7 +729,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Save a Copy…",
             ["File"],
             Some("Cmd+Alt+S"),
-            "{path?, format?, options?} (as file.saveAs) write a copy; the document keeps its path, title and modified state → {path, format, bytes, warnings}; no path → {dataBase64, format, name: \"<name> copy.<ext>\", folder?, warnings}",
+            "{…as document.save} {path?, format?, options?} write a copy; the document keeps its path, title and modified state → {path, format, bytes, warnings}; no path → {dataBase64, format, name: \"<name> copy.<ext>\", folder?, warnings}",
             has_doc,
             |s, p| save(s, SaveMode::Copy, p)
         ),
@@ -715,7 +738,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Save as Template…",
             ["File"],
             None,
-            "{path?, compress?, version?, preview? (as document.save)} a native template (.vctemplate) that opens as a new untitled document; the document is unchanged → {path, format, bytes, warnings}; no path → {dataBase64, format, name: \"<name> template.vctemplate\", folder: the Templates folder (preference templatesFolder), warnings}",
+            "{…as document.save} {path?, compress?, version?, preview?} a native template (.vctemplate) that opens as a new untitled document; the document is unchanged → {path, format, bytes, warnings}; no path → {dataBase64, format, name: \"<name> template.vctemplate\", folder: the Templates folder (preference templatesFolder), warnings}",
             has_doc,
             |s, p| save(s, SaveMode::Template, p)
         ),
@@ -733,7 +756,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Revert",
             ["File"],
             Some("F12"),
-            "{} discard the changes: reload the saved file into the same tab (history cleared; the tab keeps its place and view). Saved, modified documents only; if the file can't be read the document is left as it is → {path}. The app asks first (a confirm dialog) unless confirmed: true",
+            "{confirmed?: bool (the app's own: it asks first, then runs the command with it)} discard the changes: reload the saved file into the same tab (history cleared; the tab keeps its place and view). Saved, modified documents only; if the file can't be read the document is left as it is → {path}. The app asks first (a confirm dialog) unless confirmed: true",
             can_revert,
             revert
         ),

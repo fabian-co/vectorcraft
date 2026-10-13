@@ -78,6 +78,58 @@ fn the_mask(d: &Document) -> (Node, OpacityMask) {
     (n, m)
 }
 
+/// The two pixels of the image a soft mask of kind `s` draws: black, opaque on the left and clear
+/// on the right (its own `/SMask`).
+fn mask_image_pixels(s: &str) -> [[u8; 4]; 2] {
+    let g = first_extra(1);
+    let group = stream(
+        &format!(
+            "/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency /CS /DeviceRGB >> /Resources << /XObject << /Im0 {} 0 R >> >>",
+            g + 1
+        ),
+        "q 100 0 0 100 0 0 cm /Im0 Do Q",
+    );
+    let image = stream(
+        &format!(
+            "/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /SMask {} 0 R",
+            g + 2
+        ),
+        "000000000000>",
+    );
+    let smask =
+        stream("/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode", "FF00>");
+    let bytes = one_page(
+        "/GS0 gs 1 0 0 rg 0 0 100 100 re f",
+        &format!("/ExtGState << /GS0 << /SMask << /Type /Mask /S /{s} /G {g} 0 R >> >> >>"),
+        &[&group, &image, &smask],
+    );
+    let d = open(&bytes);
+    let (_, m) = the_mask(&d);
+    let mut keys = vec![];
+    m.art.walk(&mut |n| {
+        if let NodeKind::Image(im) = &n.kind {
+            keys.push(im.key.clone());
+        }
+    });
+    let [key] = keys.as_slice() else { panic!("one image in the mask art: {keys:?}") };
+    let px = image::load_from_memory(&d.images[key].bytes).unwrap().to_rgba8();
+    [px.get_pixel(0, 0).0, px.get_pixel(1, 0).0]
+}
+
+/// An alpha soft mask whose art is an image with its own alpha (some PDF writers rasterize masks
+/// so): the image is read white with that alpha, so the mask's luminance is the alpha, not the
+/// image's colour (ISO 32000-1 11.5.2: an alpha mask takes the group's alpha, not its colour).
+#[test]
+fn an_alpha_soft_mask_of_an_image_uses_the_images_alpha() {
+    assert_eq!(mask_image_pixels("Alpha"), [[255, 255, 255, 255], [255, 255, 255, 0]]);
+}
+
+/// A luminosity soft mask takes the group's colour (ISO 32000-1 11.5.3): its image stays black.
+#[test]
+fn a_luminosity_soft_mask_of_an_image_keeps_the_images_colour() {
+    assert_eq!(mask_image_pixels("Luminosity"), [[0, 0, 0, 255], [0, 0, 0, 0]]);
+}
+
 #[test]
 fn a_luminosity_soft_mask_becomes_an_opacity_mask() {
     let d = open(&masked("/S /Luminosity", "1 1 1 rg 0 0 50 100 re f"));
@@ -432,8 +484,8 @@ fn objects(d: &Document) -> Vec<Node> {
 
 #[test]
 fn an_object_written_as_a_fill_and_a_closed_stroke_stays_one_path_with_a_live_stroke() {
-    // As Illustrator writes an object: the fill of the outline left open, then the stroke of it
-    // closed, each in its own transform. Two subpaths: one ending on its start, one not.
+    // The fill of the outline left open, then the stroke of it closed, each in its own
+    // transform. Two subpaths: one ending on its start, one not.
     let outline = "0 0 m -20 1 l -30 -12 l -30 30 l 0 0 l 5 5 m 10 5 l 10 10 l";
     let content = format!(
         "0.2 0.2 0.2 rg q 1 0 0 1 50 50 cm {outline} f Q 1 1 1 RG 1.5 w 1 J 1 j 4 M [3 2] 1 d q 1 0 0 1 50 50 cm {} S Q",
@@ -455,6 +507,45 @@ fn an_object_written_as_a_fill_and_a_closed_stroke_stays_one_path_with_a_live_st
     let p = n.path_data().unwrap();
     assert_eq!(p.subpaths.len(), 2);
     assert!(p.is_closed());
+}
+
+#[test]
+fn a_fill_in_a_translucent_group_doesnt_take_the_stroke_drawn_after_it() {
+    // A fill at 75 % under an opaque stroke of the same outline: the fill in a transparency group
+    // drawn at 75 %, the stroke after the group.
+    let x = first_extra(1);
+    let outline = "10 10 m 60 10 l 60 60 l 10 60 l h";
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency >>", &format!("1 0 0 rg {outline} f"));
+    let content = format!("q /G gs /X0 Do Q 0 0 1 RG 2 w {outline} S");
+    let d = open(&one_page(&content, &format!("/ExtGState << /G << /ca 0.75 /CA 0.75 >> >> /XObject << /X0 {x} 0 R >>"), &[&form]));
+    let objs = objects(&d);
+    let stroke = objs.iter().find(|n| n.appearance.stroke().is_some()).expect("a stroke");
+    let alpha = all(&d)
+        .iter()
+        .filter(|n| n.appearance.stroke().is_some() || n.children().is_some_and(|c| c.iter().any(|k| k.id == stroke.id)))
+        .map(|n| n.opacity)
+        .product::<f32>();
+    assert_eq!(alpha, 1.0, "the stroke stays opaque: {objs:#?}");
+    let fill = objs.iter().find(|n| n.appearance.fill().is_some()).expect("a fill");
+    assert!((fill.opacity * fill.appearance.fill().unwrap().opacity - 0.75).abs() < 1e-3, "{fill:#?}");
+}
+
+#[test]
+fn a_fill_in_a_soft_masked_group_doesnt_take_the_stroke_drawn_after_it() {
+    // ISO 32000-1 §11.6.5.2: the soft mask in the graphics state applies to the group drawn under
+    // it, not to the stroke after `Q`.
+    let (m, x) = (first_extra(1), first_extra(1) + 1);
+    let outline = "10 10 m 60 10 l 60 60 l 10 60 l h";
+    let mask = stream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency /CS /DeviceRGB >>", "1 1 1 rg 0 0 35 100 re f");
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency >>", &format!("1 0 0 rg {outline} f"));
+    let content = format!("q /GS gs /X0 Do Q 0 0 1 RG 2 w {outline} S");
+    let resources = format!("/ExtGState << /GS << /SMask << /Type /Mask /S /Luminosity /G {m} 0 R >> >> >> /XObject << /X0 {x} 0 R >>");
+    let d = open(&one_page(&content, &resources, &[&mask, &form]));
+    let nodes = all(&d);
+    let stroke = nodes.iter().find(|n| n.appearance.stroke().is_some()).expect("a stroke");
+    assert!(stroke.appearance.fill().is_none() && stroke.extras().mask.is_none(), "the stroke is its own unmasked object: {stroke:#?}");
+    let masked = nodes.iter().filter(|n| n.extras().mask.is_some()).collect::<Vec<_>>();
+    assert!(!masked.is_empty() && masked.iter().all(|n| n.appearance.stroke().is_none()), "{masked:#?}");
 }
 
 #[test]
@@ -504,4 +595,17 @@ fn glyphs_closed_up_by_half_an_em_stay_one_line() {
     let t = texts(&open(&one_page("BT /F1 20 Tf 10 40 Td [(T) 400 (i) 450 (g) 0 (h) 0 (t)] TJ ET", HELVETICA, &[])));
     assert_eq!(t.len(), 1, "one line: {:?}", t.iter().map(|t| t.plain_text()).collect::<Vec<_>>());
     assert_eq!(t[0].plain_text(), "Tight");
+}
+
+/// #1542: a clip only counts as covering the page when it does; a diamond whose bounding box is
+/// the page still clips, a page rectangle or a turned square around it doesn't make a group.
+#[test]
+fn clips_with_the_page_as_bounding_box_still_clip() {
+    let clipped = |clip: &str| {
+        let d = open(&one_page(&format!("q {clip} W n 1 0.5 0 rg 0 0 100 100 re f Q"), "", &[]));
+        all(&d).iter().any(|n| matches!(n.kind, NodeKind::Group { clip: true, .. }))
+    };
+    assert!(clipped("50 0 m 100 50 l 50 100 l 0 50 l h"), "diamond");
+    assert!(!clipped("0 0 100 100 re"), "the page");
+    assert!(!clipped("50 -60 m 160 50 l 50 160 l -60 50 l h"), "a turned square around the page");
 }

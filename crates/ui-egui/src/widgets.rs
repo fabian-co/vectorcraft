@@ -348,7 +348,28 @@ fn select_all_on_focus(ui: &Ui, resp: &Response, text: &str) {
 fn recessed_text(ui: &mut Ui, id: egui::Id, shown: &str, width: f32, rows: usize) -> (String, Response, Rect) {
     let t = Tokens::get(ui.ctx());
     let editing = ui.memory(|m| m.has_focus(id));
-    let mut buf: String = if editing { ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.to_string()) } else { shown.to_string() };
+    // A press outside the field ends its editing in this frame, so the text typed is committed
+    // before the press acts: the canvas, drawn after the panels, may select another object, and a
+    // frame later the text would be committed to that one.
+    if editing
+        && let Some(at) = ui.input(|i| i.pointer.primary_pressed().then(|| i.pointer.interact_pos()).flatten())
+        && ui.ctx().read_response(id).is_some_and(|r| !r.rect.contains(at))
+    {
+        ui.memory_mut(|m| m.surrender_focus(id));
+    }
+    // When the value changes under a focused field (the slider beside it, a preview, another
+    // field's edit), its text follows: the text typed for the old value would otherwise go back in
+    // on the next Enter, Tab or arrow key (#1457).
+    let shown_id = id.with("shown");
+    let followed = ui.data_mut(|d| d.get_temp::<String>(shown_id)).is_none_or(|before| before == shown);
+    ui.data_mut(|d| d.insert_temp(shown_id, shown.to_string()));
+    // A press elsewhere can end the focus outside this field's own drawing (a field drawn before it
+    // takes it, the canvas ends text input), so `editing` is already false on the frame it reports
+    // `lost_focus`: the text typed is still taken then, to be committed (#1637). Escape drops it.
+    let focus_id = id.with("had-focus");
+    let had_focus = ui.data_mut(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) && !ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let typed = if (editing || had_focus) && followed { ui.data_mut(|d| d.get_temp::<String>(id)) } else { None };
+    let mut buf: String = typed.unwrap_or_else(|| shown.to_string());
     // The box is exactly as tall as the other controls of a row (26 points a line), its text
     // centred in it: a frame around the text came out a point taller and stood out next to
     // spinners and dropdowns (#900).
@@ -363,6 +384,7 @@ fn recessed_text(ui: &mut Ui, id: egui::Id, shown: &str, width: f32, rows: usize
             let resp = egui::Frame::NONE
                 .inner_margin(margin)
                 .show(ui, |ui| {
+                    crate::theme::strong_selected_text(ui);
                     let edit = if rows > 1 { egui::TextEdit::multiline(&mut buf).desired_rows(rows) } else { egui::TextEdit::singleline(&mut buf) };
                     ui.add(
                         edit.id(id)
@@ -377,7 +399,11 @@ fn recessed_text(ui: &mut Ui, id: egui::Id, shown: &str, width: f32, rows: usize
             (rect, resp)
         })
         .inner;
-    ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    let focused = ui.memory(|m| m.has_focus(id));
+    ui.data_mut(|d| {
+        d.insert_temp(id, buf.clone());
+        d.insert_temp(focus_id, focused);
+    });
     (buf, resp, rect)
 }
 
@@ -887,7 +913,7 @@ pub fn opacity_blend(
         icons::paint(ui, "chevron-right", r.shrink2(vec2(3.0, 7.0)), if enabled { t.icon } else { t.text_disabled });
         egui::Popup::menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             let mut o = opacity.unwrap_or(1.0) * 100.0;
-            let r = ui.add(egui::Slider::new(&mut o, 0.0..=100.0).show_value(false));
+            let r = slider(ui, egui::Slider::new(&mut o, 0.0..=100.0).show_value(false));
             let phase = if r.drag_stopped() || (r.changed() && !r.dragged()) {
                 Live::Released
             } else if r.changed() {
@@ -980,6 +1006,19 @@ pub fn icon_button_enabled(ui: &mut Ui, icon: &str, tip: &str, selected: bool, e
     let pad = (size * 0.2).round();
     icons::paint(ui, icon, rect.shrink(pad), t.text_disabled);
     if tip.is_empty() { resp } else { resp.on_hover_text(tl!(tip)) }
+}
+
+/// A slider whose rail shows, filled up to the handle: the theme's widget fill matches the panel
+/// and dialog background, which leaves only the handle visible (#1483).
+pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
+    let t = Tokens::get(ui.ctx());
+    ui.scope(|ui| {
+        let v = ui.visuals_mut();
+        v.widgets.inactive.bg_fill = t.input_border;
+        v.selection.bg_fill = t.accent;
+        ui.add(slider.trailing_fill(true))
+    })
+    .inner
 }
 
 /// Regular-weight panel sub-header ("Shape Modes:", "Align Objects:").

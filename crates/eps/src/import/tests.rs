@@ -248,6 +248,12 @@ fn clips_become_clipping_groups() {
     // eoclip of a path.
     let o = objects(&read("10 10 moveto 30 10 lineto 30 30 lineto closepath eoclip newpath 0 0 50 50 rectfill").document);
     assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }));
+    // #1542: a diamond touching the page edges has the page as its bounding box but still clips.
+    let o = objects(&read("50 0 moveto 100 50 lineto 50 100 lineto 0 50 lineto closepath clip newpath 0 0 100 100 rectfill").document);
+    assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }), "{:?}", o[0].kind);
+    // A turned square around the whole page clips nothing.
+    let o = objects(&read("50 -60 moveto 160 50 lineto 50 160 lineto -60 50 lineto closepath clip newpath 0 0 100 100 rectfill").document);
+    assert!(matches!(o[0].kind, NodeKind::Path { .. }), "{:?}", o[0].kind);
 }
 
 #[test]
@@ -286,6 +292,19 @@ fn shadings_become_gradients() {
     assert_eq!(g.gradient.kind, GradientKind::Radial);
     let offsets: Vec<f32> = g.gradient.stops.iter().map(|s| s.offset).collect();
     assert_eq!(offsets, vec![0.0, 0.25, 1.0]);
+    // Pieces that don't meet at a bound make a hard stop: the colour before the bound and the
+    // one after it, at the same offset (the PDF reader does the same).
+    let hard = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << /FunctionType 3 /Domain [0 1] /Bounds [0.5] /Encode [0 1 0 1] /Functions [<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>] >> >>";
+    let r = read(&format!("0 0 200 50 rectclip {hard} shfill"));
+    let o = objects(&r.document);
+    let Some(Paint::Gradient(g)) = fill(&o[0]) else { panic!("{:?}", o[0]) };
+    let stops: Vec<(f32, Color)> = g.gradient.stops.iter().map(|s| (s.offset, s.color)).collect();
+    let (red, blue) = (Color::rgb(1.0, 0.0, 0.0), Color::rgb(0.0, 0.0, 1.0));
+    assert_eq!(stops.len(), 4, "{stops:?}");
+    assert_eq!((stops[0], stops[3]), ((0.0, red), (1.0, blue)), "{stops:?}");
+    assert_eq!((stops[1].0, stops[2]), (0.5, (0.5, red)), "{stops:?}");
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+    assert!(near(stops[1].1.to_rgb(), blue.to_rgb()), "{stops:?}");
 }
 
 /// Tiling patterns and spot inks are found again through a hash of what tells them apart, so a
@@ -465,6 +484,22 @@ fn the_bounding_box_comes_from_the_header_or_the_trailer() {
     assert_eq!(r.document.artboards[0].rect, Rect::new(0.0, 0.0, 612.0, 792.0));
     assert_eq!(objects(&r.document).len(), 1);
     assert!(r.warnings.iter().any(|w| w.contains("first of the file's 2 pages")), "{:?}", r.warnings);
+}
+
+/// #1552: a Type 42 font's glyph space is one unit an em, so its identity FontMatrix scaled to 12
+/// sets 12 pt type (a Type 1's 0.001 matrix needs the 1000-unit space).
+#[test]
+fn type_42_fonts_set_type_at_their_size() {
+    for (kind, matrix) in [(42, "[1 0 0 1 0 0]"), (1, "[0.001 0 0 0.001 0 0]")] {
+        let body = format!(
+            "/T 10 dict begin /FontName /T def /FontType {kind} def /FontMatrix {matrix} def /Encoding StandardEncoding def currentdict end /T exch definefont pop \
+             /T findfont 12 scalefont setfont 10 20 moveto (Hi) show"
+        );
+        let r = read(&body);
+        let NodeKind::Text(t) = &objects(&r.document)[0].kind else { panic!("{:?}", r.warnings) };
+        let size = t.runs[0].style.size * t.xf.determinant().abs().sqrt();
+        assert!((size - 12.0).abs() < 1e-6, "FontType {kind}: {size} pt");
+    }
 }
 
 #[test]

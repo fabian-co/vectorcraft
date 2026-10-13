@@ -237,11 +237,105 @@ fn roughen_seed_changes_result_and_detail_adds_points() {
 }
 
 #[test]
+fn catmull_rom_keeps_a_turn_back_smooth() {
+    // #1643: the path runs out to (10, 0) and turns back to (0.5, 0.2). The Catmull-Rom tangent
+    // `next - prev` is almost zero there; the anchor gets handles along the chords' bisector
+    // (here nearly perpendicular to them), collinear and as long as half the longer chord / 6.
+    let pts = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(0.5, 0.2), Point::new(10.0, 5.0)];
+    let sp = util::catmull_rom(&pts, false, 1.0);
+    let a = sp.anchors[1];
+    let (hin, hout) = (a.h_in - a.p, a.h_out - a.p);
+    assert!(close(hin.x, -hout.x, 1e-9) && close(hin.y, -hout.y, 1e-9), "collinear: {a:?}");
+    assert!(close(hout.hypot(), 0.5 * 10.0 / 6.0, 1e-3), "{a:?}");
+    assert!(hout.x.abs() < 0.05 * hout.hypot(), "across the chords: {a:?}");
+    // A regular turn keeps the plain Catmull-Rom tangent.
+    let pts = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0)];
+    let a = util::catmull_rom(&pts, false, 1.0).anchors[1];
+    let (got, want) = (a.h_out - a.p, (pts[2] - pts[0]) / 6.0);
+    assert!(close(got.x, want.x, 1e-12) && close(got.y, want.y, 1e-12), "{got:?} vs {want:?}");
+}
+
+#[test]
+fn roughen_smooth_makes_no_cusps() {
+    // #1643: wherever Roughen's jitter turns the path back, the smooth points stay smooth: no
+    // anchor's handles shrink below 1/12 of its longer chord (a cusp that PDF viewers miter).
+    let star = shapes::star(Point::new(150.0, 100.0), 70.0, 32.0, 5, 0.0);
+    for seed in 0..50 {
+        let out = run("distort.roughen", json!({"size": 3, "detail": 10, "seed": seed}), &star);
+        for sp in &out.subpaths {
+            let n = sp.anchors.len();
+            for i in 0..n {
+                let a = sp.anchors[i];
+                let (prev, next) = (sp.anchors[(i + n - 1) % n].p, sp.anchors[(i + 1) % n].p);
+                let chord = (a.p - prev).hypot().max((next - a.p).hypot());
+                assert!((a.h_out - a.p).hypot() >= chord / 12.0 - 1e-9, "seed {seed}: cusp at {:?}", a.p);
+            }
+        }
+    }
+}
+
+#[test]
 fn zigzag_ridge_count_and_amplitude() {
     let out = run("distort.zigZag", json!({"ridges": 4, "points": "corner", "size": 10}), &square());
     assert_eq!(out.anchor_count(), 4 * 5);
     let b = out.bounds().unwrap();
     assert!(b.width() > 100.0 && b.width() <= 120.0 + 1e-6, "{b:?}");
+}
+
+#[test]
+fn zigzag_spaces_ridges_evenly_along_a_straight_line() {
+    // #1554: on a straight line every ridge is the same distance from the line and as far from
+    // the next one, whether the points are corners or smooth.
+    let line = PathData::single(SubPath::polyline(&[Point::new(0.0, 0.0), Point::new(0.0, 500.0)], false));
+    for points in ["corner", "smooth"] {
+        let out = run("distort.zigZag", json!({"ridges": 4, "points": points, "size": 20}), &line);
+        let ps: Vec<Point> = out.subpaths[0].anchors.iter().map(|a| a.p).collect();
+        assert_eq!(ps.len(), 6, "{points}");
+        for (k, q) in ps.iter().enumerate() {
+            assert!(close(q.x.abs(), 20.0, 1e-6), "{points} {k}: {q:?}");
+            assert!(close(q.y, 100.0 * k as f64, 1e-3), "{points} {k}: {q:?}");
+        }
+    }
+}
+
+/// #1554 on curves: a circle's ridges sit at equal angles, at the radius plus and minus the size in
+/// turn all the way round.
+#[test]
+fn zigzag_on_a_circle_is_regular() {
+    let circle = shapes::ellipse(Rect::new(-50.0, -50.0, 50.0, 50.0));
+    let out = run("distort.zigZag", json!({"ridges": 3, "points": "corner", "size": 10}), &circle);
+    let pts: Vec<Point> = out.subpaths[0].anchors.iter().map(|a| a.p).collect();
+    assert_eq!(pts.len(), 16);
+    let start = pts[0].y.atan2(pts[0].x);
+    let mut radii = vec![];
+    for (i, q) in pts.iter().enumerate() {
+        let turn = (q.y.atan2(q.x) - start).to_degrees().abs() / 22.5;
+        assert!(close(turn, turn.round(), 0.02), "point {i} at {turn} sixteenths");
+        radii.push(q.to_vec2().hypot().round());
+    }
+    assert!(radii.iter().all(|r| *r == 60.0 || *r == 40.0) && (0..16).all(|i| radii[i] != radii[(i + 1) % 16]), "{radii:?}");
+}
+
+/// #1554 on an uneven curve: the ridges divide its length, not its parameter, into equal parts.
+#[test]
+fn zigzag_spaces_ridges_by_length_on_an_uneven_curve() {
+    use vectorcraft_geom::kurbo::{ParamCurve, ParamCurveArclen, ParamCurveNearest};
+    let (a, b) = (Point::new(0.0, 0.0), Point::new(300.0, 0.0));
+    let curve = PathData::single(SubPath::new(
+        vec![
+            vectorcraft_geom::Anchor::with_handles(a, a, Point::new(10.0, 40.0)),
+            vectorcraft_geom::Anchor::with_handles(b, Point::new(100.0, 200.0), b),
+        ],
+        false,
+    ));
+    let c = curve.subpaths[0].segment(0);
+    let len = c.arclen(1e-6);
+    let out = run("distort.zigZag", json!({"ridges": 3, "points": "corner", "size": 0}), &curve);
+    let along: Vec<f64> = out.subpaths[0].anchors.iter().map(|q| c.subsegment(0.0..c.nearest(q.p, 1e-9).t).arclen(1e-6) / len).collect();
+    assert_eq!(along.len(), 5);
+    for (k, share) in along.iter().enumerate() {
+        assert!(close(*share, k as f64 / 4.0, 1e-3), "{along:?}");
+    }
 }
 
 #[test]
@@ -296,6 +390,23 @@ fn twist_fixes_the_outer_circle_and_rotates_inside() {
     let out = apply_geometry(&[fx("distort.twist", json!({"angle": 90}))], &small, Rect::new(0.0, 0.0, 100.0, 100.0));
     let a = out.subpaths[0].anchors[0].p;
     assert!((a.y - 50.0).abs() > 1.0, "near-centre points rotate: {a:?}");
+}
+
+#[test]
+fn scribble_does_not_cross_holes() {
+    // #1648: a U (opening at the top, the notch x 30..70, y 0..60). Rows (y 2.5, 7.5, ...) through the prongs have
+    // two spans; their zig-zags must stay apart instead of crossing the notch.
+    let u = [(0.0, 0.0), (30.0, 0.0), (30.0, 60.0), (70.0, 60.0), (70.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)];
+    let u = PathData::single(SubPath::polyline(&u.map(|(x, y)| Point::new(x, y)), true));
+    let params = json!({"angle": 0, "variation": 0, "curviness": 0, "strokeWidth": 2, "spacing": 5});
+    let out = run("stylize.scribble", params, &u).to_bezpath();
+    for x in [40.0, 50.0, 60.0] {
+        for y in [12.5, 32.5, 52.5] {
+            assert_eq!(vectorcraft_geom::kurbo::Shape::winding(&out, Point::new(x, y)), 0, "scribble covers the notch at ({x}, {y})");
+        }
+    }
+    // The bar below the notch is still hatched.
+    assert_ne!(vectorcraft_geom::kurbo::Shape::winding(&out, Point::new(50.0, 82.5)), 0);
 }
 
 #[test]

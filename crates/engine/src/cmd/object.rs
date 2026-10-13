@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform",
             [],
             None,
-            "{matrix: [a,b,c,d,e,f], copy?: bool, ids?, strokes?: bool, corners?: bool, typeAreas?: bool, anchors?: bool, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} apply an affine to the selection (or ids); anchors (without ids or copy): paths with anchors selected with Direct Selection have only those anchors and their handles transformed, as the Transform tools and object.move/rotate/scale/reflect/shear do (default: the whole objects); strokes/corners: Scale Strokes & Effects / Scale Corners (default: the preferences); typeAreas: area type among them (not type inside a group) reshapes its frame by the matrix and its text reflows at its size, as a bounding-box handle drag does (default: the type transforms too)",
+            "{matrix: [a,b,c,d,e,f], copy?: bool, ids?, strokes?: bool, corners?: bool, typeAreas?: bool, anchors?: bool, objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} apply an affine to the selection (or ids); anchors (without ids or copy): paths with anchors selected with Direct Selection have only those anchors and their handles transformed, as the Transform tools and object.move/rotate/scale/reflect/shear do (default: the whole objects); strokes/corners: Scale Strokes & Effects / Scale Corners (default: the preferences); typeAreas: area type among them (not type inside a group) reshapes its frame by the matrix and its text reflows at its size, as a bounding-box handle drag does (default: the type transforms too)",
             has_doc,
             transform
         ),
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move…",
             ["Object", "Transform"],
             Some("Cmd+Shift+M"),
-            "{dx, dy, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
+            "{dx, dy, copy?, objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
             has_selection,
             move_cmd
         ),
@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Rotate…",
             ["Object", "Transform"],
             None,
-            "{angle: deg (counter-clockwise), absolute?: bool (angle is the bounding box's new angle, not an amount), origin?: [x,y] (default: the bounding box centre), copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} → {ids}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
+            "{angle: deg (counter-clockwise), absolute?: bool (angle is the bounding box's new angle, not an amount), origin?: [x,y] (default: the bounding box centre), copy?, objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size)} → {ids}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
             has_selection,
             rotate
         ),
@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Scale…",
             ["Object", "Transform"],
             None,
-            "{sx: %, sy?: %, origin?: [x,y], copy?, strokes?: bool (Scale Strokes & Effects: stroke weights, dashes and effect distances scale; off keeps them, type strokes included), corners?: bool (Scale Corners: live corner radii scale), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} (strokes/corners default to the preferences). With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
+            "{sx: %, sy?: %, origin?: [x,y], copy?, strokes?: bool (Scale Strokes & Effects: stroke weights, dashes and effect distances scale; off keeps them, type strokes included), corners?: bool (Scale Corners: live corner radii scale), objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size)} (strokes/corners default to the preferences). With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
             has_selection,
             scale
         ),
@@ -59,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reflect…",
             ["Object", "Transform"],
             None,
-            "{axis: \"vertical\"|\"horizontal\"|deg, origin?, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
+            "{axis: \"vertical\"|\"horizontal\"|deg, origin?, copy?, objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
             has_selection,
             reflect
         ),
@@ -68,7 +68,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shear…",
             ["Object", "Transform"],
             None,
-            "{angle: deg, axis?: \"horizontal\"|\"vertical\", origin?, copy?, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
+            "{angle: deg, axis?: \"horizontal\"|\"vertical\", origin?, copy?, objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size)}. With anchors selected with Direct Selection (and no copy), only those anchors and their handles transform, about the centre of their own box.",
             has_selection,
             shear
         ),
@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Nudge",
             [],
             None,
-            "{dx: -1|0|1, dy: -1|0|1, big?: bool (×10), copy?: bool, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the objects that move whole; default: prefs transformPatternTiles)} arrow-key nudge by the keyboard increment (the selected anchors, else objects, else ruler guides)",
+            "{dx: -1|0|1, dy: -1|0|1, big?: bool (×10), copy?: bool, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the objects that move whole; default: prefs transformPatternTiles), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size), objects?: bool (Transform Objects, as object.move)} arrow-key nudge by the keyboard increment (the selected anchors, else objects, else ruler guides)",
             has_selection_or_guides,
             nudge
         ),
@@ -184,8 +184,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Distribute",
             ["Window", "Align"],
             None,
-            "{horizontal?: \"left\"|\"center\"|\"right\", vertical?: \"top\"|\"center\"|\"bottom\", bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}",
-            has_multi,
+            "{horizontal?: \"left\"|\"center\"|\"right\", vertical?: \"top\"|\"center\"|\"bottom\", bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} With anchor points selected (Direct Selection), the points are spaced evenly between the first and the last along the axis instead (#1636)",
+            can_distribute,
             distribute
         ),
         cmd!(
@@ -193,8 +193,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Distribute Spacing",
             ["Window", "Align"],
             None,
-            "{axis: \"horizontal\"|\"vertical\", spacing?: pt (the key object, select.key, stays put and the others are spaced from it), bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)}",
-            has_multi,
+            "{axis: \"horizontal\"|\"vertical\", spacing?: pt (the key object, select.key, stays put and the others are spaced from it), bounds?: \"preview\"|\"geometric\" (default: the Use Preview Bounds preference; preview bounds take in strokes), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} With anchor points selected (Direct Selection), the points are spaced evenly along the axis instead, or `spacing` apart from the first (#1636)",
+            can_distribute,
             distribute_spacing
         ),
         cmd!(
@@ -202,7 +202,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Bounds",
             [],
             None,
-            "{x?, y?, width?, height?, reference?: 0..8 (9-point grid), proportional?, strokes?, corners?} (Transform panel; width/height and the reference point follow the bounding box, rotated with rotated objects; x, y are page coordinates; with Use Preview Bounds the values measure the visual bounds; strokes/corners as object.scale)",
+            "{x?, y?, width?, height?, reference?: 0..8 (9-point grid), proportional?, strokes?, corners?, copy?: bool, patterns?: bool (Transform Patterns), typeAreas?: bool (area type: the frame is reshaped and the text reflows at its size), objects?: bool (Transform Objects, as object.move)} (Transform panel; width/height and the reference point follow the bounding box, rotated with rotated objects; x, y are page coordinates; with Use Preview Bounds the values measure the visual bounds; strokes/corners as object.scale)",
             has_selection,
             set_bounds
         ),
@@ -267,15 +267,34 @@ pub(crate) fn transform_patterns(s: &mut Session, p: &Value, ids: &[NodeId]) -> 
     Ok(on)
 }
 
+/// Transform Objects (`objects` param, on unless it is false): off, a transform leaves the art
+/// where it is and, with Transform Patterns, moves only its pattern tiles.
+pub(crate) fn transforms_objects(p: &Value) -> bool {
+    bool_or(p, "objects", true)
+}
+
+/// `xf` on `n` with Transform Objects (`objects`, see [`transforms_objects`]) on or off.
+pub(crate) fn transform_node(n: &mut Node, xf: Affine, sc: Scaling, objects: bool) {
+    if objects {
+        n.transform(xf, sc);
+    } else if sc.patterns {
+        vectorcraft_doc::pattern::transform_patterns_only(n, xf);
+    }
+}
+
 /// Apply `xf` to `ids` (`copy` param: duplicate first; `strokes`/`corners`: see [`scaling`];
-/// `patterns`: see [`transform_patterns`]; `typeAreas`: see [`resize_type_area`]). Outside an
-/// interaction, records `xf` and the options it used for Transform Again.
+/// `patterns`: see [`transform_patterns`]; `objects`: see [`transforms_objects`]; `typeAreas`:
+/// see [`resize_type_area`]). Outside an
+/// interaction, records `xf` and the options it used for Transform Again. In an interaction whose
+/// document is still its snapshot, a transform with `copy` keeps its copies ([`preview_copies`]),
+/// and the next one that copies the same objects of the same snapshot transforms those copies.
 ///
 /// `anchors` (`ids` being the selection): with anchors selected with Direct Selection and no
 /// copy, only those anchors transform, their handles with them, and the objects selected whole.
 pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf: Affine, p: &Value, anchors: bool) -> Result<Value> {
     let copy = bool_or(p, "copy", false);
     let areas = bool_or(p, "typeAreas", false);
+    let objects = transforms_objects(p);
     let mut sc = if Scaling::factor(xf).is_some() { scaling(s, p) } else { Scaling::default() };
     sc.patterns = transform_patterns(s, p, &ids)?;
     // A transform of ids that name no object, or an identity transform without a copy, moves
@@ -283,7 +302,7 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
     // With a copy, the reply lists the copies, and there are none.
     let d = &s.doc()?.doc;
     let none = d.index_paths(ids.iter().copied()).is_empty();
-    let ids = if anchors && !copy && !s.doc()?.selection.anchors.is_empty() {
+    let ids = if anchors && objects && !copy && !s.doc()?.selection.anchors.is_empty() {
         if xf != Affine::IDENTITY {
             super::path::transform_anchors(s, label, xf, sc)?;
         }
@@ -291,15 +310,26 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
     } else if none || (!copy && xf == Affine::IDENTITY) {
         if copy { vec![] } else { ids }
     } else {
+        let kept = if copy { preview_copies(s, &ids)? } else { None };
         s.edit(label, |d, sel| {
-            let targets = if copy { duplicate_in(d, sel, &ids, Affine::IDENTITY)? } else { ids.clone() };
+            let targets = match &kept {
+                // The document becomes the snapshot with the kept copies, untransformed, and the
+                // loop below transforms only the copies.
+                Some(k) => {
+                    *d = Document::clone(&k.doc);
+                    sel.clone_from(&k.selection);
+                    k.ids.clone()
+                }
+                None if copy => duplicate_in(d, sel, &ids, Affine::IDENTITY)?,
+                None => ids.clone(),
+            };
             // Transforms don't move nodes in the tree, so the paths found up front stay right.
             let paths = d.index_paths(targets.iter().copied());
             for id in &targets {
                 if let Some(n) = paths.get(id).and_then(|p| d.node_mut_at(p))
-                    && !(areas && resize_type_area(n, xf))
+                    && !(objects && areas && resize_type_area(n, xf))
                 {
-                    n.transform(xf, sc);
+                    transform_node(n, xf, sc, objects);
                 }
             }
             Ok(targets)
@@ -307,7 +337,7 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
     };
     let st = s.doc_mut()?;
     if st.interaction.is_none() {
-        let mut options = json!({ "copy": copy, "typeAreas": areas, "patterns": sc.patterns });
+        let mut options = json!({ "copy": copy, "typeAreas": areas, "patterns": sc.patterns, "objects": objects });
         if Scaling::factor(xf).is_some() {
             options["strokes"] = json!(sc.strokes);
             options["corners"] = json!(!sc.keep_corners);
@@ -316,6 +346,33 @@ pub(crate) fn apply_transform(s: &mut Session, label: &str, ids: Vec<NodeId>, xf
         st.last_perspective = None;
     }
     Ok(json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
+}
+
+/// Returns the copies of `roots` for a transform with `copy` in an interaction whose document is
+/// still its snapshot, as in a preview ([`Session::preview`] puts the snapshot back first). These
+/// are the copies the interaction keeps when they were made of that snapshot for the same `roots`;
+/// otherwise this copies `roots` with [`duplicate_in`] in a clone of the snapshot, untransformed,
+/// and the interaction keeps that clone. It returns `None` outside an interaction, and when the
+/// document is no longer the snapshot, as for a command run in a typing session or a script batch
+/// after an earlier edit there: the transform then copies the current document.
+fn preview_copies(s: &mut Session, roots: &[NodeId]) -> Result<Option<Arc<crate::PreviewCopies>>> {
+    let st = s.doc_mut()?;
+    let Some(it) = &mut st.interaction else { return Ok(None) };
+    if !Arc::ptr_eq(&st.doc, &it.doc) {
+        return Ok(None);
+    }
+    if let Some(k) = &it.copies
+        && Arc::ptr_eq(&k.from, &it.doc)
+        && k.roots == roots
+    {
+        return Ok(Some(k.clone()));
+    }
+    let mut doc = it.doc.clone();
+    let mut selection = st.selection.clone();
+    let ids = duplicate_in(Arc::make_mut(&mut doc), &mut selection, roots, Affine::IDENTITY)?;
+    let k = Arc::new(crate::PreviewCopies { from: it.doc.clone(), roots: roots.to_vec(), doc, selection, ids });
+    it.copies = Some(k.clone());
+    Ok(Some(k))
 }
 
 /// Area type resized by its bounding box: `xf` reshapes its frame (the type area) and the text
@@ -505,9 +562,8 @@ fn send_to_current_layer(s: &mut Session, _: &Value) -> Result<Value> {
         return ok();
     }
     s.edit("Send to Current Layer", |d, _| {
-        for id in &ids {
-            d.move_node(*id, Some(layer), usize::MAX)?;
-        }
+        let moved = d.remove_many(&ids)?;
+        d.children_mut(Some(layer))?.extend(moved);
         Ok(())
     })?;
     ok()
@@ -525,14 +581,11 @@ fn group(s: &mut Session, _: &Value) -> Result<Value> {
 
 /// Put `ids` (top-level objects, in paint order) in a new group where the front-most one was.
 pub(crate) fn group_nodes(d: &mut Document, ids: &[NodeId]) -> Result<NodeId> {
-    let Some(top) = ids.last().copied() else { return Err(EngineError::Other("nothing selected".into())) };
-    let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
-    let gid = d.alloc_id();
-    d.insert(par, idx + 1, Node::group(gid, vec![]))?;
-    for id in ids {
-        d.move_node(*id, Some(gid), usize::MAX)?;
+    if ids.is_empty() {
+        return Err(EngineError::Other("nothing selected".into()));
     }
-    Ok(gid)
+    let gid = d.alloc_id();
+    Ok(d.wrap(ids, |children| Node::group(gid, children))?)
 }
 
 fn ungroup(s: &mut Session, _: &Value) -> Result<Value> {
@@ -544,31 +597,30 @@ fn ungroup(s: &mut Session, _: &Value) -> Result<Value> {
     }
     s.edit("Ungroup", |d, sel| {
         let mut new_sel = vec![];
+        let mut ungrouped = vec![];
         for id in &ids {
             let Some(n) = d.node(*id) else { continue };
             let NodeKind::Group { children, clip } = &n.kind else {
                 new_sel.push(*id);
                 continue;
             };
-            let children = children.clone();
-            let clip = *clip;
-            let (par, idx, _) = d.position(*id).ok_or(EngineError::NoNode(*id))?;
-            let opacity = n.opacity;
-            d.remove(*id)?;
-            for (k, c) in children.into_iter().enumerate() {
-                let mut c = (*c).clone();
+            let mut out = Vec::with_capacity(children.len());
+            for (k, c) in children.iter().enumerate() {
+                let mut c = (**c).clone();
                 // The clipping path keeps its paint (none, unless painted after Make).
-                if clip
+                if *clip
                     && k == 0
                     && let NodeKind::Path { clipping, .. } = &mut c.kind
                 {
                     *clipping = false;
                 }
-                c.opacity *= opacity;
+                c.opacity *= n.opacity;
                 new_sel.push(c.id);
-                d.insert(par, idx + k, c)?;
+                out.push(c);
             }
+            ungrouped.push((*id, out));
         }
+        d.insert_beside(ungrouped, true)?;
         sel.set(new_sel);
         Ok(())
     })?;
@@ -666,54 +718,60 @@ fn show_all(s: &mut Session, _: &Value) -> Result<Value> {
 fn compound_make(s: &mut Session, _: &Value) -> Result<Value> {
     let ids = selected_roots(s)?;
     let Some(backmost) = ids.first().copied() else { return Err(EngineError::Other("nothing selected".into())) };
-    let top = ids.last().copied().unwrap_or(backmost);
     let id = s.edit("Make Compound Path", |d, sel| {
-        let appearance = d.node(backmost).ok_or(EngineError::NoNode(backmost))?.appearance.clone();
-        let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
-        let mut paths: Vec<Arc<Node>> = vec![];
+        d.node(backmost).ok_or(EngineError::NoNode(backmost))?;
+        let mut units: Vec<Vec<Arc<Node>>> = vec![];
+        let mut appearance = None;
         for id in &ids {
-            let n = d.node(*id).cloned().ok_or(EngineError::NoNode(*id))?;
-            match &n.kind {
-                NodeKind::Path { .. } => paths.push(Arc::new(n)),
-                NodeKind::Compound { children, .. } => paths.extend(children.iter().cloned()),
-                NodeKind::Group { .. } => {
-                    n.walk(&mut |c| {
-                        if matches!(c.kind, NodeKind::Path { .. }) {
-                            paths.push(Arc::new(c.clone()))
-                        }
-                    });
-                }
-                _ => return Err(EngineError::Other("compound paths can only contain paths".into())),
+            let n = d.node(*id).ok_or(EngineError::NoNode(*id))?;
+            if !matches!(n.kind, NodeKind::Path { .. } | NodeKind::Compound { .. } | NodeKind::Group { .. }) {
+                return Err(EngineError::Other("compound paths can only contain paths".into()));
             }
+            compound_members(n, &mut appearance, &mut units);
         }
         let cid = d.alloc_id();
         let mut c = Node::new(cid, NodeKind::Compound { children: vec![], rule: FillRule::NonZero });
-        c.appearance = appearance;
-        d.insert(par, idx + 1, c)?;
-        for id in &ids {
-            d.remove(*id)?;
-        }
-        let ch = d.node_mut(cid).and_then(|n| n.children_mut()).ok_or(EngineError::NoNode(cid))?;
+        c.appearance = appearance.unwrap_or_default();
+        let ch = c.children_mut().ok_or(EngineError::NoNode(cid))?;
         // The paths in front run against the backmost one, so where they overlap it they cut holes
-        // under the non-zero fill rule (#1197).
+        // under the non-zero fill rule (#1197). A compound path's paths turn together, by its
+        // first: its own holes (a letter's counters) stay holes.
         let direction = |n: &Node| n.path_data().and_then(|pd| pd.subpaths.first()).map_or(0.0, |sp| sp.signed_area().signum());
-        let back = paths.first().map_or(0.0, |p| direction(p));
-        for (i, mut p) in paths.into_iter().enumerate() {
-            let pn = Arc::make_mut(&mut p);
-            pn.appearance = Appearance::default().into();
-            let flip = i > 0 && back != 0.0 && direction(pn) == back;
-            if let NodeKind::Path { path, live, .. } = &mut pn.kind {
-                *live = None;
-                if flip {
-                    path.reverse();
+        let first = |unit: &[Arc<Node>]| unit.first().map_or(0.0, |p| direction(p));
+        let back = units.first().map_or(0.0, |u| first(u));
+        for (i, unit) in units.into_iter().enumerate() {
+            let flip = i > 0 && back != 0.0 && first(&unit) == back;
+            for mut p in unit {
+                let pn = Arc::make_mut(&mut p);
+                pn.appearance = Appearance::default().into();
+                if let NodeKind::Path { path, live, .. } = &mut pn.kind {
+                    *live = None;
+                    if flip {
+                        path.reverse();
+                    }
                 }
+                ch.push(p);
             }
-            ch.push(p);
         }
+        d.wrap(&ids, |_| c)?;
         sel.set([cid]);
         Ok(cid)
     })?;
     Ok(json!({ "id": id.0 }))
+}
+
+/// The paths in `n` (a path, a compound path, or a group searched in depth) onto `out`, in paint
+/// order: each path alone, a compound path's paths together. Into `paint` goes the appearance of
+/// the backmost found so far: the path's own, or its compound path's, which is what painted it. A
+/// group has no paint of its own to give: a group of outlined type made a compound path that drew
+/// nothing.
+fn compound_members(n: &Node, paint: &mut Option<vectorcraft_doc::Shared<Appearance>>, out: &mut Vec<Vec<Arc<Node>>>) {
+    match (&n.kind, n.children()) {
+        (NodeKind::Path { .. }, _) => out.push(vec![Arc::new(n.clone())]),
+        (NodeKind::Compound { .. }, Some(paths)) if !paths.is_empty() => out.push(paths.clone()),
+        (_, children) => return children.into_iter().flatten().for_each(|c| compound_members(c, paint, out)),
+    }
+    paint.get_or_insert_with(|| n.appearance.clone());
 }
 
 /// Is `n` a compound path to release: a compound path, or a path of several subpaths (an SVG `d`
@@ -736,17 +794,17 @@ fn compound_release(s: &mut Session, _: &Value) -> Result<Value> {
     }
     s.edit("Release Compound Path", |d, sel| {
         let mut out = vec![];
+        let mut released = vec![];
         for id in &ids {
             let Some(n) = d.node(*id).cloned().filter(releases) else { continue };
-            let (par, idx, _) = d.position(*id).ok_or(EngineError::NoNode(*id))?;
-            d.remove(*id)?;
+            let mut parts = vec![];
             match &n.kind {
                 NodeKind::Compound { children, .. } => {
-                    for (k, c) in children.iter().enumerate() {
+                    for c in children {
                         let mut c = (**c).clone();
                         c.appearance = n.appearance.clone();
                         out.push(c.id);
-                        d.insert(par, idx + k, c)?;
+                        parts.push(c);
                     }
                 }
                 // Each subpath becomes a path of its own with the path's paint, in the same
@@ -758,12 +816,14 @@ fn compound_release(s: &mut Session, _: &Value) -> Result<Value> {
                             (*path, *live) = (PathData::single(sp.clone()), None);
                         }
                         out.push(c.id);
-                        d.insert(par, idx + k, c)?;
+                        parts.push(c);
                     }
                 }
                 _ => {}
             }
+            released.push((*id, parts));
         }
+        d.insert_beside(released, true)?;
         sel.set(out);
         Ok(())
     })?;
@@ -811,13 +871,12 @@ fn clip_make(s: &mut Session, _: &Value) -> Result<Value> {
     let Some(&top) = ids.last() else { return Err(EngineError::Other("nothing selected".into())) };
     let gid = s.edit("Make Clipping Mask", |d, sel| {
         make_clipping_path(d, top)?;
-        let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
         let gid = d.alloc_id();
-        d.insert(par, idx + 1, Node::new(gid, NodeKind::Group { children: vec![], clip: true }))?;
-        d.move_node(top, Some(gid), 0)?;
-        for id in &ids[..ids.len() - 1] {
-            d.move_node(*id, Some(gid), usize::MAX)?;
-        }
+        // The topmost object, the clipping path, goes first, and the others follow in paint order.
+        d.wrap(&ids, |mut children| {
+            children.rotate_right(1);
+            Node::new(gid, NodeKind::Group { children, clip: true })
+        })?;
         sel.set([gid]);
         Ok(gid)
     })?;
@@ -1203,9 +1262,61 @@ fn align_anchors(s: &mut Session, p: &Value, ids: &[NodeId], (h, v): (Option<&st
     ok()
 }
 
+/// Distribute needs two or more objects, or anchor points selected with Direct Selection (they
+/// may all be on one path).
+fn can_distribute(s: &Session) -> std::result::Result<(), String> {
+    if s.active().is_some_and(|st| !st.selection.anchors.is_empty()) { Ok(()) } else { has_multi(s) }
+}
+
+/// [`distribute`] and [`distribute_spacing`] of the selected anchor points (whole paths among them
+/// give all theirs): the points between the first and the last along the axis are spaced evenly,
+/// or `gap` apart from the first. A point has no size, so every Distribute option of an axis
+/// gives the same result.
+fn distribute_anchors(s: &mut Session, label: &str, horiz: bool, gap: Option<f64>) -> Result<Value> {
+    let targets = super::path::anchor_targets(s)?;
+    let d = &s.doc()?.doc;
+    let along = |q: Point| if horiz { q.x } else { q.y };
+    let mut pts: Vec<(NodeId, usize, usize, f64)> = targets
+        .iter()
+        .flat_map(|(id, refs)| {
+            refs.iter().filter_map(move |&(si, ai)| Some((*id, si, ai, along(d.node(*id)?.path_data()?.subpaths.get(si)?.anchors.get(ai)?.p))))
+        })
+        .collect();
+    pts.sort_by(|a, b| a.3.total_cmp(&b.3));
+    let (Some(first), Some(last)) = (pts.first().map(|q| q.3), pts.last().map(|q| q.3)) else {
+        return ok();
+    };
+    // Two points are the ends already; with a gap the second is placed from the first.
+    if pts.len() < if gap.is_some() { 2 } else { 3 } {
+        return ok();
+    }
+    let step = gap.unwrap_or((last - first) / (pts.len() - 1) as f64);
+    let moves: Vec<(NodeId, usize, usize, f64)> =
+        pts.iter().enumerate().map(|(i, &(id, si, ai, at))| (id, si, ai, first + step * i as f64 - at)).collect();
+    if moves.iter().all(|m| m.3.abs() <= 1e-9) {
+        return ok();
+    }
+    s.edit(label, |d, _| {
+        for &(id, si, ai, delta) in &moves {
+            if let Some(a) = super::path::path_mut(d, id)?.anchor_mut(si, ai) {
+                a.translate(if horiz { Vec2::new(delta, 0.0) } else { Vec2::new(0.0, delta) });
+            }
+        }
+        Ok(())
+    })?;
+    ok()
+}
+
 fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = selected_roots(s)?;
     let preview = preview_bounds(s, p, "object.distribute")?;
+    // Anchor points selected with Direct Selection are distributed themselves, as Align aligns them.
+    if !s.doc()?.selection.anchors.is_empty() {
+        return match direction(p, "object.distribute")? {
+            (None, None) => Err(bad("object.distribute", "give horizontal or vertical")),
+            (h, _) => distribute_anchors(s, "Distribute", h.is_some(), None),
+        };
+    }
     let mut items = items_bounds(&s.doc()?.doc, &ids, preview);
     let (horiz, key): (bool, fn(&Rect, bool) -> f64) = match direction(p, "object.distribute")? {
         (Some(h), _) => (
@@ -1249,6 +1360,14 @@ fn distribute_spacing(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = selected_roots(s)?;
     let horiz = choice(p, "object.distributeSpacing", "axis", &["horizontal", "vertical"])? != Some("vertical");
     let preview = preview_bounds(s, p, "object.distributeSpacing")?;
+    let spacing = p
+        .get("spacing")
+        .filter(|v| !v.is_null())
+        .map(|v| v.as_f64().filter(|g| g.is_finite()).ok_or_else(|| bad("object.distributeSpacing", "`spacing` must be a number")))
+        .transpose()?;
+    if !s.doc()?.selection.anchors.is_empty() {
+        return distribute_anchors(s, "Distribute Spacing", horiz, spacing);
+    }
     let mut items = items_bounds(&s.doc()?.doc, &ids, preview);
     items.sort_by(|a, b| if horiz { a.1.x0.total_cmp(&b.1.x0) } else { a.1.y0.total_cmp(&b.1.y0) });
     let n = items.len();
@@ -1257,11 +1376,6 @@ fn distribute_spacing(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let size = |r: &Rect| if horiz { r.width() } else { r.height() };
     let start = |r: &Rect| if horiz { r.x0 } else { r.y0 };
-    let spacing = p
-        .get("spacing")
-        .filter(|v| !v.is_null())
-        .map(|v| v.as_f64().filter(|g| g.is_finite()).ok_or_else(|| bad("object.distributeSpacing", "`spacing` must be a number")))
-        .transpose()?;
     let gap = match spacing {
         Some(g) => g,
         None => {

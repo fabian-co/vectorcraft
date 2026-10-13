@@ -50,6 +50,7 @@ fn write(doc: &Document, opts: &ExportOptions, native: Option<&[u8]>, id_prefix:
         body: String::new(),
         defs: String::new(),
         classes: Vec::new(),
+        class_ids: HashMap::new(),
         used_ids: HashSet::new(),
         names: HashMap::new(),
         depth: 1,
@@ -259,8 +260,10 @@ struct Writer<'a> {
     xf: Affine,
     body: String,
     defs: String,
-    /// Unique CSS declaration blocks; class name is `cls-{index + 1}`.
+    /// Unique CSS declaration blocks, in first-use order (used for deterministic output).
     classes: Vec<String>,
+    /// 1-based class/entity number by declaration; avoids a linear scan for each style.
+    class_ids: HashMap<String, usize>,
     used_ids: HashSet<String>,
     names: HashMap<NodeId, String>,
     depth: usize,
@@ -657,13 +660,13 @@ impl Writer<'_> {
 
     /// The 1-based number of a distinct declaration block (a CSS class or a style entity).
     fn class(&mut self, decl: String) -> usize {
-        match self.classes.iter().position(|c| *c == decl) {
-            Some(i) => i + 1,
-            None => {
-                self.classes.push(decl);
-                self.classes.len()
-            }
+        if let Some(&i) = self.class_ids.get(decl.as_str()) {
+            return i;
         }
+        let i = self.classes.len() + 1;
+        self.class_ids.insert(decl.clone(), i);
+        self.classes.push(decl);
+        i
     }
 
     /// `<metadata>`: the Dublin Core terms of File Info ([`ExportOptions::metadata`]) and the
@@ -1235,6 +1238,14 @@ impl Writer<'_> {
             return;
         }
         let elements = Node::knockout_elements(children);
+        // Where every element over another covers it fully, drawing them in order knocks out as
+        // much: the masks would only add seams along the shapes' antialiased edges.
+        if elements.iter().skip(1).all(|c| paints_opaque(c)) {
+            for c in elements {
+                self.node(c);
+            }
+            return;
+        }
         let Some((first, rest)) = elements.split_first() else { return };
         for c in rest.iter().rev() {
             let mid = self.knockout_mask(c);
@@ -2156,4 +2167,29 @@ fn line_start(line: &[Segment], anchor: Option<f64>) -> Option<(f64, f64)> {
         None => first.x,
     };
     Some((x, first.y))
+}
+
+/// Does `n` paint opaquely wherever it paints (no transparency, blending, masks or effects in
+/// it)? Anything this can't tell is taken as not.
+fn paints_opaque(n: &Node) -> bool {
+    use vectorcraft_doc::{AppearanceItem, NodeKind};
+    let paint = |p: &Paint| match p {
+        Paint::None | Paint::Solid { .. } => true,
+        Paint::Gradient(g) => g.gradient.stops.iter().all(|s| s.opacity >= 1.0),
+        _ => false,
+    };
+    let items = n.appearance.items.iter().all(|i| match i {
+        AppearanceItem::Fill(f) => !f.visible || (f.opacity >= 1.0 && f.blend == BlendMode::Normal && f.effects.is_empty() && paint(&f.paint)),
+        // Brush art draws as pieces with opacities of their own (bristles vary theirs).
+        AppearanceItem::Stroke(s) => {
+            !s.visible || (s.opacity >= 1.0 && s.blend == BlendMode::Normal && s.effects.is_empty() && s.brush.is_none() && paint(&s.paint))
+        }
+    });
+    let own = n.opacity >= 1.0 && n.blend == BlendMode::Normal && n.extras().mask.is_none() && n.appearance.effects.is_empty() && items;
+    own && match &n.kind {
+        NodeKind::Path { .. } => true,
+        NodeKind::Group { children, .. } | NodeKind::Compound { children, .. } => children.iter().all(|c| paints_opaque(c)),
+        NodeKind::Mesh(m) => m.points.iter().all(|p| p.opacity >= 1.0),
+        _ => false,
+    }
 }
