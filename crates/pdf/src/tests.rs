@@ -134,6 +134,54 @@ fn roundtrip_rect_and_ellipse_bounds() {
 }
 
 #[test]
+fn an_instance_whose_art_reaches_the_page_is_written() {
+    // The symbol's red rectangle, (100, 50) to (140, 90), drawn from (-50, -50): on the page, while
+    // the 20 × 20 square around the origin, moved to (-60, -60) to (-40, -40), is off it.
+    let mut d = doc(200.0, 100.0);
+    let red = rect_node(Rect::new(100.0, 50.0, 140.0, 90.0), Color::rgb(1.0, 0.0, 0.0));
+    let far = vectorcraft_doc::Symbol { name: "Far".into(), art: Arc::new(red) };
+    d.symbols.push(far.clone());
+    let instance = Node::new(NodeId(0), NodeKind::SymbolInstance { symbol: "Far".into(), xf: Affine::translate((-50.0, -50.0)) });
+    add(&mut d, instance.clone());
+    let out = roundtrip(&d);
+    let l = leaves(&out);
+    assert_eq!(l.len(), 1);
+    assert!(close(l[0].geometric_bounds().unwrap(), Rect::new(50.0, 0.0, 90.0, 40.0), 0.01), "{:?}", l[0].geometric_bounds());
+    // An element of a knockout group, beside a blue rectangle.
+    let mut d = doc(200.0, 100.0);
+    d.symbols.push(far);
+    let blue = rect_node(Rect::new(150.0, 10.0, 170.0, 30.0), Color::rgb(0.0, 0.0, 1.0));
+    let mut group = Node::group(NodeId(0), vec![Arc::new(instance), Arc::new(blue)]);
+    group.knockout = vectorcraft_doc::Knockout::On;
+    add(&mut d, group);
+    let fills: Vec<[u8; 4]> = leaves(&roundtrip(&d)).iter().filter_map(|n| Some(n.appearance.fill_paint().color()?.to_rgba8(1.0))).collect();
+    assert!(fills.contains(&[255, 0, 0, 255]) && fills.contains(&[0, 0, 255, 255]), "{fills:?}");
+}
+
+#[test]
+fn an_instance_whose_brush_art_reaches_the_page_is_written() {
+    // The symbol's art: a line from (0, 40) to (0, 60) with a 1 pt stroke painted by a 20 pt round
+    // nib. Drawn from (-5, 0), the line lies left of the page, and the nib paints 10 pt either side
+    // of it, onto the page.
+    let mut d = doc(200.0, 100.0);
+    let mut lib = vectorcraft_brush::library(&d);
+    let Some(vectorcraft_brush::BrushKind::Calligraphic(c)) = lib.iter_mut().find(|b| b.name == "3 pt. Round").map(|b| &mut b.kind) else {
+        panic!("the 3 pt. Round brush")
+    };
+    c.size = 20.0;
+    vectorcraft_brush::store(&mut d, &lib);
+    let mut stroke = Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 1.0);
+    stroke.stroke_mut().unwrap().brush = Some("3 pt. Round".into());
+    let line = Node::path(NodeId(0), shapes::line((0.0, 40.0).into(), (0.0, 60.0).into()), stroke);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Nib".into(), art: Arc::new(line) });
+    add(&mut d, Node::new(NodeId(0), NodeKind::SymbolInstance { symbol: "Nib".into(), xf: Affine::translate((-5.0, 0.0)) }));
+    let out = roundtrip(&d);
+    let l = leaves(&out);
+    assert_eq!(l.len(), 1, "the nib's art");
+    assert!(close(l[0].geometric_bounds().unwrap(), Rect::new(-15.0, 30.0, 5.0, 70.0), 0.01), "{:?}", l[0].geometric_bounds());
+}
+
+#[test]
 fn roundtrip_colours_preserved() {
     let mut d = doc(300.0, 100.0);
     let cols = [Color::rgb8(0x12, 0x34, 0x56), Color::rgb8(0xff, 0x80, 0x00), Color::rgb8(0x00, 0xc0, 0x40)];
@@ -685,4 +733,47 @@ fn opacity_mask_exports_as_luminosity_soft_mask() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("/SMask"), "soft mask in an ExtGState");
     assert!(text.contains("/Luminosity"));
+}
+
+/// A function or colour space built on itself is refused before the interpreter builds it (by
+/// recursion, with no cap: a stack overflow), and those of real files are read.
+#[test]
+fn functions_and_colour_spaces_built_on_themselves_are_refused() {
+    use vectorcraft_testkit::pdf::{PdfPage, first_extra, pdf_with};
+    let first = first_extra(1);
+    let (me, next) = (format!("{first} 0 R"), format!("{} 0 R", first + 1));
+    let shaded = PdfPage {
+        resources: format!("/Shading << /S << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function {me} >> >>"),
+        ..PdfPage::new(100.0, 100.0, "/S sh")
+    };
+    let filled = PdfPage { resources: format!("/ColorSpace << /C {me} >>"), ..PdfPage::new(100.0, 100.0, "/C cs 0 sc 0 0 50 50 re f") };
+    let stitch = |on: &str| format!("<< /FunctionType 3 /Domain [0 1] /Functions [{on}] /Bounds [] /Encode [0 1] >>");
+    let indexed = |on: &str| format!("[/Indexed {on} 1 <000000ffffff>]");
+    let ramp = "<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>";
+    // `n` functions, each stitching the next, then a plain one.
+    let chain = |n: usize| (1..=n).map(|i| stitch(&format!("{} 0 R", first + i))).chain([ramp.to_string()]).collect::<Vec<_>>();
+    let calculator =
+        |program: &str| format!("<< /FunctionType 4 /Domain [0 1] /Range [0 1 0 1 0 1] /Length {} >>\nstream\n{program}\nendstream", program.len());
+    for (what, page, objects) in [
+        ("a function stitching itself", &shaded, vec![stitch(&me)]),
+        ("two functions stitching each other", &shaded, vec![stitch(&next), stitch(&me)]),
+        ("twenty functions, each stitching the next", &shaded, chain(20)),
+        ("procedures in procedures", &shaded, vec![calculator(&format!("{}{}", "{".repeat(100), "}".repeat(100)))]),
+        ("a colour space on itself", &filled, vec![indexed(&me)]),
+        ("two colour spaces on each other", &filled, vec![indexed(&next), indexed(&me)]),
+    ] {
+        let objects: Vec<&str> = objects.iter().map(String::as_str).collect();
+        let e = import(&pdf_with(std::slice::from_ref(page), &objects, None)).err().map(|e| e.to_string());
+        assert!(e.as_deref().is_some_and(|e| e.contains("built on one another without end")), "{what}: {e:?}");
+    }
+    for (what, page, objects) in [
+        ("a function stitching one", &shaded, vec![stitch(&next), ramp.to_string()]),
+        ("three functions, each stitching the next", &shaded, chain(3)),
+        ("a calculator function", &shaded, vec![calculator("{ dup 1 exch sub 0 }")]),
+        ("an indexed colour space", &filled, vec![indexed("/DeviceRGB")]),
+    ] {
+        let objects: Vec<&str> = objects.iter().map(String::as_str).collect();
+        let d = import(&pdf_with(std::slice::from_ref(page), &objects, None)).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert!(d.layers.iter().any(|l| l.children().is_some_and(|c| !c.is_empty())), "{what}: its art is read");
+    }
 }

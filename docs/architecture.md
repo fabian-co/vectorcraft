@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (desktop printing uses craft-print; Windows 7 fallback retained) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (verified PngSuite downloads, #1729; synthetic control-input budgets, #1709; desktop printing uses craft-print; Windows 7 fallback retained) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft is built today. The design rationale lives in the local, gitignored `plan/architecture.md`;
 this file describes what is committed. Day-to-day rules (clean-room, never crash, quality gates) are in
@@ -62,7 +62,9 @@ its target excludes the shared backend because Windows.Data.Pdf is unavailable t
 ## Agent control
 
 - **Control channel:** JSON lines on a local TCP port (`--control 7979`), with real egui pointer and keyboard
-  injection and screenshots ([control-protocol.md](control-protocol.md)).
+  injection and screenshots ([control-protocol.md](control-protocol.md)). Synthetic gestures are validated
+  before queue mutation; the pending input queue is capped, and control requests yield after a bounded
+  batch per frame (#1709).
 - **MCP:** `vectorcraft-cli mcp`, attached to a running app or headless ([mcp.md](mcp.md)).
 - **Sandboxing:** `--automation-read-root` / `--automation-write-root` confine what agents read and write.
 
@@ -72,10 +74,16 @@ No panics in shipped code (workspace clippy lints ban `unwrap`, `expect`, `panic
 `vectorcraft_engine::guard` catches a panic at every entry point and rolls the document back; Data Recovery
 saves copies in the background. See [development.md](development.md#robustness-vectorcraft-never-crashes).
 
+## Corpus fetching
+
+`cargo xtask corpus --download` retrieves only allowlisted regular PngSuite files over HTTPS at a pinned mirror commit. SHA-256 and exact size checks precede publication; the downloader never extracts an archive. Existing verified files are reused; failed downloads leave existing corpus files intact. See [development.md](development.md#verified-pngsuite-corpus).
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Pinned PngSuite HTTPS files verified by SHA-256 before publication; bounded downloads replace archive extraction (#1729). Scores and hours unchanged. |
+| 2026-10-13 | minor | Bounded synthetic control input (#1709): counts and queued events validated before mutation; control-channel bursts yield between frames. Scores and hours unchanged. |
 | 2026-10-12 | minor | Desktop PDF spooler shared through craft-print; exact physical sizes, composed copies and Windows 7 fallback retained. Scores and remaining gaps unchanged. |
 | 2026-10-10 | minor | Added the `three-d` crate |
 | 2026-10-10 | major | First version, from the workspace, the layering table and the existing docs |
