@@ -7,7 +7,7 @@ use serde_json::json;
 use vectorcraft_doc::NodeKind;
 
 use crate::panels::stroke as stroke_panel;
-use crate::state::{ZOOM_STOPS, zoom_label};
+use crate::state::{ROTATE_VIEW_ANGLES, ZOOM_STOPS, zoom_label};
 use crate::theme::{self, Tokens};
 use crate::widgets;
 use crate::{VectorcraftApp, icons, menus, titlebar};
@@ -208,6 +208,36 @@ pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui, controls: AnchorCon
     }
 }
 
+/// The id of the Control bar's isolation button.
+const ISOLATION_BUTTON: &str = "cb-isolation";
+
+/// The Control bar's isolation button. In isolation mode it is Exit Isolation Mode, except while a
+/// pattern is edited (the isolation bar's Done and Cancel end that). Otherwise, with one object
+/// selected that [`vectorcraft_tools::select::isolates`], it is Isolate Selected Object, which
+/// also isolates a path inside a group that Direct Selection selected. An envelope's contents
+/// get no button: the envelope's Edit Envelope and Edit Contents buttons show instead.
+fn isolation_button(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let Some(st) = app.session.active() else { return };
+    let (icon, tip, id) = if st.isolation.is_some() {
+        if st.doc.pattern_edit.is_some() {
+            return;
+        }
+        ("chevron-left", tl!("Exit Isolation Mode"), "object.exitIsolation")
+    } else if let [one] = st.selection.objects[..]
+        && st.doc.node(one).is_some_and(|n| vectorcraft_tools::select::isolates(&n.kind))
+        && vectorcraft_doc::live::envelope_of(&st.doc, one).is_none()
+    {
+        ("square-dashed", tl!("Isolate Selected Object"), "object.isolate")
+    } else {
+        return;
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+    let resp = ui.interact(rect, egui::Id::new(ISOLATION_BUTTON), Sense::click());
+    if widgets::paint_icon_button(ui, resp, icon, tip, false).clicked() {
+        crate::menus::invoke(app, id, json!({}));
+    }
+}
+
 /// The room the Control bar's inline X/Y/W/H fields need; with less, only the Transform link shows.
 const INLINE_TRANSFORM_WIDTH: f32 = 440.0;
 
@@ -252,6 +282,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 if anchors != AnchorControls::None {
                     anchor_buttons(app, ui, anchors);
                 }
+                isolation_button(app, ui);
                 ui.add_space(6.0);
                 // An image or an Image Trace object shows its own controls in place of Fill and Stroke.
                 let image = crate::place::control_bar_details(app, ui) || crate::panels::image_trace::control_bar(app, ui);
@@ -320,6 +351,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     let c = b.center();
                     let origin = app.ruler_origin();
                     let link = app.session.prefs.constrain_proportions;
+                    let copy = crate::panels::transform::alt_enter_copies(app, ui);
                     for (k, lbl, v, offset) in [
                         ("x", "X:", c.x, origin.x),
                         ("y", "Y:", c.y, origin.y),
@@ -332,7 +364,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         }
                         widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
                         if let Some(nv) = widgets::num_field(ui, ("cb", k), Some(v - offset), units, 80.0) {
-                            app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link})).ok();
+                            app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link, "copy": copy})).ok();
                         }
                     }
                 }
@@ -502,6 +534,91 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
 }
 
+/// Draws the artboard navigator's field, which shows the active artboard (`cur`) by number and
+/// name. The field's list shows every artboard by number and name, as the Artboards panel lists
+/// them, and opens with the active artboard's row in view. The list lays out only the rows in view
+/// and at most one more. Returns the artboard chosen in the list.
+fn artboard_list(app: &VectorcraftApp, ui: &mut Ui, cur: usize) -> Option<usize> {
+    /// The width of the field.
+    const FIELD_W: f32 = 140.0;
+    /// The least width of the list.
+    const LIST_W: f32 = 220.0;
+    /// The height of a row, as in the Artboards panel.
+    const ROW_H: f32 = 24.0;
+    /// The rows the list shows at once.
+    const ROWS: f32 = 10.0;
+    let t = Tokens::get(ui.ctx());
+    let boards = app.session.active().map(|d| d.doc.artboards.as_slice()).unwrap_or_default();
+    let shown = boards.get(cur).map_or_else(|| "–".to_string(), |a| format!("{}  {}", cur + 1, a.name));
+    // Under `drawn`, egui's temp data stores the pass the list was last drawn in.
+    let drawn = ui.id().with("artboard-list");
+    let height = ROW_H * ROWS;
+    ui.add_enabled_ui(!boards.is_empty(), |ui| {
+        ui.set_max_width(FIELD_W);
+        egui::ComboBox::from_id_salt("artboard-list")
+            .selected_text(egui::RichText::new(shown).size(11.5))
+            .width(FIELD_W)
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .height(height)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show_ui(ui, |ui| {
+                let pass = ui.ctx().cumulative_pass_nr();
+                let last = ui.data(|d| d.get_temp::<u64>(drawn)).unwrap_or_default();
+                ui.data_mut(|d| d.insert_temp(drawn, pass));
+                let mut area = egui::ScrollArea::vertical().max_height(height);
+                // As the list opens, it scrolls the active row as close to the middle as the list allows.
+                if last + 1 < pass || last == 0 {
+                    area = area.vertical_scroll_offset((cur as f32 * ROW_H - (height - ROW_H) * 0.5).max(0.0));
+                }
+                // Every number ends where the widest one ends.
+                let numbers = ui.painter().layout_no_wrap(boards.len().to_string(), egui::FontId::proportional(12.0), t.text_dim).size().x;
+                let width = ui.available_width().max(LIST_W);
+                let mut chosen = None;
+                ui.spacing_mut().item_spacing.y = 0.0;
+                area.show_rows(ui, ROW_H, boards.len(), |ui, range| {
+                    for i in range {
+                        let Some(board) = boards.get(i) else { continue };
+                        let (r, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
+                        if i == cur {
+                            ui.painter().rect_filled(r, 0.0, t.row_selected);
+                        } else if resp.hovered() {
+                            ui.painter().rect_filled(r, 0.0, t.hover);
+                        }
+                        let number_end = r.left() + 8.0 + numbers;
+                        ui.painter().text(
+                            egui::pos2(number_end, r.center().y),
+                            egui::Align2::RIGHT_CENTER,
+                            (i + 1).to_string(),
+                            egui::FontId::proportional(12.0),
+                            t.text_dim,
+                        );
+                        let name_start = number_end + 10.0;
+                        let name = egui::WidgetText::from(egui::RichText::new(&board.name).size(12.5)).into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Truncate),
+                            r.right() - 8.0 - name_start,
+                            egui::TextStyle::Body,
+                        );
+                        ui.painter().galley(egui::pos2(name_start, r.center().y - name.size().y / 2.0), name, t.text);
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, i == cur, format!("{}  {}", i + 1, board.name))
+                        });
+                        if resp.clicked() {
+                            chosen = Some(i);
+                        }
+                    }
+                });
+                if chosen.is_some() {
+                    ui.close();
+                }
+                chosen
+            })
+            .inner
+            .flatten()
+    })
+    .inner
+}
+
 pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     egui::Panel::bottom("status_bar")
@@ -531,29 +648,31 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 egui::ComboBox::from_id_salt("rot-combo").selected_text(egui::RichText::new(format!("{rot:.0}°")).size(11.5)).width(52.0).show_ui(
                     ui,
                     |ui| {
-                        for a in [0.0, 15.0, 30.0, 45.0, 60.0, 90.0, 180.0, -15.0, -30.0, -45.0, -60.0, -90.0] {
-                            if ui.selectable_label(rot == a, format!("{a:.0}°")).clicked()
-                                && let Some(v) = app.view_mut()
-                            {
-                                v.rotation = a;
+                        for (label, a) in ROTATE_VIEW_ANGLES {
+                            if ui.selectable_label((rot - a).abs() < 1e-9, label).clicked() {
+                                // It fails only without a document, when there is no view to turn.
+                                app.run("view.rotate", json!({"angle": a})).ok();
                             }
                         }
                     },
                 );
                 ui.separator();
-                // The artboard navigator: first, previous, the current artboard's number, next, last.
+                // The artboard navigator has First and Previous, a field with the current artboard's
+                // number and name and a list of every artboard, then Next and Last.
                 let nab = app.session.active().map(|d| d.doc.artboards.len()).unwrap_or(0);
-                let cur = app.view().map_or(0, |v| v.artboard).min(nab.saturating_sub(1));
+                let cur = crate::panels::artboards::selected(app, nab);
                 let mut go = None;
                 for (icon, to) in [("chevrons-left", "first"), ("chevron-left", "previous")] {
                     if widgets::icon_button_enabled(ui, icon, "", false, cur > 0, 18.0).clicked() {
-                        go = Some(to);
+                        go = Some(json!(to));
                     }
                 }
-                ui.label(egui::RichText::new(if nab > 0 { (cur + 1).to_string() } else { "–".into() }).size(11.5));
+                if let Some(i) = artboard_list(app, ui, cur) {
+                    go = Some(json!(i));
+                }
                 for (icon, to) in [("chevron-right", "next"), ("chevrons-right", "last")] {
                     if widgets::icon_button_enabled(ui, icon, "", false, cur + 1 < nab, 18.0).clicked() {
-                        go = Some(to);
+                        go = Some(json!(to));
                     }
                 }
                 if let Some(to) = go
@@ -590,8 +709,14 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         );
                     }
                     // Background saves, exports and opens in progress, else the last message.
-                    let busy: Vec<&str> =
-                        app.background.jobs.iter().map(|j| j.label.as_str()).chain(app.opening.pending.iter().map(|p| p.label.as_str())).collect();
+                    let busy: Vec<&str> = app
+                        .background
+                        .jobs
+                        .iter()
+                        .filter(|j| !j.label.is_empty())
+                        .map(|j| j.label.as_str())
+                        .chain(app.opening.pending.iter().map(|p| p.label.as_str()))
+                        .collect();
                     if let Some(job) = busy.first() {
                         let more = busy.len() - 1;
                         let label = crate::i18n::msg(job);
@@ -615,6 +740,12 @@ const ANIMATED_ZOOM_HINT: &str = "zoom.animated";
 
 fn hint_for(tool: &str) -> Option<&'static [(&'static str, bool)]> {
     Some(match tool {
+        "dimension" => &[
+            ("Drag", true),
+            (" out from a highlighted edge to place its dimension  |  ", false),
+            ("Esc", true),
+            (" cancels  |  Double-click the tool for options", false),
+        ],
         "selection" => &[
             ("Click", true),
             (" the object to select  |  ", false),
@@ -825,7 +956,7 @@ fn hint_segments(tool: &str) -> Vec<(Cow<'static, str>, bool)> {
 
 pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Panel::bottom("hint_bar")
+    let panel = egui::Panel::bottom("hint_bar")
         .exact_size(28.0)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.border)))
         .show(ui, |ui| {
@@ -849,6 +980,7 @@ pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 ui.label(job);
             });
         });
+    widgets::set_menu_floor(ui.ctx(), panel.response.rect.top());
 }
 
 #[cfg(test)]
@@ -979,6 +1111,99 @@ mod tests {
         // The command also takes an index, clamped to the last artboard.
         assert_eq!(app.run("view.goToArtboard", json!({"index": 9})), Ok(json!({"index": 2})));
         assert!(app.run("view.goToArtboard", json!({"index": "sideways"})).is_err());
+    }
+
+    /// One headless frame of the status bar, with room above it for the artboard list; returns the
+    /// texts painted and where they are.
+    fn status_texts(app: &mut crate::VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 600.0));
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| super::status_bar(app, ui));
+        out.textures_delta.clear();
+        out.shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_string(), t.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A click at `at` in the status bar; returns the texts of the frame after it.
+    fn status_click(app: &mut crate::VectorcraftApp, ctx: &egui::Context, at: egui::Pos2) -> Vec<(String, egui::Rect)> {
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        for event in [egui::Event::PointerMoved(at), button(true), button(false)] {
+            status_texts(app, ctx, vec![event]);
+        }
+        status_texts(app, ctx, vec![])
+    }
+
+    /// The navigator shows the active artboard's number and name, and its list shows every artboard
+    /// by number and name. Choosing one goes to it as the navigator's buttons do
+    /// (`view.goToArtboard`): it becomes the active artboard and the Artboard tool's, the view
+    /// centers on it, and the list closes.
+    #[test]
+    fn the_artboard_navigator_lists_the_artboards_by_number_and_name() {
+        let mut app = crate::VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 100, "artboards": 3})).unwrap();
+        app.run("artboard.setProps", json!({"index": 0, "name": "Front"})).unwrap();
+        app.run("artboard.setProps", json!({"index": 1, "name": "Back"})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(460.0, 260.0)));
+        app.select_tool("artboard");
+        app.run("view.goToArtboard", json!({"index": 1})).unwrap();
+        let first = app.session.active().unwrap().doc.artboards[0].rect.center();
+        let ctx = egui::Context::default();
+        let texts = status_texts(&mut app, &ctx, vec![]);
+        let field = texts.iter().find(|(s, _)| s == "2  Back").map(|(_, r)| *r).expect("the field shows artboard 2's number and name");
+        assert!(!texts.iter().any(|(s, _)| s == "Front"), "the list is closed: {texts:?}");
+        let texts = status_click(&mut app, &ctx, field.center());
+        let at = |s: &str| texts.iter().find(|(t, _)| t == s).map(|(_, r)| *r).unwrap_or_else(|| panic!("no {s:?} in {texts:?}"));
+        let rows: Vec<egui::Rect> = [("1", "Front"), ("2", "Back"), ("3", "Artboard 3")]
+            .into_iter()
+            .map(|(number, name)| {
+                let (n, r) = (at(number), at(name));
+                assert!(r.y_range().contains(n.center().y) && n.right() < r.left(), "{number} before {name} on one row: {texts:?}");
+                r
+            })
+            .collect();
+        assert!(rows.windows(2).all(|w| w[0].bottom() <= w[1].top()), "the rows in the artboards' order: {rows:?}");
+        let texts = status_click(&mut app, &ctx, at("Front").center());
+        assert_eq!((app.view().unwrap().artboard, app.view().unwrap().center), (0, first), "Front, fitted in the window");
+        assert_eq!(app.session.tool_options()["active"], json!(0));
+        assert!(texts.iter().any(|(s, _)| s == "1  Front"), "{texts:?}");
+        assert!(!texts.iter().any(|(s, _)| s == "Back"), "the list closed: {texts:?}");
+    }
+
+    /// With 1,000 artboards the list lays out at most 12 rows. It opens on the active
+    /// artboard's row, a swipe scrolls it to the last artboard, and choosing that row goes there.
+    #[test]
+    fn the_artboard_list_lays_out_only_the_rows_near_the_view() {
+        let mut app = crate::VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 100, "height": 100, "artboards": 1000})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(460.0, 260.0)));
+        app.run("view.goToArtboard", json!({"index": 699})).unwrap();
+        let ctx = egui::Context::default();
+        let rows = |texts: &[(String, egui::Rect)]| texts.iter().filter(|(s, _)| s.starts_with("Artboard ")).cloned().collect::<Vec<_>>();
+        let texts = status_texts(&mut app, &ctx, vec![]);
+        let field = texts.iter().find(|(s, _)| s == "700  Artboard 700").map(|(_, r)| *r).expect("the field");
+        let shown = rows(&status_click(&mut app, &ctx, field.center()));
+        assert!((1..=12).contains(&shown.len()), "{} rows laid out", shown.len());
+        let active = shown.iter().find(|(s, _)| s == "Artboard 700").map(|(_, r)| *r).expect("the active artboard's row in view");
+        let swipe = |phase, dy| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            phase,
+            modifiers: Default::default(),
+        };
+        status_texts(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(active.center()), swipe(egui::TouchPhase::Start, 0.0), swipe(egui::TouchPhase::Move, -100_000.0)],
+        );
+        let shown = rows(&status_texts(&mut app, &ctx, vec![swipe(egui::TouchPhase::End, 0.0)]));
+        assert!((1..=12).contains(&shown.len()), "{} rows laid out", shown.len());
+        let last = shown.iter().find(|(s, _)| s == "Artboard 1000").map(|(_, r)| *r).expect("the last row after the swipe");
+        status_click(&mut app, &ctx, last.center());
+        assert_eq!(app.view().unwrap().artboard, 999);
     }
 
     fn artboard_navigation_app(tool: &str) -> (crate::VectorcraftApp, vectorcraft_doc::NodeId) {
@@ -1154,6 +1379,76 @@ mod tests {
         assert!(title(&s).ends_with("(<Opacity Mask>/Opacity Mask)"), "{}", title(&s));
         s.execute("transparency.stopEditingOpacityMask", &json!({})).unwrap();
         assert!(title(&s).ends_with("(RGB/Preview)"));
+    }
+
+    /// One headless frame of the Control bar; returns the isolation button's rectangle, if it shows.
+    fn isolation_button(app: &mut crate::VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Option<egui::Rect> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 300.0));
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| super::control_bar(app, ui));
+        out.textures_delta.clear();
+        ctx.viewport(|vp| vp.prev_pass.widgets.get(egui::Id::new(super::ISOLATION_BUTTON)).map(|w| w.rect))
+    }
+
+    /// The Control bar's Isolate Selected Object isolates a path inside a group that Direct
+    /// Selection selected, and Exit Isolation Mode leaves with the path selected. Type, symbol
+    /// instances, blends, two objects and an envelope's contents get no isolate button, and pattern
+    /// editing gets no exit button.
+    #[test]
+    fn the_control_bar_isolates_the_selected_object_and_exits_isolation_mode() {
+        use vectorcraft_doc::NodeId;
+        let mut app = crate::VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 400, "height": 200})).unwrap();
+        let rect = |app: &mut crate::VectorcraftApp, x: f64| {
+            app.run("shape.rectangle", json!({"x": x, "y": 10, "width": 30, "height": 20})).unwrap()["id"].as_u64().unwrap()
+        };
+        let (a, b) = (rect(&mut app, 10.0), rect(&mut app, 50.0));
+        app.run("select.set", json!({"ids": [a, b]})).unwrap();
+        app.run("object.group", json!({})).unwrap();
+        app.select_tool("directSelection");
+        app.run("select.anchors", json!({"id": a, "anchors": [[0, 0]]})).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let click = |app: &mut crate::VectorcraftApp| {
+            let r = isolation_button(app, &ctx, vec![]).expect("the bar shows the isolation button");
+            let press = |pressed| egui::Event::PointerButton {
+                pos: r.center(),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for e in [egui::Event::PointerMoved(r.center()), press(true), press(false)] {
+                isolation_button(app, &ctx, vec![e]);
+            }
+        };
+        click(&mut app);
+        assert_eq!(app.session.active().unwrap().isolation, Some(NodeId(a)), "Isolate Selected Object isolates the path");
+        click(&mut app);
+        let st = app.session.active().unwrap();
+        assert_eq!((st.isolation, st.selection.objects.clone()), (None, vec![NodeId(a)]), "Exit Isolation Mode selects the path");
+        app.select_tool("selection");
+        // Type, a symbol instance, a blend and two objects.
+        let text = app.run("text.create", json!({"x": 10, "y": 100, "text": "Hi"})).unwrap()["id"].as_u64().unwrap();
+        let c = rect(&mut app, 100.0);
+        app.run("select.set", json!({"ids": [c]})).unwrap();
+        let symbol = app.run("symbol.new", json!({"name": "Box"})).unwrap()["id"].as_u64().unwrap();
+        let (d, e) = (rect(&mut app, 150.0), rect(&mut app, 250.0));
+        let blend = app.run("object.blend.make", json!({"ids": [d, e], "steps": 1})).unwrap()["id"].as_u64().unwrap();
+        for ids in [json!([text]), json!([symbol]), json!([blend]), json!([text, symbol])] {
+            app.run("select.set", json!({ "ids": ids })).unwrap();
+            assert_eq!(isolation_button(&mut app, &ctx, vec![]), None, "{ids}");
+        }
+        // An envelope's contents, while Edit Contents is on.
+        let g = rect(&mut app, 350.0);
+        app.run("select.set", json!({"ids": [g]})).unwrap();
+        app.run("object.envelope.makeWithWarp", json!({})).unwrap();
+        app.run("object.envelope.editContents", json!({"editing": true})).unwrap();
+        assert_eq!(app.session.active().unwrap().selection.objects, vec![NodeId(g)]);
+        assert_eq!(isolation_button(&mut app, &ctx, vec![]), None, "the envelope's controls show instead");
+        let f = rect(&mut app, 300.0);
+        app.run("select.set", json!({"ids": [f]})).unwrap();
+        app.run("object.pattern.make", json!({"name": "Dots", "width": 20, "height": 20})).unwrap();
+        assert!(app.session.active().unwrap().isolation.is_some());
+        assert_eq!(isolation_button(&mut app, &ctx, vec![]), None, "the isolation bar ends pattern editing");
     }
 
     /// The Zoom tool's hint follows Performance › Animated Zoom (#394): a drag zooms as it goes,

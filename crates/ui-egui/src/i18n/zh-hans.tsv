@@ -180,7 +180,6 @@
 	Art	图稿
 	Art using a deleted global swatch keeps its colour.	使用已删除全局色板的图稿会保留其颜色。
 	Artboard Options	画板选项
-	Artboard Options: edit with the Artboard tool	画板选项：使用画板工具编辑
 	Artboard Options…	画板选项…
 	Artboard Tool	画板工具
 	Artboard {number}	画板 {number}
@@ -443,6 +442,7 @@
 	Color bars	色彩条
 	Color blindness – Deuteranopia-type	色盲 – 绿色盲型
 	Color blindness – Protanopia-type	色盲 – 红色盲型
+	Color blindness – Tritanopia-type	色盲 – 蓝色盲型
 	Color Burn	颜色加深
 	Color conversion:	色彩转换：
 	Color Dodge	颜色减淡
@@ -610,6 +610,7 @@
 	Cyan	青
 	Dark	深色
 	Darken	变暗
+	Darkness	暗度
 	dash	虚线
 	Dash Pattern	虚线样式
 	Dashed	虚线
@@ -958,6 +959,9 @@
 	Export…	导出…
 	Extrude & Bevel…	突出与斜角…
 	Eyedropper	吸管
+	Sample Color from Screen	从屏幕取样颜色
+	This system has no screen color sampler	此系统没有屏幕取色工具
+	The active document changed while the screen color sampler was open	屏幕取色工具打开期间，当前文档已更改
 	Eyedropper Applies:	吸管应用：
 	Eyedropper Options	吸管选项
 	Eyedropper Picks Up:	吸管拾取：
@@ -988,6 +992,7 @@
 	Fill (X), double-click for the Color Picker	填色 (X)，双击打开拾色器
 	Fill and Stroke	填色和描边
 	Fill new strokes	为新描边应用填色
+	Keep selected	保持选择状态
 	Fill Color	填色
 	Fill New Type Objects With Placeholder Text	用占位文本填充新文字对象
 	Fill Rule	填充规则
@@ -1012,6 +1017,7 @@
 	Fit Headline	适合标题
 	Decrease Font Size	减小字体大小
 	Increase Font Size	增大字体大小
+	Reset Tracking and Kerning	重置字距和字偶距
 	Spacing	间距
 	Step Type	按增量调整文字
 	Fit in View	适合视图
@@ -1208,6 +1214,7 @@
 	Hide Print Tiling	隐藏打印分页
 	Hide Rulers	隐藏标尺
 	Hide Slices	隐藏切片
+	Hide Template	隐藏模板
 	Hide Text Threads	隐藏文本串接线
 	Hide Thumbnail	隐藏缩略图
 	Hide Thumbnails	隐藏缩略图
@@ -1381,6 +1388,20 @@
 	Left:	左：
 	Legacy Macintosh RGB (Gamma 1.8)	旧版 Macintosh RGB (Gamma 1.8)
 	Legacy vector clipboard	旧版矢量剪贴板
+	Legacy (version 7)	旧版 (版本 7)
+	Transparent Images:	透明图像：
+	Flatten	拼合
+	Omit	省略
+	Legacy .ai Options	旧版 .ai 选项
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	旧版 .ai 文件只包含一个画板：勾选的每个画板都会存储为单独的文件。
+	{count} of {total} artboards	{total} 个画板中的 {count} 个
+	Check an artboard to save.	请勾选要存储的画板。
+	Hidden Objects:	隐藏的对象：
+	Hidden Layer	隐藏图层
+	Make Visible	设为可见
+	Text:	文本：
+	Editable	可编辑
+	PDF-compatible	与 PDF 兼容
 	Legacy vector clipboard (no transparency)	旧版矢量剪贴板 (无透明度)
 	Less	较少
 	Letter	信纸
@@ -1891,6 +1912,7 @@
 	Panel menu	面板菜单
 	Panel Options…	面板选项…
 	Panels	面板
+	Panels Except Tools and Control	除工具和控制栏外的面板
 	Paragraph	段落
 	Paragraph Style	段落样式
 	Paragraph Style Options	段落样式选项
@@ -1915,6 +1937,7 @@
 	Pathfinder Options…	路径查找器选项…
 	Pathfinders:	路径查找器：
 	Paths	路径
+	Path Length	路径长度
 	Paths: {paths}    Anchors: {anchors}    Colors: {colors}	路径：{paths}    锚点：{anchors}    颜色：{colors}
 	Pattern	图案
 	Pattern Editing	图案编辑
@@ -2440,6 +2463,16 @@
 	Scripts	脚本
 	Search	搜索
 	Search All	搜索全部
+	Filter	筛选
+	Clear All	全部清除
+	By Object	按对象
+	By Layer	按图层
+	Images	图像
+	Groups	编组
+	Linked Files	链接文件
+	Locked	已锁定
+	Hidden	已隐藏
+	Filter Layers Panel Rows	筛选图层面板行
 	Search commands and tools	搜索命令和工具
 	Search commands and tools…	搜索命令和工具…
 	Search Commands…	搜索命令…
@@ -2572,6 +2605,7 @@
 	Show Modified	显示已修改
 	Show Note	显示注解
 	Show Options	显示选项
+	Color Panel Options	颜色面板选项
 	Show Package	显示打包
 	Show Panel	显示面板
 	Show Pattern Swatches	显示图案色板
@@ -2584,6 +2618,7 @@
 	Show Slices	显示切片
 	Show Swatch Bounds	显示色板边界
 	Show Swatch Kinds	显示色板种类
+	Show Template	显示模板
 	Show Text Threads	显示文本串接线
 	Show The Home Screen When No Documents Are Open	没有打开文档时显示主页
 	Show Thumbnail	显示缩略图
@@ -3264,6 +3299,7 @@ imageTrace	Outline	轮廓
 	 to set spacing and orientation	可设置间距与方向
 	:	：
 	Isolate Selected Group	隔离选择的编组
+	Isolate Selected Object	隔离选择的对象
 	Release Clipping Mask	释放剪切蒙版
 	Make Compound Path	制作复合路径
 	Release Compound Path	释放复合路径
@@ -3729,6 +3765,10 @@ axis	Both	两者
 	Method	方法
 	Quality	质量
 	Radius	半径
+	Mode	模式
+	Blur Mode	模糊模式
+	Edge Only	仅边缘
+	Overlay Edge	叠加边缘
 	Spin	旋转
 	Draft	草稿
 	Good	良好
@@ -3957,3 +3997,32 @@ lighting	Light	光源
 	Softness	柔和度
 	Ambient Light	环境光
 	Light behind the object	光源位于对象后方
+# Dimension tool (linked dimension annotations)
+	Create Dimension	创建尺寸标注
+	Dimension Tool	尺寸标注工具
+	Dimension Tool Options	尺寸标注工具选项
+	Font Family:	字体系列：
+	Font Style:	字体样式：
+	Precision:	精度：
+	Update Dimensions	更新尺寸标注
+	Display	显示
+
+# Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
+	Dimension	尺寸
+	Drawing : real size — 1:10 labels 1 unit on the page as 10.	图纸 : 实际尺寸 — 1:10 会将页面上的 1 个单位标注为 10。
+	Preview (1 inch on the page)	预览（页面上 1 英寸）
+	Set as Default	设为默认
+	 out from a highlighted edge to place its dimension  |  	 从高亮的边向外拖动以放置其尺寸  |  
+	 cancels  |  Double-click the tool for options	 取消  |  双击工具打开选项
+	Linear	线性
+	Angular	角度
+	Away from the Line	远离尺寸线
+	Between Line and Object	在尺寸线与对象之间
+	Drag out from a segment, or click two points, then click to place.	从线段向外拖动，或单击两个点，然后单击以放置。
+	Drag out from a corner, or click two straight lines, then click to place.	从角向外拖动，或单击两条直线，然后单击以放置。
+	Drag out from a circle or arc for its radius, inwards for its diameter.	从圆或圆弧向外拖动得到半径，向内拖动得到直径。
+@msg	Choose a circle or a perfect arc	请选择圆或标准圆弧
+@msg	Choose a precision from 0 to 6	请选择 0 到 6 之间的精度
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	封闭开放轮廓的圆形端部。部分旋转的切割侧面保持开放。
+	Distance	距离

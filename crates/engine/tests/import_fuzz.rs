@@ -587,6 +587,8 @@ fn arb_pdf_op() -> impl Strategy<Value = String> {
         Just("/GS0".to_string()),
         Just("/DeviceRGB".to_string()),
         Just("/CS0".to_string()),
+        Just("/CS1".to_string()),
+        Just("/P0".to_string()),
         Just("/DeviceCMYK".to_string()),
         Just("/Pattern".to_string()),
         Just("(Hi)".to_string()),
@@ -611,6 +613,9 @@ fn arb_resources() -> impl Strategy<Value = String> {
         "<< /ColorSpace << /CS0 [/DeviceN [] /DeviceGray << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>] >> >>".to_string(),
         "<< /ColorSpace << /CS0 [/DeviceN [/A /None /Cyan /All] [/ICCBased << /N 4 >>] << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>] >> >>".to_string(),
         "<< /Shading << /Sh0 << /ShadingType 2 /ColorSpace [/Separation /Ink /DeviceCMYK << /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 1 0 0] /N 1 >>] /Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> >>".to_string(),
+        // Inks with the same values and other names, as color spaces, a shading pattern and a
+        // shading (the page's walk tells them apart).
+        "<< /ColorSpace << /CS0 [/Separation /A /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] /CS1 [/Separation /B /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] >> /Pattern << /P0 << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace [/Separation /B /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] /Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> >> /Shading << /Sh0 << /ShadingType 2 /ColorSpace [/Separation /A /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] /Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> >>".to_string(),
     ])
 }
 
@@ -665,18 +670,21 @@ fn arb_box() -> impl Strategy<Value = Option<[f64; 4]>> {
 proptest! {
     #![proptest_config(config())]
 
-    /// Every page box, rotation, page pick, password and Crop To, through `document.open` and
-    /// `document.pdfInfo` (with a thumbnail).
+    /// Every page box, rotation, `UserUnit`, page pick, password and Crop To, through
+    /// `document.open` and `document.pdfInfo` (with a thumbnail).
     #[test]
     fn pdf_import_options_never_panic(
         boxes in prop::collection::vec(arb_box(), 5),
         rotate in prop::sample::select(vec![0, 90, 180, 270, 45, -90, 1_000_000_000]),
+        unit in prop::sample::select(vec!["", "10", "2.5", "1", "0", "-10", "0.001", "99999999999999999999", "/Ten", "(10)", "99 0 R", "huge"]),
         encrypt in any::<bool>(),
         password in prop::sample::select(vec!["", "pw", "wrong", "\u{0}\u{ff}"]),
         pages in prop::sample::select(vec!["1", "2", "1-2", "2-1", "0", "-", "1-", "all", "1,1,2", "99999999999999999999"]),
         crop in prop::sample::select(vec!["bounding", "art", "crop", "trim", "bleed", "media", "nope"]),
     ) {
         use vectorcraft_testkit::pdf::{PdfPage, pdf};
+        // A `UserUnit` of 1 followed by 308 zeros (a PDF number has no exponent).
+        let unit = if unit == "huge" { format!("1{}", "0".repeat(308)) } else { unit.to_string() };
         let page = PdfPage {
             media: boxes[0].unwrap_or([0.0, 0.0, 100.0, 100.0]),
             crop: boxes[1],
@@ -684,6 +692,7 @@ proptest! {
             trim: boxes[3],
             art: boxes[4],
             rotate,
+            entries: if unit.is_empty() { String::new() } else { format!("/UserUnit {unit}") },
             ..PdfPage::new(0.0, 0.0, "0 0 1 rg 20 20 50 50 re f")
         };
         let bytes = pdf(&[page.clone(), page], encrypt.then_some("pw"));
@@ -697,7 +706,7 @@ proptest! {
                 survive("pdf options", || Some(d)).unwrap();
             }
         });
-        r.map_err(|msg| TestCaseError::fail(format!("{pages} {crop} {rotate}: panicked: {msg}")))?;
+        r.map_err(|msg| TestCaseError::fail(format!("{pages} {crop} {rotate} {unit}: panicked: {msg}")))?;
     }
 }
 
@@ -726,7 +735,7 @@ fn rich_resources_pdf(content: &str, config: &str) -> Vec<u8> {
     ];
     let (a, b, form, pat, mesh, hidden) = (x, x + 1, x + 2, x + 3, x + 4, x + 5);
     let resources = format!(
-        "/Properties << /MC0 {a} 0 R /MC1 {b} 0 R >> /XObject << /X0 {form} 0 R /X1 {hidden} 0 R >> /Pattern << /P0 {pat} 0 R >> /Shading << /Sh0 {mesh} 0 R /Sh1 << /ShadingType 3 /ColorSpace /DeviceGray /Coords [50 50 0 50 50 40] /Extend [false false] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> /ExtGState << /GS0 << /OP true /OPM 1 /SMask << /Type /Mask /S /Luminosity /G {form} 0 R /BC [1] /TR << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >> >> >> /GS1 << /OP true /op false /SMask << /Type /Mask /S /Alpha /G {form} 0 R >> >> /GS2 << /OP 7 /op (x) /OPM -3 >> /GS3 << /op true >> >> /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Odd-Name,Bold >> >> /ColorSpace << /CS0 [/Pattern /DeviceRGB] >>"
+        "/Properties << /MC0 {a} 0 R /MC1 {b} 0 R >> /XObject << /X0 {form} 0 R /X1 {hidden} 0 R >> /Pattern << /P0 {pat} 0 R >> /Shading << /Sh0 {mesh} 0 R /Sh1 << /ShadingType 3 /ColorSpace /DeviceGray /Coords [50 50 0 50 50 40] /Extend [false false] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> /ExtGState << /GS0 << /OP true /OPM 1 /SMask << /Type /Mask /S /Luminosity /G {form} 0 R /BC [1] /TR << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >> >> >> /GS1 << /OP true /op false /SMask << /Type /Mask /S /Alpha /G {form} 0 R >> >> /GS2 << /OP 7 /op (x) /OPM -3 >> /GS3 << /op true >> >> /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Odd-Name,Bold >> >> /ColorSpace << /CS0 [/Pattern /DeviceRGB] /CS1 [/Separation /A /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] /CS2 [/Separation /B /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0 1] /N 1 >>] >>"
     );
     let catalog = format!("/OCProperties << /OCGs [{a} 0 R {b} 0 R 99 0 R] /D << {} >> >> ", config.replace("{B}", &format!("{b} 0 R")));
     let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
@@ -752,6 +761,11 @@ fn arb_rich_op() -> impl Strategy<Value = String> {
             "/GS3 gs",
             "/CS0 cs 1 0 0 /P0 scn",
             "/Pattern cs /P0 scn",
+            // Inks with the same values and other names: set, and a pattern set in one.
+            "/CS1 cs 1 scn",
+            "/CS2 cs 0.5 scn",
+            "/CS2 CS 1 SCN",
+            "/CS1 cs /P0 scn",
             "/Sh0 sh",
             "/Sh1 sh",
             "BT /F1 12 Tf 10 10 Td (Hi there) Tj [(a) -900 (b)] TJ ET",
@@ -1330,6 +1344,28 @@ proptest! {
     }
 }
 
+/// A native file whose area type has 2^60 rows, 2^60 columns, or 2^32 of each (their product
+/// overflows) opens with 100 in place of each count over 100, and renders and exports.
+#[test]
+fn native_area_type_with_2_to_the_60_rows_or_columns_opens_renders_and_exports() {
+    let mut s = vectorcraft_engine::Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+    let made = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "word ".repeat(40), "area": {"width": 300, "height": 120}})).unwrap();
+    let id = vectorcraft_doc::NodeId(made["id"].as_u64().unwrap());
+    let mut d = (*s.doc().unwrap().doc).clone();
+    for (rows, columns) in [(1 << 60, 1), (1, 1 << 60), (1 << 32, 1 << 32)] {
+        let Some(vectorcraft_doc::NodeKind::Text(t)) = d.node_mut(id).map(|n| &mut n.kind) else { panic!("area type") };
+        t.area.rows = rows;
+        t.area.columns = columns;
+        let file = vectorcraft_format::base64_encode(&vectorcraft_format::save(&d, false));
+        s.execute("document.open", &json!({"name": "x.vectorcraft", "dataBase64": file})).unwrap();
+        let opened = (*s.doc().unwrap().doc).clone();
+        let Some(vectorcraft_doc::NodeKind::Text(t)) = opened.node(id).map(|n| &n.kind) else { panic!("area type") };
+        assert_eq!((t.area.rows, t.area.columns), (rows.min(100), columns.min(100)));
+        survive("area type in 2^60 rows or columns", || Some(opened)).unwrap();
+    }
+}
+
 /// The rich document as EPS (with a preview, a thumbnail and the document it carries), and the
 /// document read back from it.
 fn eps_sample() -> Vec<u8> {
@@ -1838,6 +1874,10 @@ fn editing_text() -> String {
         "0 0 0 1 (Black global) 0.4 0 Xk".into(),
         "(Dots) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p".into(),
         square(60),
+        // A 2 × 1 CMYK image with an alpha channel, its samples in hex.
+        "%AI5_File:\n%AI5_BeginRaster\n() 1 XG\n/DeviceCMYK XN\n[ 4 0 0 4 10 30 ] 2 1 0 Xh\n[ 4 0 0 4 10 30 ] 0 0 2 1 2 1 8 4 1 0 0 0 4 4 0 0\n\
+         %%BeginData: 18\rXI\nff000000000000ff80ff\n%%EndData\nXH\n%AI5_EndRaster\nN"
+            .into(),
     ]
     .join("\n");
     let layer = |name: &str, visible: u8, body: &str| {
@@ -1862,6 +1902,17 @@ fn editing_eps(editing: &str) -> Vec<u8> {
         lines.join("\n")
     )
     .into_bytes()
+}
+
+/// The fuzzed editing data, as it is, reads its CMYK image with its ink amounts and its alpha
+/// channel as an opacity mask.
+#[test]
+fn the_editing_fixture_reads_its_cmyk_image_with_its_mask() {
+    let private = [b"%AI24_ZStandard_Data".as_slice(), &zstd(&editing_text())].concat();
+    let (doc, warnings, layers) = vectorcraft_eps::layered_ai(&private, Document::new(100.0, 100.0), vec![], false, true, 1.0);
+    let mut found = vec![];
+    doc.visit_images(|n, im| found.push((doc.images[&im.key].cmyk().map(|i| i.data), n.extras().mask.is_some())));
+    assert!(layers && found.contains(&(Some(vec![255, 0, 0, 0, 0, 0, 0, 255]), true)), "{found:?} {warnings:?}");
 }
 
 /// The text document of a story of centred type with two styles, as an editing copy keeps it.
@@ -2000,7 +2051,7 @@ proptest! {
                 *x = b;
             }
         }
-        survive("mutated .ai editing data", || Some(vectorcraft_eps::layered_ai(&private, Document::new(100.0, 100.0), vec![], false, false).0))?;
+        survive("mutated .ai editing data", || Some(vectorcraft_eps::layered_ai(&private, Document::new(100.0, 100.0), vec![], false, false, 1.0).0))?;
     }
 }
 
@@ -2152,6 +2203,37 @@ fn arb_ai_token() -> impl Strategy<Value = String> {
             "\n%AI3_BeginPattern: (Dots)\n(Dots) 0 0 6 6\n",
             "\n%AI3_EndPattern\n",
             "To",
+            // Legacy type (version 7 §15): text objects, their paths, attributes and strings.
+            "0 To",
+            "1 To",
+            "2 To",
+            "1e308 To",
+            "TO",
+            "1 0 0 1 10 10 0 Tp",
+            "0 0 0 0 1e308 -1e308 1e308 Tp",
+            "-1 0 0 -1 5 5 99.5 Tp",
+            "TP",
+            "/_Helvetica 12 9 3 Tf",
+            "/_ 1e308 Tf",
+            "-5 Tf",
+            "(H\\351llo\\r) Tx",
+            "(\\r) TX",
+            "() Tj",
+            "(x) Tx",
+            "7 Tr",
+            "-1e308 Ts",
+            "1e308 0 Tz",
+            "1e308 Tt",
+            "0 TA",
+            "1e308 -1e308 Tl",
+            "9 Ta",
+            "1e308 -1e308 1e308 Ti",
+            "0 1 Tk",
+            "[39/quotesingle 128/Euro/eacute/nosuch 300/x TE",
+            "[1e308/a -1/b TE",
+            "\n%AI3_BeginEncoding: _Helvetica Helvetica\n[/_Helvetica/Helvetica 0 0 1 TZ\n%AI3_EndEncoding AdobeType\n",
+            "\n%AI3_BeginEncoding:\n",
+            "800 Ar",
             "frobnicate",
             "\n%AI5_BeginLayer\n",
             "\n%AI5_EndLayer--\n",
@@ -2257,9 +2339,13 @@ proptest! {
     fn ai_hostile_editing_data_never_panics(tokens in prop::collection::vec(arb_ai_token(), 0..80)) {
         use vectorcraft_testkit::ai;
         let data = ai::editing_data(200.0, 100.0, &format!("%AI5_BeginLayer\n1 1 1 1 0 0 1 0 79 128 255 0 50 0 Lb\n(L) Ln\n{}\nLB\n", tokens.join(" ")));
-        survive("hostile editing data", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, false).0))?;
-        survive("hostile editing data, type as outlines", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], true, false).0))?;
-        survive("hostile editing data, trusted", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, true).0))?;
+        survive("hostile editing data", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, false, 1.0).0))?;
+        survive("hostile editing data, type as outlines", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], true, false, 1.0).0))?;
+        survive("hostile editing data, trusted", || Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(200.0, 100.0), vec![], false, true, 1.0).0))?;
+        // A PDF part read from a user space of 10 points a unit: the layers are read in its units and scaled.
+        survive("hostile editing data in units of 10 points", || {
+            Some(vectorcraft_eps::layered_ai(data.as_bytes(), Document::new(2000.0, 1000.0), vec![], false, false, 10.0).0)
+        })?;
         let eps = ai::eps(data.as_bytes(), ai::page_ps());
         survive("hostile editing data in an EPS", || vectorcraft_engine::cmd::fileio::load("x.eps", &eps).ok().map(|l| l.doc))?;
         // An EPS whose page is its art's box, not its artboard: what prints outside it is compared too.
@@ -2897,6 +2983,20 @@ fn pdf_streams_the_reader_would_fail_on_are_refused() {
         format!("q 10 0 0 10 0 0 cm BI /W 2 /H 2 /CS /G /BPC 8 /F [/AHx /Fl] /DP [null {dp}] ID {data}> EI Q")
     };
     let form = |dict: &str, content: &str| pdf_with("/F Do", "<< /XObject << /F 5 0 R >> >>", &[packed(&format!("{FORM} {dict}"), content)]);
+    // A calculator function with the deflated program `z`, to write inside another object. Its
+    // data is in hexadecimal digits with spaces between them, so the object around it still reads.
+    let calculator = |z: &[u8], dp: &str| {
+        let data: String = z.iter().map(|b| format!("{:X} {:X} ", b >> 4, b & 15)).collect();
+        let dict = format!("/FunctionType 4 /Domain [0 1] /Range [0 1 0 1 0 1] /Filter [/ASCIIHexDecode /FlateDecode] {dp}");
+        format!("<< {dict} /Length {} >>\nstream\n{data}\nendstream", data.len())
+    };
+    let held = |object: String| pdf_with("0 0 5 5 re f", "<< >>", &[object.into_bytes()]);
+    let shaded = |function: &str| {
+        let shading = format!("<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function {function} >>");
+        pdf_with("/S sh", "<< /Shading << /S 5 0 R >> >>", &[shading.into_bytes()])
+    };
+    let spaces = calculator(&spaces_past_the_cap(), "");
+    let program = deflated(b"{ dup 1 exch sub 0 }");
     let files = [
         ("a form with Columns 0", form(zero, "0 0 5 5 re f")),
         ("a form with a huge Columns", form(huge, "0 0 5 5 re f")),
@@ -2905,6 +3005,10 @@ fn pdf_streams_the_reader_would_fail_on_are_refused() {
         ("an inline image in a compressed form", form("", &inline("<< /Predictor 2 /Columns 0 >>"))),
         ("an object stream with Columns 0", pdf_with_object_stream("[0 0 100 100]", zero)),
         ("a form of spaces past the cap", pdf_with("/F Do", "<< /XObject << /F 5 0 R >> >>", &[packed_as_is(FORM, &spaces_past_the_cap())])),
+        ("a function of spaces past the cap in an array", held(format!("[{spaces}]"))),
+        ("a function of spaces past the cap in a dictionary", held(format!("<< /K {spaces} >>"))),
+        ("a function of spaces past the cap in a shading", shaded(&spaces)),
+        ("a function with Columns 0 in an array", held(format!("[{}]", calculator(&program, "/DecodeParms [null << /Predictor 2 /Columns 0 >>]")))),
     ];
     on_a_small_stack(move || {
         for (what, bytes) in &files {
@@ -2916,7 +3020,8 @@ fn pdf_streams_the_reader_would_fail_on_are_refused() {
     });
     // Within range, the same files open.
     let fine = "/DecodeParms << /Predictor 1 /Columns 0 >>";
-    for bytes in [form(fine, "0 0 5 5 re f"), deep_pdf(&inline("<< /Predictor 1 >>"), "<< >>")] {
+    let function = calculator(&program, "");
+    for bytes in [form(fine, "0 0 5 5 re f"), deep_pdf(&inline("<< /Predictor 1 >>"), "<< >>"), held(format!("[{function}]")), shaded(&function)] {
         vectorcraft_engine::cmd::fileio::load("fine.pdf", &bytes).expect("opens");
     }
 }
@@ -3375,4 +3480,19 @@ fn a_pattern_painting_its_own_tile_opens_without_the_paint() {
             symbols_survive("a pattern painting its own tile", doc, false);
         }
     });
+}
+
+/// A .ai cut short inside an array or dictionary of its PDF part (found by
+/// `ai_mutated_save_never_panics`): a value can't be read whole, and hayro's iterators over the
+/// array's items or the dictionary's entries would panic on it.
+#[test]
+fn ai_cut_inside_an_array_or_dictionary_opens_without_panicking() {
+    for flip in [None, Some((12262, b'/'))] {
+        let mut b = saved_ai();
+        if let Some((at, c)) = flip {
+            b[at] = c;
+        }
+        b.truncate(44902.min(b.len()));
+        survive("ai cut inside an array or dictionary", || vectorcraft_engine::cmd::fileio::load("saved.ai", &b).ok().map(|l| l.doc)).unwrap();
+    }
 }

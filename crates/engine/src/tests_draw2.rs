@@ -130,6 +130,39 @@ fn pencil_continues_selected_open_path() {
     assert_eq!(p.subpaths[0].anchors[0].p, Point::new(100.0, 100.0));
 }
 
+/// With Keep selected off, the path a stroke draws or continues is not selected afterwards, the
+/// rest of the selection stays, and the stroke is one undo step.
+#[test]
+fn pencil_with_keep_selected_off_leaves_the_new_path_unselected() {
+    let mut s = session();
+    let r = rect(&mut s, 400.0, 400.0, 50.0, 50.0);
+    let selected = |s: &Session| s.doc().unwrap().selection.objects.clone();
+    // On (the default): the new path replaces the selection.
+    let on = s.execute("path.freehand", &json!({"points": [[100, 100], [150, 120], [200, 100]]})).unwrap();
+    assert_eq!(selected(&s), vec![NodeId(on["id"].as_u64().unwrap())]);
+    s.execute("select.set", &json!({"ids": [r.0]})).unwrap();
+    let undo = undo_steps(&s);
+    let off = s.execute("path.freehand", &json!({"points": [[100, 200], [150, 220], [200, 200]], "keepSelected": false})).unwrap();
+    let off = NodeId(off["id"].as_u64().unwrap());
+    assert!(s.doc().unwrap().doc.node(off).is_some());
+    assert_eq!(selected(&s), vec![r]);
+    assert_eq!(undo_steps(&s), undo + 1);
+    // Continuing a selected open path deselects it and keeps the rest.
+    let l = line(&mut s, 100.0, 300.0, 200.0, 300.0);
+    s.execute("select.set", &json!({"ids": [r.0, l.0]})).unwrap();
+    s.execute("path.freehand", &json!({"points": [[200, 300], [250, 320], [300, 300]], "extend": {"id": l.0}, "keepSelected": false})).unwrap();
+    assert!(path(&s, l).anchor_count() >= 3, "continued");
+    assert_eq!(selected(&s), vec![r]);
+    // The tools pass the option.
+    s.execute("select.none", &json!({})).unwrap();
+    s.select_tool("paintbrush", view()).unwrap();
+    s.set_tool_option("keepSelected", &json!(false));
+    let before = paths(&s).len();
+    drag(&mut s, "paintbrush", &wave(100.0, 300.0, 500.0), Mods::default());
+    assert_eq!(paths(&s).len(), before + 1, "a new brush path");
+    assert!(selected(&s).is_empty());
+}
+
 #[test]
 fn paintbrush_uses_stroke_blob_brush_fills() {
     let mut s = session();
@@ -151,6 +184,94 @@ fn paintbrush_uses_stroke_blob_brush_fills() {
     let ps = paths(&s);
     assert_eq!(ps.len(), 2, "merged into the first blob");
     assert!(area(&ps[1].1) > 1500.0);
+}
+
+/// Three points already curve in the saved path: both ends carry a handle into the curve.
+#[test]
+fn path_curvature_with_three_points_saves_end_handles() {
+    let mut s = session();
+    let pts = json!([{"x": 0, "y": 0}, {"x": 100, "y": -100}, {"x": 200, "y": 0}]);
+    let id = NodeId(s.execute("path.curvature", &json!({ "points": pts })).unwrap()["id"].as_u64().unwrap());
+    let sp = path(&s, id).subpaths[0].clone();
+    assert_eq!(sp.anchors.len(), 3);
+    let (first, mid, last) = (sp.anchors[0], sp.anchors[1], sp.anchors[2]);
+    assert!(first.has_out() && !first.has_in(), "{first:?}");
+    assert!(last.has_in() && !last.has_out(), "{last:?}");
+    assert_eq!(mid.kind, vectorcraft_geom::AnchorKind::Smooth);
+    assert!(!sp.segment_is_line(0) && !sp.segment_is_line(1));
+    // Two points stay a straight line.
+    let two = json!([{"x": 0, "y": 0}, {"x": 100, "y": -100}]);
+    let id = NodeId(s.execute("path.curvature", &json!({ "points": two })).unwrap()["id"].as_u64().unwrap());
+    assert!(path(&s, id).subpaths[0].segment_is_line(0));
+}
+
+/// The rubber band while drawing, and while going on from a selected path's end, is the path the
+/// click then makes.
+#[test]
+fn curvature_rubber_band_is_the_path_the_click_makes() {
+    let band = |s: &mut Session| {
+        s.overlays(view()).into_iter().find_map(|o| if let vectorcraft_tools::Overlay::Path { path, .. } = o { Some(path) } else { None }).unwrap()
+    };
+    let bez = |sp: &vectorcraft_geom::SubPath| {
+        let mut bp = kurbo::BezPath::new();
+        sp.to_bezpath_into(&mut bp);
+        bp
+    };
+    let mut s = session();
+    let v = view();
+    s.select_tool("curvature", v).unwrap();
+    for (x, y) in [(100.0, 300.0), (130.0, 280.0), (300.0, 360.0)] {
+        s.pointer(&PointerEvent::new(PointerKind::Down, x, y), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, x, y), v).unwrap();
+    }
+    s.pointer(&PointerEvent::new(PointerKind::Move, 420.0, 200.0), v).unwrap();
+    let preview = band(&mut s);
+    s.pointer(&PointerEvent::new(PointerKind::Down, 420.0, 200.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 420.0, 200.0), v).unwrap();
+    let id = paths(&s)[0].0;
+    let made = path(&s, id).subpaths[0].clone();
+    assert_eq!(made.anchors.len(), 4);
+    assert_eq!(preview, bez(&made));
+    // Going on from the end of a selected pen path: the band is its last segment and the new one.
+    s.tool_key(ToolKey::Escape, Mods::default(), v).unwrap();
+    let anchors = json!([{"x": 100, "y": 500}, {"x": 200, "y": 420, "in": [160, 430], "out": [240, 410]}, {"x": 320, "y": 480, "in": [290, 440]}]);
+    let id = NodeId(s.execute("path.create", &json!({ "anchors": anchors })).unwrap()["id"].as_u64().unwrap());
+    s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
+    s.execute("select.anchors", &json!({"id": id.0, "anchors": [[0, 2]], "mode": "set"})).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Move, 450.0, 400.0), v).unwrap();
+    let preview = band(&mut s);
+    s.pointer(&PointerEvent::new(PointerKind::Down, 450.0, 400.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 450.0, 400.0), v).unwrap();
+    let made = path(&s, id).subpaths[0].clone();
+    assert_eq!(made.anchors.len(), 4);
+    let tail = vectorcraft_geom::SubPath::new(made.anchors[1..].to_vec(), false);
+    assert_eq!(preview, bez(&tail));
+}
+
+/// Without a handle position, `path.convertAnchor` to smooth curves the point as the Curvature
+/// tool does: along the circle through it and its neighbours.
+#[test]
+fn convert_anchor_to_smooth_uses_the_curvature_rule() {
+    let mut s = session();
+    let anchors = json!([{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 200, "y": 100}]);
+    let id = NodeId(s.execute("path.create", &json!({ "anchors": anchors })).unwrap()["id"].as_u64().unwrap());
+    s.execute("path.convertAnchor", &json!({"id": id.0, "subpath": 0, "anchor": 1, "to": "smooth"})).unwrap();
+    let a = path(&s, id).subpaths[0].anchors[1];
+    assert_eq!(a.kind, vectorcraft_geom::AnchorKind::Smooth);
+    // Along the circle through it and its neighbours, each between a third and two thirds of
+    // its own chord; the shorter side's handle is the shorter.
+    let (prev, next) = (Point::new(0.0, 0.0), Point::new(200.0, 100.0));
+    for (h, to) in [(a.h_in, prev), (a.h_out, next)] {
+        let r = a.p.distance(h) / a.p.distance(to);
+        assert!((1.0 / 3.0 - 1e-9..=2.0 / 3.0 + 1e-9).contains(&r), "{r}");
+    }
+    assert!(a.p.distance(a.h_in) < a.p.distance(a.h_out));
+    let (u_in, u_out) = ((a.p - a.h_in).normalize(), (a.h_out - a.p).normalize());
+    assert!((u_in - u_out).hypot() < 1e-9, "the handles are in line");
+    // Converting back takes the handles off.
+    s.execute("path.convertAnchor", &json!({"id": id.0, "subpath": 0, "anchor": 1, "to": "corner"})).unwrap();
+    assert!(!path(&s, id).subpaths[0].anchors[1].has_out());
+    assert!(s.execute("path.convertAnchor", &json!({"id": id.0, "subpath": 0, "anchor": 9, "to": "smooth"})).is_err());
 }
 
 #[test]
@@ -1018,7 +1139,7 @@ fn pen_with_cmd_borrows_direct_selection_and_goes_on_drawing() {
     gesture(&mut s, &[(100.0, 300.0)], none);
     gesture(&mut s, &[(200.0, 300.0), (250.0, 300.0)], none);
     let id = s.doc().unwrap().selection.objects[0];
-    assert_eq!(s.cursor(Point::new(250.0, 300.0), none, v), vectorcraft_tools::Cursor::Pen);
+    assert_eq!(s.cursor(Point::new(250.0, 300.0), none, v), vectorcraft_tools::Cursor::PenDrawing);
     assert_eq!(s.cursor(Point::new(250.0, 300.0), cmd, v), vectorcraft_tools::Cursor::ArrowHollow, "Direct Selection's");
     // The new anchor's outgoing handle: it moves, its incoming one turning with it.
     s.pointer(&PointerEvent::new(PointerKind::Down, 250.0, 300.0).with_mods(cmd), v).unwrap();
@@ -1054,6 +1175,31 @@ fn pen_with_cmd_borrows_direct_selection_and_goes_on_drawing() {
     s.select_tool("rectangle", v).unwrap();
     s.pointer(&PointerEvent::new(PointerKind::Up, 600.0, 100.0), v).unwrap();
     assert_eq!(s.tool_id(), "rectangle");
+}
+
+#[test]
+fn the_pen_drops_the_new_path_asterisk_once_a_path_is_started() {
+    // The Pen's asterisk means a click starts a new path: it shows until the first anchor is
+    // placed, the pen has no badge while the path is drawn, and the asterisk comes back once the
+    // path is finished (Enter, or a click on the first anchor that closes it).
+    use vectorcraft_tools::Cursor;
+    let (none, v) = (Mods::default(), view());
+    let empty = Point::new(500.0, 500.0);
+    let mut s = session();
+    s.select_tool("pen", v).unwrap();
+    assert_eq!(s.cursor(empty, none, v), Cursor::Pen);
+    gesture(&mut s, &[(100.0, 300.0)], none);
+    assert_eq!(s.cursor(empty, none, v), Cursor::PenDrawing, "after the first anchor");
+    gesture(&mut s, &[(200.0, 300.0)], none);
+    assert_eq!(s.cursor(empty, none, v), Cursor::PenDrawing);
+    s.tool_key(ToolKey::Enter, none, v).unwrap();
+    assert_eq!(s.cursor(empty, none, v), Cursor::Pen, "Enter finished the path");
+    gesture(&mut s, &[(100.0, 400.0)], none);
+    gesture(&mut s, &[(200.0, 400.0)], none);
+    gesture(&mut s, &[(150.0, 450.0)], none);
+    assert_eq!(s.cursor(Point::new(100.0, 400.0), none, v), Cursor::PenClose);
+    gesture(&mut s, &[(100.0, 400.0)], none);
+    assert_eq!(s.cursor(empty, none, v), Cursor::Pen, "closing finished the path");
 }
 
 #[test]
@@ -1143,7 +1289,7 @@ fn the_pen_continues_any_open_path_and_joins_another() {
     gesture(&mut s, &[(200.0, 100.0)], none);
     assert_eq!(s.doc().unwrap().selection.objects, vec![a]);
     assert_eq!(s.cursor(Point::new(300.0, 200.0), none, v), Cursor::PenJoin);
-    assert_eq!(s.cursor(Point::new(350.0, 200.0), none, v), Cursor::Pen, "the middle of the other path");
+    assert_eq!(s.cursor(Point::new(350.0, 200.0), none, v), Cursor::PenDrawing, "the middle of the other path");
     // #1009: Use Precise Cursors makes the join pointer a crosshair too.
     s.execute("prefs.set", &json!({"key": "usePreciseCursors", "value": true})).unwrap();
     assert_eq!(s.cursor(Point::new(300.0, 200.0), none, v), Cursor::Crosshair);

@@ -66,6 +66,62 @@ fn framing_basics() {
 }
 
 #[test]
+fn framing_rejects_invalid_versions_before_dispatch() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct CountingBackend(Rc<Cell<usize>>);
+    impl Backend for CountingBackend {
+        fn call(&mut self, _: &str, _: Value) -> Result<Value, String> {
+            self.0.set(self.0.get() + 1);
+            Ok(json!({}))
+        }
+        fn has_ui(&self) -> bool {
+            false
+        }
+        fn describe(&self) -> String {
+            "test".into()
+        }
+    }
+
+    let calls = Rc::new(Cell::new(0));
+    let mut s = Server::new(Box::new(CountingBackend(calls.clone())));
+    let mut request = json!({"id": 7, "method": "tools/call", "params": {"name": "run_command", "arguments": {"command": "edit.clear"}}});
+    for version in [None, Some(json!("1.0")), Some(json!("3.0")), Some(json!(2.0)), Some(Value::Null)] {
+        if let Some(version) = version {
+            request["jsonrpc"] = version;
+        }
+        let reply: Value = serde_json::from_str(&s.handle_line(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(calls.get(), 0, "invalid envelope dispatched: {request}");
+        assert_eq!(reply["error"]["code"], -32600, "{reply}");
+        assert_eq!(reply["id"], 7);
+    }
+    request["jsonrpc"] = json!("2.0");
+    let reply = s.handle(request).unwrap();
+    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn framing_rejects_invalid_notification_versions_in_batches() {
+    let mut s = server();
+    for version in [None, Some(json!("1.0")), Some(json!(2.0)), Some(Value::Null)] {
+        let mut notification = json!({"method": "notifications/initialized"});
+        if let Some(version) = version {
+            notification["jsonrpc"] = version;
+        }
+        let batch = json!([notification, {"jsonrpc": "2.0", "id": "ping", "method": "ping"}]);
+        let replies: Value = serde_json::from_str(&s.handle_line(&batch.to_string()).unwrap()).unwrap();
+        assert!(!s.is_initialized(), "invalid notification changed state: {batch}");
+        assert_eq!(replies.as_array().unwrap().len(), 1, "{replies}");
+        assert_eq!(replies[0]["id"], "ping");
+        assert_eq!(replies[0]["result"], json!({}));
+    }
+    assert_eq!(s.handle(json!({"jsonrpc": "2.0", "method": "notifications/initialized"})), None);
+    assert!(s.is_initialized());
+}
+
+#[test]
 fn serve_loop_writes_one_line_per_request() {
     let mut s = server();
     let input = [
@@ -349,6 +405,44 @@ fn add_text_justify_anchors_point_type_on_x() {
     assert!((r + rw - 300.0).abs() < 1.0, "{r} {rw}");
 }
 
+/// add_text forwards writing direction to both text-creation commands, keeping horizontal as the default.
+#[test]
+fn add_text_sets_writing_direction_for_every_kind() {
+    let tools = tool_definitions();
+    let definition = tools.iter().find(|t| t["name"] == "add_text").unwrap();
+    assert_eq!(definition["inputSchema"]["properties"]["vertical"]["type"], "boolean");
+    for mode in ["point", "area", "pathArea", "onPath"] {
+        for vertical in [None, Some(false), Some(true)] {
+            let mut s = server();
+            let mut args = json!({"text": "AB", "size": 24});
+            if mode == "point" || mode == "area" {
+                args["x"] = json!(100);
+                args["y"] = json!(100);
+                if mode == "area" {
+                    args["width"] = json!(180);
+                    args["height"] = json!(160);
+                }
+            } else {
+                let path = call(&mut s, 1, "draw_shape", json!({"shape": "rectangle", "x": 40, "y": 40, "width": 180, "height": 160}));
+                assert_eq!(path["isError"], false, "{path}");
+                args["path"] = serde_json::from_str::<Value>(&text_of(&path)).unwrap()["id"].clone();
+                args["mode"] = json!(if mode == "pathArea" { "area" } else { "onPath" });
+            }
+            if let Some(value) = vertical {
+                args["vertical"] = json!(value);
+            }
+            let made = call(&mut s, 2, "add_text", args);
+            assert_eq!(made["isError"], false, "{mode} {vertical:?}: {made}");
+            let id = serde_json::from_str::<Value>(&text_of(&made)).unwrap()["id"].clone();
+            let node = call(&mut s, 3, "run_command", json!({"command": "document.node", "params": {"id": id}}));
+            assert_eq!(node["isError"], false, "{node}");
+            let node: Value = serde_json::from_str(&text_of(&node)).unwrap();
+            assert_eq!(node["kind"]["type"], "text", "{node}");
+            assert_eq!(node["kind"]["vertical"].as_bool().unwrap_or(false), vertical.unwrap_or(false), "{mode}: {node}");
+        }
+    }
+}
+
 /// save_file says it saves in the document's own format or the one the path's extension picks.
 #[test]
 fn save_file_describes_the_formats_it_writes() {
@@ -504,6 +598,66 @@ fn remote_does_not_replay_when_edit_reply_is_lost() {
     let error = first.expect_err("the lost reply must report uncertainty");
     assert!(error.contains("operation may have completed"), "{error}");
     assert!(next.is_ok(), "the next call must reconnect: {next:?}");
+}
+
+#[test]
+fn remote_rejects_uncorrelated_replies_without_replaying() {
+    for reply in [
+        json!({"ok": true, "result": {}}).to_string(),
+        json!({"id": null, "ok": true, "result": {}}).to_string(),
+        json!({"id": "1", "ok": true, "result": {}}).to_string(),
+        json!({"id": 2, "ok": true, "result": {}}).to_string(),
+        json!({"id": 2, "ok": false, "error": "unrelated error"}).to_string(),
+        "not json".into(),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            let timeout = std::time::Duration::from_secs(5);
+            let mut seen = vec![];
+            for connection in 0..2 {
+                let deadline = std::time::Instant::now() + timeout;
+                let stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < deadline => std::thread::yield_now(),
+                        Err(e) => panic!("accept failed: {e}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream.set_read_timeout(Some(timeout)).unwrap();
+                stream.set_write_timeout(Some(timeout)).unwrap();
+                let mut out = stream.try_clone().unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let msg: Value = serde_json::from_str(&line).unwrap();
+                seen.push(msg.clone());
+                if connection == 0 {
+                    writeln!(out, "{reply}").unwrap();
+                    line.clear();
+                    assert_eq!(reader.read_line(&mut line).unwrap(), 0, "invalid reply must close the connection without another request");
+                } else {
+                    writeln!(out, "{}", json!({"id": msg["id"], "ok": true, "result": {"objects": 1}})).unwrap();
+                }
+            }
+            seen
+        });
+        let mut remote = Remote::connect(&addr).unwrap();
+        let first = remote.call("engine.execute", json!({"command": "shape.rectangle", "params": {"width": 20, "height": 20}}));
+        let next = remote.call("document.inspect", json!({}));
+        drop(remote);
+        let seen = h.join().unwrap();
+        let error = first.expect_err("an uncorrelated reply cannot confirm the edit");
+        assert!(error.contains("operation may have completed"), "{error}");
+        assert_eq!(next.unwrap(), json!({"objects": 1}));
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0]["method"], "engine.execute");
+        assert_eq!(seen[1]["method"], "document.inspect", "the edit must not be replayed");
+        assert_eq!(seen[0]["id"], 1);
+        assert_eq!(seen[1]["id"], 2);
+    }
 }
 
 #[test]
@@ -920,6 +1074,26 @@ fn type_preferences_apply_to_agents() {
     let r = call(&mut s, 5, "press_key", json!({"key": ".", "mods": {"cmd": true, "shift": true}}));
     assert_eq!(r["isError"], false, "{r}");
     assert_eq!(style(&mut s, 6), (size + 4.0, tracking + 50.0));
+}
+
+/// Cmd+Alt+Q reaches agents: the placeholder text the Type tool selects goes back to tracking 0
+/// and Auto kerning.
+#[test]
+fn cmd_alt_q_resets_tracking_and_kerning_for_agents() {
+    let mut s = server();
+    let events = json!([{"kind": "down", "x": 100, "y": 100}, {"kind": "up", "x": 100, "y": 100}]);
+    let r = call(&mut s, 1, "pointer_gesture", json!({"tool": "type", "events": events}));
+    assert_eq!(r["isError"], false, "{r}");
+    let id = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["selection"][0].as_u64().unwrap();
+    let r = call(&mut s, 2, "run_command", json!({"command": "text.setRangeStyle", "params": {"id": id, "tracking": 200, "kerning": -40}}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = call(&mut s, 3, "press_key", json!({"key": "Q", "mods": {"cmd": true, "alt": true}}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(serde_json::from_str::<Value>(&text_of(&r)).unwrap()["command"], "type.resetTracking", "{r}");
+    let r = call(&mut s, 4, "run_command", json!({"command": "text.getRange", "params": {"id": id}}));
+    let runs = serde_json::from_str::<Value>(&text_of(&r)).unwrap()["runs"].clone();
+    assert_eq!(runs.as_array().unwrap().len(), 1, "{runs}");
+    assert_eq!((&runs[0]["style"]["tracking"], &runs[0]["style"]["kerning"]), (&json!(0.0), &Value::Null), "{runs}");
 }
 
 /// The drawing tools snap to Smart Guides over MCP as with the mouse (#506): a Rectangle drawn

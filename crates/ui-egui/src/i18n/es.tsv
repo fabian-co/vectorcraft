@@ -57,6 +57,10 @@
 	Draft	Borrador
 	Good	Buena
 	Best	Óptima
+	Mode	Modo
+	Blur Mode	Modo de desenfoque
+	Edge Only	Solo bordes
+	Overlay Edge	Superponer bordes
 
 # Status and error messages too (`@msg` rows at the end, `COMPLETE_MESSAGES` in the tests).
 # A native speaker's review is welcome: keep the placeholders ({name}), the trailing "…" and the
@@ -222,7 +226,6 @@
 	Art	Ilustración
 	Art using a deleted global swatch keeps its colour.	La ilustración que usa una muestra global eliminada conserva su color.
 	Artboard Options	Opciones de mesa de trabajo
-	Artboard Options: edit with the Artboard tool	Opciones de mesa de trabajo: edita con la herramienta Mesa de trabajo
 	Artboard Options…	Opciones de mesa de trabajo…
 	Artboard Tool	Herramienta Mesa de trabajo
 	Artboard {number}	Mesa de trabajo {number}
@@ -484,6 +487,7 @@
 	Color bars	Barras de color
 	Color blindness – Deuteranopia-type	Daltonismo – tipo deuteranopía
 	Color blindness – Protanopia-type	Daltonismo – tipo protanopía
+	Color blindness – Tritanopia-type	Daltonismo – tipo tritanopía
 	Color Burn	Subexponer color
 	Color conversion:	Conversión de color:
 	Color Dodge	Sobreexponer color
@@ -652,6 +656,7 @@
 	Cyan	Cian
 	Dark	Oscuro
 	Darken	Oscurecer
+	Darkness	Oscuridad
 	dash	guion
 	Dash Pattern	Patrón de guiones
 	Dashed	Discontinuo
@@ -1005,6 +1010,9 @@
 	Export…	Exportar…
 	Extrude & Bevel…	Extrusión y biselado…
 	Eyedropper	Cuentagotas
+	Sample Color from Screen	Tomar color de la pantalla
+	This system has no screen color sampler	Este sistema no tiene muestreador de color de la pantalla
+	The active document changed while the screen color sampler was open	El documento activo cambió mientras el muestreador de color de la pantalla estaba abierto
 	Eyedropper Applies:	El cuentagotas aplica:
 	Eyedropper Options	Opciones de cuentagotas
 	Eyedropper Picks Up:	El cuentagotas toma:
@@ -1036,6 +1044,7 @@
 	Fill (X), double-click for the Color Picker	Relleno (X), doble clic para el selector de color
 	Fill and Stroke	Relleno y trazo
 	Fill new strokes	Rellenar trazos nuevos
+	Keep selected	Mantener seleccionado
 	Fill Color	Color de relleno
 	Fill New Type Objects With Placeholder Text	Rellenar nuevos objetos de texto con texto de muestra
 	Fill Rule	Regla de relleno
@@ -1060,6 +1069,7 @@
 	Fit Headline	Ajustar titular
 	Decrease Font Size	Reducir tamaño de fuente
 	Increase Font Size	Aumentar tamaño de fuente
+	Reset Tracking and Kerning	Restablecer espaciado e interletraje
 	Spacing	Espaciado
 	Step Type	Ajustar texto por incrementos
 	Fit in View	Encajar en la vista
@@ -1260,6 +1270,7 @@
 	Hide Print Tiling	Ocultar mosaico de impresión
 	Hide Rulers	Ocultar reglas
 	Hide Slices	Ocultar sectores
+	Hide Template	Ocultar plantilla
 	Hide Text Threads	Ocultar enlaces de texto
 	Hide Thumbnail	Ocultar miniatura
 	Hide Thumbnails	Ocultar miniaturas
@@ -1477,6 +1488,20 @@
 	Left:	Izquierda:
 	Legacy Macintosh RGB (Gamma 1.8)	RGB de Macintosh heredado (Gamma 1.8)
 	Legacy vector clipboard	Portapapeles vectorial heredado
+	Legacy (version 7)	Heredado (versión 7)
+	Transparent Images:	Imágenes transparentes:
+	Flatten	Acoplar
+	Omit	Omitir
+	Legacy .ai Options	Opciones de .ai heredado
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	Un archivo .ai heredado contiene una mesa de trabajo: cada mesa de trabajo marcada se guarda como un archivo independiente.
+	{count} of {total} artboards	{count} de {total} mesas de trabajo
+	Check an artboard to save.	Marque una mesa de trabajo para guardarla.
+	Hidden Objects:	Objetos ocultos:
+	Hidden Layer	Capa oculta
+	Make Visible	Hacer visibles
+	Text:	Texto:
+	Editable	Editable
+	PDF-compatible	Compatible con PDF
 	Legacy vector clipboard (no transparency)	Portapapeles vectorial heredado (sin transparencia)
 	Less	Menos
 	Letter	Carta
@@ -2002,6 +2027,7 @@
 	Panel menu	Menú del panel
 	Panel Options…	Opciones del panel…
 	Panels	Paneles
+	Panels Except Tools and Control	Paneles excepto Herramientas y Control
 	Paragraph	Párrafo
 	Paragraph Style	Estilo de párrafo
 	Paragraph Style Options	Opciones de estilo de párrafo
@@ -2026,6 +2052,7 @@
 	Pathfinder Options…	Opciones de Buscatrazos…
 	Pathfinders:	Buscatrazos:
 	Paths	Trazados
+	Path Length	Longitud de los trazados
 	Paths: {paths}    Anchors: {anchors}    Colors: {colors}	Trazados: {paths}    Anclas: {anchors}    Colores: {colors}
 	Pattern	Motivo
 	Pattern Editing	Edición de motivo
@@ -2584,6 +2611,17 @@
 	Scripts	Scripts
 	Search	Buscar
 	Search All	Buscar en todo
+	Filter	Filtro
+	Clear All	Borrar todo
+	By Object	Por objeto
+	By Layer	Por capa
+	Images	Imágenes
+	Groups	Grupos
+	Linked Files	Archivos vinculados
+	Locked	Bloqueados
+	Hidden	Ocultos
+	Filter Layers Panel Rows	Filtrar filas del panel Capas
+@msg	`{key}` must be an array of these names: {_1}	`{key}` debe ser una lista de estos nombres: {_1}
 	Search commands and tools	Buscar comandos y herramientas
 	Search commands and tools…	Buscar comandos y herramientas…
 	Search Commands…	Buscar comandos…
@@ -2721,6 +2759,7 @@
 	Show Modified	Mostrar modificados
 	Show Note	Mostrar nota
 	Show Options	Mostrar opciones
+	Color Panel Options	Opciones del panel Color
 	Show Package	Mostrar paquete
 	Show Panel	Mostrar panel
 	Show Pattern Swatches	Mostrar muestras de motivo
@@ -2733,6 +2772,7 @@
 	Show Slices	Mostrar sectores
 	Show Swatch Bounds	Mostrar límites de muestra
 	Show Swatch Kinds	Mostrar tipos de muestra
+	Show Template	Mostrar plantilla
 	Show Text Threads	Mostrar enlaces de texto
 	Show The Home Screen When No Documents Are Open	Mostrar la pantalla de inicio cuando no haya documentos abiertos
 	Show Thumbnail	Mostrar miniatura
@@ -3407,6 +3447,7 @@ imageTrace	Outline	Contorno
 	 to set spacing and orientation	 para definir espaciado y orientación
 	:	:
 	Isolate Selected Group	Aislar grupo seleccionado
+	Isolate Selected Object	Aislar objeto seleccionado
 	Release Clipping Mask	Soltar máscara de recorte
 	Make Compound Path	Crear trazado compuesto
 	Release Compound Path	Soltar trazado compuesto
@@ -3492,6 +3533,8 @@ axis	Both	Ambos
 @msg	its type is to come in as outlines, which only its page has	su texto debe llegar como contornos, y solo su página los tiene
 @msg	the art on them differs from the page's in {_1}% of it	el arte de las capas difiere del de la página en el {_1} % de su superficie
 @msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	el arte de las capas difiere del de la página en el {_1} % de su superficie: aun así proceden de sus datos de edición
+@msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	no se leyeron las capas del archivo ({_1}): se abre como su página, en una sola capa
+@msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	no se leyeron las capas del archivo desde sus datos de edición ({_1}): proceden de su parte PDF
 @msg	`to` must be "corner" or "smooth"	`to` debe ser "corner" o "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	los archivos BMP son RGB o en escala de grises: colorModel rgb o gray
 @msg	Blend colors: select at least three objects with filled colours	Fusionar colores: selecciona al menos tres objetos con relleno de color
@@ -3589,6 +3632,7 @@ axis	Both	Ambos
 @msg	`{key}` must be between {min} and {max} (got {x})	`{key}` debe estar entre {min} y {max} (se recibió {x})
 @msg	`{key}` must be one of {_1}	`{key}` debe ser uno de estos: {_1}
 @msg	`{key}` must be true or false	`{key}` debe ser true o false
+@msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode` debe ser grayscale, rgb, hsb, cmyk o websafe
 @msg	`{k}` must be [x, y]	`{k}` debe ser [x, y]
 @msg	`{name}` has no options	`{name}` no tiene opciones
 @msg	`{name}` is a built-in workspace; choose another name	`{name}` es un espacio de trabajo integrado; elige otro nombre
@@ -3634,6 +3678,9 @@ axis	Both	Ambos
 @msg	axis must be "vertical", "horizontal" or an angle in degrees, not `{v}`	axis debe ser "vertical", "horizontal" o un ángulo en grados, no `{v}`
 @msg	background {other}: transparent, white, black or a colour such as "#ff8800"	fondo {other}: transparent, white, black o un color como "#ff8800"
 @msg	bad color {v}	color no válido {v}
+@msg	the Color Picker is not open	el Selector de color no está abierto
+@msg	the screen color sampler is already open	el muestreador de color de la pantalla ya está abierto
+@msg	this system has no screen color sampler	este sistema no tiene muestreador de color de la pantalla
 @msg	bad colour `{hex}` (#rrggbb)	color no válido `{hex}` (#rrggbb)
 @msg	bad page tree	árbol de páginas no válido
 @msg	bad shortcut	atajo no válido
@@ -3945,7 +3992,7 @@ axis	Both	Ambos
 @msg	this file's PostScript couldn't be read ({why}): {what}	no se pudo leer el PostScript de este archivo ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	este formato admite una sola mesa de trabajo: exporta varias como PDF o con document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	este es un dibujo DWG, que no se puede leer: guárdalo desde la aplicación de CAD como DXF ASCII y abre ese archivo
-@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), which can't be opened yet: save it as PDF, PDF-compatible .ai or SVG	este es un archivo PostScript (un .ai guardado en un formato antiguo o sin compatibilidad con PDF, o un archivo EPS), que todavía no se puede abrir: guárdalo como PDF, .ai compatible con PDF o SVG
+@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	este es un archivo PostScript (un .ai guardado en un formato antiguo o sin compatibilidad con PDF, o un archivo EPS), no un PDF: Archivo › Abrir y Archivo › Colocar lo leen como EPS
 @msg	this is not a PostScript file	este no es un archivo PostScript
 @msg	tool shortcuts must be a single key (optionally with Shift)	los atajos de herramientas deben ser una sola tecla (opcionalmente con Shift)
 @msg	truncated	truncado
@@ -4749,3 +4796,52 @@ mark-style	Japanese	Japonesas
 	Softness	Suavidad
 	Ambient Light	Luz ambiental
 	Light behind the object	Luz detrás del objeto
+# Dimension tool (linked dimension annotations)
+	Create Dimension	Crear cota
+	Dimension Tool	Herramienta Cota
+	Dimension Tool Options	Opciones de la herramienta Cota
+	Font Family:	Familia de fuentes:
+	Font Style:	Estilo de fuente:
+	Precision:	Precisión:
+	Update Dimensions	Actualizar cotas
+	Display	Visualización
+
+# Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
+	Dimension	Cota
+	Drawing : real size — 1:10 labels 1 unit on the page as 10.	Dibujo : tamaño real — 1:10 rotula 1 unidad de la página como 10.
+	Preview (1 inch on the page)	Vista previa (1 pulgada en la página)
+	Set as Default	Establecer como predeterminado
+	 out from a highlighted edge to place its dimension  |  	 hacia fuera desde un borde resaltado para colocar su cota  |  
+	 cancels  |  Double-click the tool for options	 cancela  |  Doble clic en la herramienta para ver las opciones
+	Angular	Angular
+	Away from the Line	Lejos de la línea
+	Between Line and Object	Entre la línea y el objeto
+	Drag out from a segment, or click two points, then click to place.	Arrastre hacia fuera desde un segmento, o haga clic en dos puntos y luego haga clic para colocar.
+	Drag out from a corner, or click two straight lines, then click to place.	Arrastre hacia fuera desde una esquina, o haga clic en dos líneas rectas y luego haga clic para colocar.
+	Drag out from a circle or arc for its radius, inwards for its diameter.	Arrastre desde un círculo o arco hacia fuera para el radio, hacia dentro para el diámetro.
+@msg	Choose a circle or a perfect arc	Elija un círculo o un arco perfecto
+@msg	Choose a precision from 0 to 6	Elija una precisión de 0 a 6
+@msg	Angles require two straight segments	Los ángulos requieren dos segmentos rectos
+@msg	Choose two different points	Elija dos puntos distintos
+@msg	Choose two non-parallel straight segments	Elija dos segmentos rectos no paralelos
+@msg	Choose two nonzero angle arms	Elija dos lados del ángulo de longitud distinta de cero
+@msg	Dimension point is outside the canvas	El punto de la cota está fuera del lienzo
+@msg	Dimension size is outside its supported range	El tamaño de la cota está fuera del intervalo admitido
+@msg	First measured segment no longer exists	El primer segmento medido ya no existe
+@msg	Invalid dimension distance	Distancia de cota no válida
+@msg	Invalid dimension font name	Nombre de fuente de cota no válido
+@msg	Invalid drawing scale	Escala de dibujo no válida
+@msg	Invalid real scale	Escala real no válida
+@msg	Measured anchor no longer exists	El punto de ancla medido ya no existe
+@msg	Measured segment no longer exists	El segmento medido ya no existe
+@msg	Non-finite dimension	Cota no finita
+@msg	Scale must be drawing:real, for example 1:10	La escala debe ser dibujo:real, por ejemplo 1:10
+@msg	Scale ratio must be between 1:1000000 and 1000000:1	La relación de escala debe estar entre 1:1000000 y 1000000:1
+@msg	Second measured segment no longer exists	El segundo segmento medido ya no existe
+@msg	Unknown dimension mode	Modo de cota desconocido
+@msg	Unknown dimension option {k}	Opción de cota desconocida {k}
+@msg	Unknown dimension style	Estilo de cota desconocido
+@msg	Unknown unit	Unidad desconocida
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	Cierra los extremos circulares de los perfiles abiertos. Los giros parciales mantienen abiertos sus lados de corte.
+	Distance	Distancia

@@ -407,7 +407,7 @@ fn expand_pieces(d: &mut Document, m: &mut Node, all: bool, stroke_art: effects:
 /// Expand Appearance of `id` (and, recursively, of a group's or layer's members): every fill and
 /// stroke becomes an object of its own (strokes outlined, brushes as their art), geometry effects
 /// are baked, raster effects become an embedded image, and the object keeps its transparency.
-fn expand_node(d: &mut Document, id: NodeId, brushes: &[vectorcraft_brush::Brush], out: &mut Vec<NodeId>) {
+pub(crate) fn expand_node(d: &mut Document, id: NodeId, brushes: &[vectorcraft_brush::Brush], out: &mut Vec<NodeId>) {
     let Some(mut n) = d.node(id).cloned() else { return };
     if !expandable(&n) {
         return;
@@ -647,8 +647,96 @@ mod tests {
         assert_eq!(params(&s), json!({"lightRotation": 0.0, "lightHeight": 60, "lightBehind": false}));
     }
 
+    /// Scripts from before Scribble's separate variations give one `variation`, which is stored as the
+    /// Path Overlap and Spacing variations. An angle is stored above -180° and up to 180°.
+    #[test]
+    fn scribble_stores_an_earlier_variation_as_two_and_its_angle_within_180() {
+        let (mut s, id) = session_with_rect();
+        let p = json!({"effect": "stylize.scribble", "ids": [id.0], "item": null, "params": {"angle": 270, "variation": 2}});
+        s.execute("effect.apply", &p).unwrap();
+        let params = |s: &Session| node(s, id).appearance.effects[0].params.clone();
+        assert_eq!((params(&s)["angle"].as_f64(), params(&s).get("variation")), (Some(-90.0), None), "{}", params(&s));
+        assert_eq!((&params(&s)["overlapVariation"], &params(&s)["spacingVariation"]), (&json!(2), &json!(2)));
+        s.execute("effect.setParams", &json!({"index": 0, "params": {"angle": -200}, "ids": [id.0], "item": null})).unwrap();
+        assert_eq!(params(&s)["angle"].as_f64(), Some(160.0));
+        // A file of then stores its variation; setting one of the two keeps it for the other.
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).node_mut(id).unwrap().appearance.effects[0].params = json!({"variation": 3});
+        s.execute("effect.setParams", &json!({"index": 0, "params": {"spacingVariation": 1}, "ids": [id.0], "item": null})).unwrap();
+        assert_eq!(params(&s), json!({"overlapVariation": 3, "spacingVariation": 1}));
+    }
+
     fn effects_for_test(s: &Session, id: NodeId) -> vectorcraft_doc::Node {
         effects::revolve_art(&node(s, id)).unwrap()
+    }
+
+    #[test]
+    fn smooth_revolve_commands_validate_save_expand_and_undo() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":300,"height":300})).unwrap();
+        let r = s.execute("path.create", &json!({"d":"M150 40 C190 60 190 140 150 160"})).unwrap();
+        let id = NodeId(r["id"].as_u64().unwrap());
+        s.execute("effect.apply", &json!({"effect":"threeD.revolve","ids":[id.0],"item":null,"params":{"offset":20,"segments":16}})).unwrap();
+        let initial = node(&s, id);
+        let source = initial.path_data().unwrap().clone();
+        assert!(!initial.appearance.effects[0].params.as_object().unwrap().contains_key("smoothShading"));
+        assert!(initial.appearance.effects[0].params["cap"].as_bool().unwrap());
+        let mut gradients = 0;
+        effects_for_test(&s, id).walk(&mut |face| {
+            gradients += face.appearance.items.iter().filter(|item| {
+                matches!(item, vectorcraft_doc::AppearanceItem::Fill(fill) if matches!(fill.paint, vectorcraft_doc::color::Paint::Gradient(_)))
+            }).count();
+        });
+        assert!(gradients > 0, "commands use smooth vector shading by default");
+        s.execute("effect.setParams", &json!({"index":0,"ids":[id.0],"item":null,"params":{"lightAzimuth":30}})).unwrap();
+        let smooth = node(&s, id);
+        assert_eq!(smooth.path_data(), Some(&source));
+        assert_ne!(effects_for_test(&s, id), effects::revolve_art(&initial).unwrap());
+        let restored = vectorcraft_format::load(&vectorcraft_format::save(&s.doc().unwrap().doc, false)).unwrap();
+        assert_eq!(effects::revolve_art(restored.node(id).unwrap()), Some(effects_for_test(&s, id)));
+        s.execute("effect.expandAppearance", &json!({"ids":[id.0]})).unwrap();
+        assert!(!effects::has_revolve(&node(&s, id)));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(node(&s, id), smooth);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(node(&s, id), initial);
+    }
+
+    #[test]
+    fn revolve_caps_save_export_expand_and_undo_without_changing_the_source() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":300,"height":300})).unwrap();
+        let r = s.execute("path.create", &json!({"d":"M150 40 L150 160"})).unwrap();
+        let id = NodeId(r["id"].as_u64().unwrap());
+        let source = node(&s, id).path_data().unwrap().clone();
+        s.execute(
+            "effect.apply",
+            &json!({"effect":"threeD.revolve","ids":[id.0],"item":null,
+            "params":{"offset":30,"rotationX":-35,"segments":16,"expandVisibleOnly":false,"cap":false}}),
+        )
+        .unwrap();
+        let uncapped = node(&s, id);
+        assert_eq!(uncapped.appearance.effects[0].params["cap"], json!(false));
+        let count = |n: &vectorcraft_doc::Node| n.children().unwrap()[0].children().unwrap().len();
+        let open_count = count(&effects_for_test(&s, id));
+        s.execute("effect.setParams", &json!({"index":0,"ids":[id.0],"item":null,"params":{"cap":true}})).unwrap();
+        let capped = node(&s, id);
+        let art = effects_for_test(&s, id);
+        assert_eq!(count(&art), open_count + 2, "each endpoint adds one continuous vector cap");
+        assert_eq!(capped.path_data(), Some(&source));
+        assert!(s.execute("effect.setParams", &json!({"index":0,"ids":[id.0],"item":null,"params":{"cap":"yes"}})).is_err());
+        assert_eq!(node(&s, id), capped, "a bad boolean does not mutate the document");
+        let restored = vectorcraft_format::load(&vectorcraft_format::save(&s.doc().unwrap().doc, false)).unwrap();
+        assert_eq!(restored.node(id).unwrap().appearance.effects[0].params["cap"], json!(true));
+        assert_eq!(effects::revolve_art(restored.node(id).unwrap()), Some(art.clone()));
+        let pdf = s.execute("document.serialize", &json!({"format":"pdf"})).unwrap();
+        assert!(vectorcraft_format::base64_decode(pdf["dataBase64"].as_str().unwrap()).unwrap().starts_with(b"%PDF"));
+        s.execute("effect.expandAppearance", &json!({"ids":[id.0]})).unwrap();
+        assert_eq!(count(&node(&s, id)), count(&art));
+        assert!(!effects::has_revolve(&node(&s, id)));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(node(&s, id), capped);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(node(&s, id), uncapped);
     }
 
     #[test]
@@ -768,6 +856,29 @@ mod tests {
         let r = s.execute("effect.apply", &json!({"effect": "pathfinder.add"})).unwrap();
         assert!(r.get("grouped").is_none());
         assert_eq!(node(&s, a).appearance.effects.len(), 1);
+    }
+
+    #[test]
+    fn pathfinder_effect_on_a_group_with_type_cuts_the_glyphs_out() {
+        let (mut s, a) = session_with_rect();
+        let t = NodeId(s.execute("text.create", &json!({"x": 110, "y": 180, "text": "H", "size": 100})).unwrap()["id"].as_u64().unwrap());
+        let glyphs = effects::outline_text(&node(&s, t)).unwrap();
+        let b = glyphs.geometric_bounds().unwrap();
+        assert!(b.x0 > 105.0 && b.y0 > 105.0 && b.x1 < 195.0 && b.y1 < 195.0, "the type lies inside the square: {b:?}");
+        let area = |n: &vectorcraft_doc::Node| effects::member_shapes(n).iter().map(|(p, r)| vectorcraft_pathops::area(p, *r)).sum::<f64>();
+        let glyph_area = area(&glyphs);
+        s.execute("select.set", &json!({"ids": [a.0, t.0]})).unwrap();
+        let g = NodeId(s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap());
+        s.execute("effect.apply", &json!({"effect": "pathfinder.subtract"})).unwrap();
+        // Live: the renderer leaves the glyph's place in the square empty.
+        let doc = s.doc().unwrap().doc.clone();
+        let img = vectorcraft_render::Renderer::new().render(&doc, 400, 400, vectorcraft_geom::Affine::IDENTITY, &Default::default());
+        let empty = (105..195).flat_map(|y| (105..195).map(move |x| (x, y))).filter(|&(x, y)| img.pixel(x, y)[3] == 0).count();
+        assert!(empty as f64 > glyph_area / 2.0, "{empty} empty pixels for a glyph area of {glyph_area}");
+        // Expanded: the group holds the square minus the glyph.
+        s.execute("effect.expandAppearance", &json!({})).unwrap();
+        let left = area(&node(&s, g));
+        assert!((left - (10_000.0 - glyph_area)).abs() < 0.5, "{left} left of the square for a glyph area of {glyph_area}");
     }
 
     #[test]

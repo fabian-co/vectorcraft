@@ -436,6 +436,7 @@
 	Round Corners…	Zaoblit rohy…
 	Scribble…	Čmáranice…
 	Drop Shadow…	Vržený stín…
+	Darkness	Tmavost
 	Inner Glow…	Vnitřní záře…
 	Outer Glow…	Vnější záře…
 	Feather…	Měkké okraje…
@@ -478,6 +479,7 @@
 	Monitor RGB	RGB monitoru
 	Color blindness – Protanopia-type	Barvoslepost – protanopie
 	Color blindness – Deuteranopia-type	Barvoslepost – deuteranopie
+	Color blindness – Tritanopia-type	Barvoslepost – tritanopie
 	Customize…	Vlastní…
 	Proof Colors	Barvy nátisku
 	Zoom In	Zvětšit
@@ -502,6 +504,8 @@
 	Show Video Rulers	Zobrazit video pravítka
 	Hide Bounding Box	Skrýt ohraničovací rámeček
 	Show Bounding Box	Zobrazit ohraničovací rámeček
+	Hide Template	Skrýt šablonu
+	Show Template	Zobrazit šablonu
 	Show Transparency Grid	Zobrazit mřížku průhlednosti
 	Hide Transparency Grid	Skrýt mřížku průhlednosti
 	Hide Text Threads	Skrýt zřetězení textu
@@ -665,6 +669,7 @@
 	Auto Color	Automatická barva
 	Automatic	Automaticky
 	Isolate Selected Group	Izolovat vybranou skupinu
+	Isolate Selected Object	Izolovat vybraný objekt
 	Exit Isolation Mode	Ukončit izolovaný režim
 	Make Clipping Mask	Vytvořit ořezovou masku
 	Release Clipping Mask	Uvolnit ořezovou masku
@@ -904,6 +909,7 @@ lighting	Light	Světlo
 	Options for Selection…	Možnosti výběru…
 	Panel Options…	Možnosti panelu…
 	Panels	Panely
+	Panels Except Tools and Control	Panely kromě nástrojů a ovládacího panelu
 	Perspective Plane Options…	Možnosti perspektivní roviny…
 	Placement Options…	Možnosti umístění…
 	Plug-in…	Zásuvný modul…
@@ -1276,7 +1282,6 @@ lighting	Light	Světlo
 	Rectangle: Sunshine	Obdélník: Sluneční svit
 	Redefine Graphic Style “{name}”	Předefinovat grafický styl „{name}“
 	Show Thumbnail	Zobrazit miniaturu
-	Artboard Options: edit with the Artboard tool	Možnosti pracovní plochy: upravte nástrojem Pracovní plocha
 	Delete Artboards	Odstranit pracovní plochy
 	Delete Empty Artboards	Odstranit prázdné pracovní plochy
 	Duplicate Artboards	Duplikovat pracovní plochy
@@ -1340,6 +1345,7 @@ lighting	Light	Světlo
 	Roman Baseline	Latinková účaří
 	Select a text object to edit its character attributes.	Vyberte textový objekt, abyste mohli upravit atributy jeho znaků.
 	Show Options	Zobrazit možnosti
+	Color Panel Options	Možnosti panelu Barva
 	Small Caps	Kapitálky
 	Small Caps (on the roadmap)	Kapitálky (v plánu)
 	Standard Vertical Roman Alignment	Standardní svislé zarovnání latinky
@@ -1496,6 +1502,17 @@ lighting	Light	Světlo
 	Create New Layer	Vytvořit novou vrstvu
 	Create New Sublayer	Vytvořit novou podvrstvu
 	Search All	Hledat ve všem
+	Filter	Filtr
+	Clear All	Smazat vše
+	By Object	Podle objektu
+	By Layer	Podle vrstvy
+	Images	Obrazy
+	Groups	Skupiny
+	Linked Files	Propojené soubory
+	Locked	Zamčené
+	Hidden	Skryté
+	Filter Layers Panel Rows	Filtrovat řádky panelu Vrstvy
+@msg	`{key}` must be an array of these names: {_1}	`{key}` musí být pole těchto názvů: {_1}
 	Graphics	Grafika
 	Local Libraries	Místní knihovny
 	Add Content	Přidat obsah
@@ -1957,6 +1974,10 @@ lighting	Light	Světlo
 	Spin	Otáčení
 	Good	Dobrá
 	Best	Nejlepší
+	Mode	Režim
+	Blur Mode	Režim rozostření
+	Edge Only	Jen okraje
+	Overlay Edge	Překrýt okraje
 	Amount	Míra
 	Contrast	Kontrast
 	Edit the applied effect, or add another one?	Upravit použitý efekt, nebo přidat další?
@@ -2085,6 +2106,7 @@ lighting	Light	Světlo
 	Edit selected paths within:	Upravovat vybrané cesty do:
 	Fidelity:	Věrnost:
 	Fill new strokes	Vyplňovat nové tahy
+	Keep selected	Ponechat vybrané
 	The document has no colour swatches.	Dokument nemá ve vzorníku žádné barvy.
 	Style Name:	Název stylu:
 	Crop To	Oříznout na
@@ -2733,6 +2755,9 @@ effect	Vertical	Svislý
 	Clear Appearance	Vymazat vzhled
 	Duplicate Item	Duplikovat položku
 	Eyedropper	Kapátko
+	Sample Color from Screen	Nabrat barvu z obrazovky
+	This system has no screen color sampler	Tento systém nemá nástroj pro nabírání barvy z obrazovky
+	The active document changed while the screen color sampler was open	Aktivní dokument se změnil, zatímco byl otevřený nástroj pro nabírání barvy z obrazovky
 	Move Appearance	Přesunout vzhled
 	Reduce to Basic Appearance	Zredukovat na základní vzhled
 	Remove Item	Odebrat položku
@@ -2833,6 +2858,7 @@ theme	Appearance	Motiv
 	Width Profile	Profil šířky
 	Objects	Objekty
 	Paths	Cesty
+	Path Length	Délka cest
 	Add Guide	Přidat vodítko
 	Edit Selection	Upravit výběr
 	Recall Selection	Vyvolat výběr
@@ -3178,6 +3204,20 @@ theme	Appearance	Motiv
 	Large	Velké
 	Large Tabs	Velké karty
 	Legacy vector clipboard	Starší vektorová schránka
+	Legacy (version 7)	Starší (verze 7)
+	Transparent Images:	Průhledné obrazy:
+	Flatten	Sloučit
+	Omit	Vynechat
+	Legacy .ai Options	Starší soubor .ai – volby
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	Soubor .ai ve starší verzi obsahuje jedinou kreslicí plochu: každá zaškrtnutá kreslicí plocha se uloží jako samostatný soubor.
+	{count} of {total} artboards	{count} z {total} kreslicích ploch
+	Check an artboard to save.	Zaškrtněte kreslicí plochu, kterou chcete uložit.
+	Hidden Objects:	Skryté objekty:
+	Hidden Layer	Skrytá vrstva
+	Make Visible	Zviditelnit
+	Text:	Text:
+	Editable	Upravitelný
+	PDF-compatible	Kompatibilní s PDF
 	Legacy vector clipboard (no transparency)	Starší vektorová schránka (bez průhlednosti)
 	Line Color	Barva čar
 	Lines	Čáry
@@ -3436,6 +3476,7 @@ axis	Both	Obě
 	Area / Path Type	Text v oblasti / na cestě
 	Decrease Font Size	Zmenšit velikost písma
 	Increase Font Size	Zvětšit velikost písma
+	Reset Tracking and Kerning	Obnovit prostrkání a vyrovnání párů
 	Step Type	Krokovat text
 	Get Text Range	Získat rozsah textu
 	Punctuation	Interpunkce
@@ -3789,6 +3830,8 @@ imageTrace	Outline	Obrys
 @msg	its type is to come in as outlines, which only its page has	jeho text se má načíst jako křivky, které má jen jeho stránka
 @msg	the art on them differs from the page's in {_1}% of it	kresba na nich se od stránky liší v {_1} % plochy
 @msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	kresba na nich se od stránky liší v {_1} % plochy: přesto pocházejí z jeho dat pro úpravy
+@msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	vrstvy souboru nebyly načteny ({_1}): soubor se otevře jako jeho stránka v jedné vrstvě
+@msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	vrstvy souboru nebyly načteny z jeho dat pro úpravy ({_1}): pocházejí z jeho části PDF
 @msg	`to` must be "corner" or "smooth"	`to` musí být "corner" nebo "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	soubory BMP jsou RGB nebo ve stupních šedi: colorModel rgb nebo gray
 @msg	Blend colors: select at least three objects with filled colours	Prolnout barvy: vyberte alespoň tři objekty s barevnou výplní
@@ -3885,6 +3928,7 @@ imageTrace	Outline	Obrys
 @msg	`{key}` must be between {min} and {max} (got {x})	`{key}` musí být mezi {min} a {max} (zadáno {x})
 @msg	`{key}` must be one of {_1}	`{key}` musí být jedno z {_1}
 @msg	`{key}` must be true or false	`{key}` musí být true nebo false
+@msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode` musí být grayscale, rgb, hsb, cmyk nebo websafe
 @msg	`{k}` must be [x, y]	`{k}` musí být [x, y]
 @msg	`{name}` has no options	`{name}` nemá žádné možnosti
 @msg	`{name}` is a built-in workspace; choose another name	`{name}` je vestavěný pracovní prostor; zvolte jiný název
@@ -3930,6 +3974,9 @@ imageTrace	Outline	Obrys
 @msg	axis must be "vertical", "horizontal" or an angle in degrees, not `{v}`	osa musí být "vertical", "horizontal" nebo úhel ve stupních, ne `{v}`
 @msg	background {other}: transparent, white, black or a colour such as "#ff8800"	pozadí {other}: transparent, white, black nebo barva jako "#ff8800"
 @msg	bad color {v}	chybná barva {v}
+@msg	the Color Picker is not open	Výběr barvy není otevřený
+@msg	the screen color sampler is already open	nástroj pro nabírání barvy z obrazovky už je otevřený
+@msg	this system has no screen color sampler	tento systém nemá nástroj pro nabírání barvy z obrazovky
 @msg	bad colour `{hex}` (#rrggbb)	chybná barva `{hex}` (#rrggbb)
 @msg	bad page tree	chybný strom stránek
 @msg	bad shortcut	chybná klávesová zkratka
@@ -4240,7 +4287,7 @@ imageTrace	Outline	Obrys
 @msg	this file's PostScript couldn't be read ({why}): {what}	PostScript tohoto souboru nelze přečíst ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	tento formát pojme jednu pracovní plochu: více jich exportujte jako PDF nebo pomocí document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	toto je výkres DWG, který nelze přečíst: uložte jej v aplikaci CAD jako ASCII DXF a otevřete ten
-@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), which can't be opened yet: save it as PDF, PDF-compatible .ai or SVG	toto je soubor PostScript (.ai uložený ve starším formátu nebo bez kompatibility s PDF, nebo soubor EPS), který zatím nelze otevřít: uložte jej jako PDF, .ai kompatibilní s PDF nebo SVG
+@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	toto je soubor PostScript (.ai uložený ve starším formátu nebo bez kompatibility s PDF, nebo soubor EPS), nikoli PDF: Soubor › Otevřít a Soubor › Umístit jej načtou jako EPS
 @msg	this is not a PostScript file	toto není soubor PostScript
 @msg	tool shortcuts must be a single key (optionally with Shift)	zkratky nástrojů musí být jediná klávesa (volitelně se Shift)
 @msg	truncated	zkráceno
@@ -4808,3 +4855,51 @@ mark-style	Japanese	Japonské
 	Softness	Měkkost
 	Ambient Light	Okolní světlo
 	Light behind the object	Světlo za objektem
+# Dimension tool (linked dimension annotations)
+	Display	Zobrazení
+
+# Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
+	Dimension	Rozměr
+	Drawing : real size — 1:10 labels 1 unit on the page as 10.	Výkres : skutečná velikost — 1:10 označí 1 jednotku na stránce jako 10.
+	Preview (1 inch on the page)	Náhled (1 palec na stránce)
+	Set as Default	Nastavit jako výchozí
+	 out from a highlighted edge to place its dimension  |  	 ze zvýrazněné hrany ven a umístíte její kótu  |  
+	 cancels  |  Double-click the tool for options	 zruší  |  Dvojitým kliknutím na nástroj otevřete volby
+	Angular	Úhlová
+	Away from the Line	Dál od čáry
+	Between Line and Object	Mezi čárou a objektem
+	Drag out from a segment, or click two points, then click to place.	Táhněte ven od úsečky, nebo klikněte na dva body a potom klikněním umístěte.
+	Drag out from a corner, or click two straight lines, then click to place.	Táhněte ven od rohu, nebo klikněte na dvě rovné čáry a potom klikněním umístěte.
+	Drag out from a circle or arc for its radius, inwards for its diameter.	Táhněte od kruhu nebo oblouku ven pro poloměr, dovnitř pro průměr.
+@msg	Choose a circle or a perfect arc	Vyberte kruh nebo dokonalý oblouk
+@msg	Choose a precision from 0 to 6	Zvolte přesnost od 0 do 6
+	Create Dimension	Vytvořit kótu
+	Dimension Tool	Nástroj Kóta
+	Dimension Tool Options	Volby nástroje Kóta
+	Font Family:	Rodina písma:
+	Font Style:	Řez písma:
+	Precision:	Přesnost:
+	Update Dimensions	Aktualizovat kóty
+@msg	Angles require two straight segments	Úhly vyžadují dva přímé segmenty
+@msg	Choose two different points	Vyberte dva různé body
+@msg	Choose two non-parallel straight segments	Vyberte dva nerovnoběžné přímé segmenty
+@msg	Choose two nonzero angle arms	Vyberte dvě ramena úhlu nenulové délky
+@msg	Dimension point is outside the canvas	Bod kóty leží mimo plátno
+@msg	Dimension size is outside its supported range	Velikost kóty je mimo podporovaný rozsah
+@msg	First measured segment no longer exists	První měřený segment už neexistuje
+@msg	Invalid dimension distance	Neplatná vzdálenost kóty
+@msg	Invalid dimension font name	Neplatný název písma kóty
+@msg	Invalid drawing scale	Neplatné měřítko výkresu
+@msg	Invalid real scale	Neplatné skutečné měřítko
+@msg	Measured anchor no longer exists	Měřený kotevní bod už neexistuje
+@msg	Measured segment no longer exists	Měřený segment už neexistuje
+@msg	Non-finite dimension	Kóta není konečné číslo
+@msg	Scale must be drawing:real, for example 1:10	Měřítko musí mít tvar výkres:skutečnost, například 1:10
+@msg	Scale ratio must be between 1:1000000 and 1000000:1	Poměr měřítka musí být mezi 1:1000000 a 1000000:1
+@msg	Second measured segment no longer exists	Druhý měřený segment už neexistuje
+@msg	Unknown dimension mode	Neznámý režim kóty
+@msg	Unknown dimension option {k}	Neznámá volba kóty {k}
+@msg	Unknown dimension style	Neznámý styl kóty
+@msg	Unknown unit	Neznámá jednotka
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	Uzavře kruhové konce otevřených profilů. Boční řezy částečného otočení zůstávají otevřené.

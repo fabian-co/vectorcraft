@@ -134,7 +134,7 @@ fn lengths_of(id: &str) -> Lengths {
         "threeD.inflate" => always(&["depth"]),
         "path.outlineStroke" => always(&["width"]),
         "stylize.roundCorners" | "stylize.feather" | "blur.gaussian" | "blur.smart" | "sharpen.unsharpMask" => always(&["radius"]),
-        "stylize.scribble" => always(&["overlap", "strokeWidth", "spacing", "variation"]),
+        "stylize.scribble" => always(&["overlap", "overlapVariation", "strokeWidth", "spacing", "spacingVariation"]),
         "stylize.dropShadow" => always(&["x", "y", "blur"]),
         "stylize.innerGlow" | "stylize.outerGlow" => always(&["blur"]),
         "stylize.glowingEdges" => always(&["edgeWidth", "smoothness"]),
@@ -200,8 +200,8 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             REVOLVE,
             "Revolve…",
             &["Effect", "3D and Materials"],
-            "{angle: degrees (0..360, 360), offset: pt (0..100000, 0), edge: left|right, rotationX: degrees (0), rotationY: degrees (0), rotationZ: degrees (0), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), segments: integer (8..128, 64), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth), expandVisibleOnly: bool (true, trim covered opaque solid surfaces only on Expand Appearance)}. Open paths create uncapped surfaces; intersecting profiles use approximate painter visibility.",
-            json!({"angle":360.0,"offset":0.0,"edge":"left","rotationX":0.0,"rotationY":0.0,"rotationZ":0.0,"perspectiveAngle":0.0,"segments":64,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0,"expandVisibleOnly":true}),
+            "{angle: degrees (0..360, 360), offset: pt (0..100000, 0), edge: left|right, rotationX: degrees (0), rotationY: degrees (0), rotationZ: degrees (0), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), segments: integer (8..128, 64), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth), cap: bool (true, close circular ends of open profiles; partial-sweep cut sides stay open), expandVisibleOnly: bool (true, trim covered opaque solid surfaces only on Expand Appearance)}. Shaded surfaces use smooth vector gradients automatically; intersecting profiles use approximate painter visibility.",
+            json!({"angle":360.0,"offset":0.0,"edge":"left","rotationX":0.0,"rotationY":0.0,"rotationZ":0.0,"perspectiveAngle":0.0,"segments":64,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0,"cap":true,"expandVisibleOnly":true}),
         ),
         g(
             EXTRUDE,
@@ -301,15 +301,15 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "stylize.scribble",
             "Scribble…",
             STYLIZE,
-            "{angle: deg (30), overlap: pt (0), strokeWidth: pt (3), curviness: % (5), spacing: pt (5), variation: pt (0.5), seed: int (0)} (simplified: a single hatching scribble outlined to a filled shape)",
-            json!({"angle": 30.0, "overlap": 0.0, "strokeWidth": 3.0, "curviness": 5.0, "spacing": 5.0, "variation": 0.5, "seed": 0}),
+            "{angle: deg (30; stored above -180 and up to 180: 270 becomes -90, -180 becomes 180), overlap: pt (0; Path Overlap: a positive value extends each line beyond the path, a negative one ends it inside), overlapVariation: pt (0..100, 0.5; how far each line's ends move along it), strokeWidth: pt (3), curviness: % (5), curvinessVariation: % (0..100, 0; how far each turn's curviness moves from curviness), spacing: pt (5), spacingVariation: pt (0..100, 0.5; how far each line's ends move across it), variation: pt (the earlier form, read as overlapVariation and spacingVariation unless those are given), seed: int (0)} (simplified: a single hatching scribble outlined to a filled shape)",
+            json!({"angle": 30.0, "overlap": 0.0, "overlapVariation": 0.5, "strokeWidth": 3.0, "curviness": 5.0, "curvinessVariation": 0.0, "spacing": 5.0, "spacingVariation": 0.5, "seed": 0}),
         ),
         r(
             "stylize.dropShadow",
             "Drop Shadow…",
             STYLIZE,
-            "{mode: blend mode (\"multiply\"), opacity: % (75), x: pt (7), y: pt (7), blur: pt (5), color: \"#rrggbb\" (\"#000000\")}",
-            json!({"mode": "multiply", "opacity": 75.0, "x": 7.0, "y": 7.0, "blur": 5.0, "color": "#000000"}),
+            "{mode: blend mode (\"multiply\"), opacity: % (75), x: pt (7), y: pt (7), blur: pt (5), shade: \"color\"|\"darkness\" (\"color\"), color: \"#rrggbb\" (\"#000000\"), darkness: % (100)} (shade \"darkness\": the shadow is the object's own colors with `darkness` percent of black added instead of `color`: in a CMYK document their cyan, magenta and yellow stay and their black K becomes K + darkness × (1 − K); in an RGB document each channel is multiplied by 1 − darkness)",
+            json!({"mode": "multiply", "opacity": 75.0, "x": 7.0, "y": 7.0, "blur": 5.0, "shade": "color", "color": "#000000", "darkness": 100.0}),
         ),
         r(
             "stylize.innerGlow",
@@ -345,8 +345,8 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "blur.smart",
             "Smart Blur…",
             BLUR,
-            "{radius: pt 0.1..100 (3), threshold: levels 0.1..100 (25; only colours closer than this blur together, so edges stay sharp), quality: \"low\"|\"medium\"|\"high\" (\"medium\"; 5, 7 or 9 samples across)} (Normal mode)",
-            json!({"radius": 3.0, "threshold": 25.0, "quality": "medium"}),
+            "{radius: pt 0.1..100 (3), threshold: levels 0.1..100 (25; only colours closer than this blur together, so edges stay sharp), quality: \"low\"|\"medium\"|\"high\" (\"medium\"; 5, 7 or 9 samples across), blurMode: \"normal\"|\"edgeOnly\"|\"overlayEdge\" (\"normal\"; edgeOnly: the edges in white on black, overlayEdge: the edges in white over the blur)}. A pixel is on an edge when one of its four nearest pixels differs from it by more than the threshold in a channel and its channels (alpha included) add up to at least that pixel's; the white and the black keep each pixel's coverage, and the radius changes only the blur",
+            json!({"radius": 3.0, "threshold": 25.0, "quality": "medium", "blurMode": "normal"}),
         ),
         r(
             "brushStrokes.accentedEdges",
@@ -642,8 +642,9 @@ pub fn default_params(id: &str) -> Option<Value> {
     }
 }
 
-/// `params` layered over the defaults of `id` (unknown keys are kept), with the 3D effects'
-/// earlier `perspective` read as `perspectiveAngle` (see [`upgrade_params`]).
+/// `params` layered over the defaults of `id` (unknown keys are kept), in their current form (see
+/// [`upgrade_params`]). The 3D effects' earlier `perspective` is read as `perspectiveAngle`, and
+/// Scribble's earlier `variation` is read as `overlapVariation` and `spacingVariation`.
 pub fn merged_params(id: &str, params: &Value) -> Value {
     let mut out = match catalog_index().get(id).map(|e| &e.defaults) {
         Some(Value::Object(m)) => m.clone(),
@@ -660,14 +661,17 @@ pub fn merged_params(id: &str, params: &Value) -> Value {
 /// `params` for effect `id` in their current form. The 3D effects took Perspective as a 0–100 %
 /// strength, `perspective`, before the documented 0°–160° angle, `perspectiveAngle`, and the light
 /// as `lightAzimuth` and `lightElevation` before the documented Rotation and Height
-/// (`lightRotation`, `lightHeight`, `lightBehind`). Earlier values (from a file or a script of
+/// (`lightRotation`, `lightHeight`, `lightBehind`). Scribble took one `variation` before its
+/// separate `overlapVariation` and `spacingVariation`. Earlier values (from a file or a script of
 /// then) become the current ones that show exactly the same, unless those are given too, which win.
+/// Scribble's angle is also stored above -180° and up to 180° (270° becomes -90°).
 pub fn upgrade_params(id: &str, params: &Value) -> Value {
     match params {
         Value::Object(m) => {
             let mut m = m.clone();
             upgrade_perspective(id, &mut m);
             upgrade_light(id, &mut m);
+            upgrade_scribble(id, &mut m);
             Value::Object(m)
         }
         other => other.clone(),
@@ -697,6 +701,21 @@ fn upgrade_perspective(id: &str, m: &mut Map<String, Value>) {
     if !m.contains_key("perspectiveAngle") {
         let angle = vectorcraft_three_d::perspective_from_strength(strength.as_f64().unwrap_or(0.0) / 100.0);
         m.insert("perspectiveAngle".into(), json!(angle));
+    }
+}
+
+fn upgrade_scribble(id: &str, m: &mut Map<String, Value>) {
+    if id != "stylize.scribble" {
+        return;
+    }
+    if let Some(variation) = m.remove("variation") {
+        for key in ["overlapVariation", "spacingVariation"] {
+            m.entry(key).or_insert_with(|| variation.clone());
+        }
+    }
+    if let Some(angle) = m.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite() && (*a <= -180.0 || *a > 180.0)) {
+        let wrapped = angle.rem_euclid(360.0);
+        m.insert("angle".into(), json!(if wrapped > 180.0 { wrapped - 360.0 } else { wrapped }));
     }
 }
 
@@ -747,6 +766,18 @@ pub fn is_geometry(id: &str) -> bool {
 /// Any visible geometry effect in the list?
 pub fn has_geometry(effects: &[Effect]) -> bool {
     effects.iter().any(|e| e.visible && is_geometry(&e.id))
+}
+
+/// Does `n` have a visible plug-in effect, its own or a fill's or stroke's? Such an effect draws
+/// what the plug-in installed under its id draws ([`plugin_revision`]).
+pub fn has_plugin_effect(n: &Node) -> bool {
+    let plugin = |e: &Effect| e.visible && vectorcraft_plugins::effect::plugin_id(&e.id).is_some();
+    n.appearance.effects.iter().any(plugin) || n.appearance.items.iter().any(|i| i.effects().iter().any(plugin))
+}
+
+/// The plug-in registry's revision, which changes whenever a plug-in is installed or removed.
+pub fn plugin_revision() -> u64 {
+    vectorcraft_plugins::registry::revision()
 }
 
 /// Context the geometry effects may need from the object's appearance.

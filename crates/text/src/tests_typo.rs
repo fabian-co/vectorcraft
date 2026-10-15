@@ -613,6 +613,46 @@ fn inset_and_first_baseline_options() {
     assert!(cap.lines[0].baseline < base.lines[0].baseline && cap.lines[0].baseline > 5.0);
 }
 
+/// `LineInfo::first_baseline`: each line that starts a column has its baseline that far below the
+/// column's top inside the inset, for every first baseline option, with and without a minimum and
+/// an inset, in both leading models, and for lines of several sizes (each line in one size).
+#[test]
+fn lines_starting_a_column_sit_at_their_first_baseline() {
+    let paras = [
+        ("A heading in large type\n", 24.0),
+        ("Body copy in a smaller size that runs over two or three lines of a column.\n", 12.0),
+        ("A middle size\n", 18.0),
+    ];
+    let runs: Vec<TextRun> = paras.repeat(4).into_iter().map(|(text, size)| run(text, size)).collect();
+    let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+    let mut other_sizes = 0;
+    for model in [vectorcraft_doc::LeadingModel::RomanBaseline, vectorcraft_doc::LeadingModel::EmBoxTop] {
+        for first_baseline in [FirstBaseline::Ascent, FirstBaseline::CapHeight, FirstBaseline::XHeight, FirstBaseline::Leading, FirstBaseline::Fixed]
+        {
+            for (first_baseline_min, inset) in [(0.0, 0.0), (18.0, 6.0)] {
+                for height in [100.0, 120.0, 140.0] {
+                    let mut t = area(&text, style(12.0), Rect::new(0.0, 0.0, 420.0, height), Justify::Left);
+                    t.runs = runs.clone();
+                    t.para.leading_model = model;
+                    let opts = LayoutOptions { columns: 3, gutter: 10.0, first_baseline, first_baseline_min, inset, ..Default::default() };
+                    let l = layout_with(db(), &t, &opts);
+                    let starts: Vec<&LineInfo> =
+                        l.lines.iter().enumerate().filter(|(i, li)| *i == 0 || l.lines[i - 1].region != li.region).map(|(_, li)| li).collect();
+                    assert_eq!(starts.len(), 3, "{model:?} {first_baseline:?} {height}");
+                    other_sizes += starts.iter().filter(|li| li.ascent != starts[0].ascent).count();
+                    for li in starts {
+                        assert!(
+                            (li.baseline - (inset + li.first_baseline)).abs() < 1e-9,
+                            "{model:?} {first_baseline:?} {first_baseline_min} {height}: {li:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(other_sizes >= 20, "lines of another size than the first start {other_sizes} columns");
+}
+
 #[test]
 fn rows_and_columns_flow_in_order() {
     let text = COPY.repeat(2);
@@ -624,6 +664,27 @@ fn rows_and_columns_flow_in_order() {
     assert!(l.lines[..first_col2].iter().any(|li| li.baseline > 155.0), "fills the lower cell of column 1 first");
     for w in l.lines.windows(2) {
         assert!(w[1].start >= w[0].start);
+    }
+}
+
+/// Layout clamps area type's rows and columns to 100 each: 2^60 rows or columns with 100 of the
+/// other, 2^32 of each, and `usize::MAX` of each lay out as 100 rows and 100 columns.
+#[test]
+fn area_type_lays_out_in_at_most_100_rows_and_100_columns() {
+    // At 100 by 100, a cell is about 98 by 28 pt.
+    let with = |rows: usize, columns: usize| {
+        let mut t = area(COPY, style(12.0), Rect::new(0.0, 0.0, 10_000.0, 3_000.0), Justify::Left);
+        t.area.rows = rows;
+        t.area.columns = columns;
+        t.area.gutter = 2.0;
+        layout_soon(&t)
+    };
+    let most = with(100, 100);
+    assert_eq!(most.frames.len(), 10_000);
+    assert!(!most.overflow && most.lines.len() > 10, "{:?}", line_places(&most));
+    for (rows, columns) in [(1 << 60, 100), (100, 1 << 60), (1 << 32, 1 << 32), (usize::MAX, usize::MAX)] {
+        let l = with(rows, columns);
+        assert_eq!((&l.frames, line_places(&l)), (&most.frames, line_places(&most)), "{rows} by {columns}");
     }
 }
 

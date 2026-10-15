@@ -58,6 +58,10 @@
 	Draft	Brouillon
 	Good	Bonne
 	Best	Optimale
+	Mode	Mode
+	Blur Mode	Mode de flou
+	Edge Only	Bords uniquement
+	Overlay Edge	Bords en incrustation
 
 # Status and error messages too (`@msg` rows at the end, `COMPLETE_MESSAGES` in the tests).
 # A native speaker's review is welcome: keep the placeholders ({name}), the trailing "…" and the
@@ -223,7 +227,6 @@
 	Art	Illustration
 	Art using a deleted global swatch keeps its colour.	L’illustration qui utilise une nuance globale supprimée conserve sa couleur.
 	Artboard Options	Options du plan de travail
-	Artboard Options: edit with the Artboard tool	Options du plan de travail : modifier avec l’outil Plan de travail
 	Artboard Options…	Options du plan de travail…
 	Artboard Tool	Outil Plan de travail
 	Artboard {number}	Plan de travail {number}
@@ -485,6 +488,7 @@
 	Color bars	Barres de couleurs
 	Color blindness – Deuteranopia-type	Daltonisme – type deutéranopie
 	Color blindness – Protanopia-type	Daltonisme – type protanopie
+	Color blindness – Tritanopia-type	Daltonisme – type tritanopie
 	Color Burn	Densité couleur +
 	Color conversion:	Conversion des couleurs :
 	Color Dodge	Densité couleur -
@@ -654,6 +658,7 @@
 	Cyan	Cyan
 	Dark	Sombre
 	Darken	Obscurcir
+	Darkness	Obscurité
 	dash	tiret
 	Dash Pattern	Motif de tirets
 	Dashed	Pointillés
@@ -1005,6 +1010,9 @@
 	Export…	Exporter…
 	Extrude & Bevel…	Extrusion et biseautage…
 	Eyedropper	Pipette
+	Sample Color from Screen	Prélever une couleur à l’écran
+	This system has no screen color sampler	Ce système n’a pas d’outil de prélèvement de couleur à l’écran
+	The active document changed while the screen color sampler was open	Le document actif a changé pendant que l’outil de prélèvement de couleur à l’écran était ouvert
 	Eyedropper Applies:	La pipette applique :
 	Eyedropper Options	Options de la pipette
 	Eyedropper Picks Up:	La pipette prélève :
@@ -1036,6 +1044,7 @@
 	Fill (X), double-click for the Color Picker	Fond (X), double-cliquez pour ouvrir le Sélecteur de couleurs
 	Fill and Stroke	Fond et contour
 	Fill new strokes	Remplir les nouveaux contours
+	Keep selected	Garder sélectionné
 	Fill Color	Couleur de fond
 	Fill New Type Objects With Placeholder Text	Remplir les nouveaux objets texte avec un texte de substitution
 	Fill Rule	Règle de remplissage
@@ -1059,6 +1068,7 @@
 	Fit Headline	Ajuster le titre
 	Decrease Font Size	Réduire la taille de police
 	Increase Font Size	Augmenter la taille de police
+	Reset Tracking and Kerning	Réinitialiser l’approche et le crénage
 	Spacing	Espacement
 	Step Type	Texte par incréments
 	Fit in View	Ajuster à la vue
@@ -1259,6 +1269,7 @@
 	Hide Print Tiling	Masquer les limites d’impression
 	Hide Rulers	Masquer les règles
 	Hide Slices	Masquer les tranches
+	Hide Template	Masquer le modèle
 	Hide Text Threads	Masquer les liens de texte
 	Hide Thumbnail	Masquer la vignette
 	Hide Thumbnails	Masquer les vignettes
@@ -1476,6 +1487,20 @@
 	Left:	Gauche :
 	Legacy Macintosh RGB (Gamma 1.8)	RVB Macintosh hérité (gamma 1,8)
 	Legacy vector clipboard	Presse-papiers vectoriel hérité
+	Legacy (version 7)	Hérité (version 7)
+	Transparent Images:	Images transparentes :
+	Flatten	Aplatir
+	Omit	Omettre
+	Legacy .ai Options	Options .ai hérité
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	Un fichier .ai hérité contient un seul plan de travail : chaque plan de travail coché est enregistré dans un fichier distinct.
+	{count} of {total} artboards	{count} plans de travail sur {total}
+	Check an artboard to save.	Cochez un plan de travail à enregistrer.
+	Hidden Objects:	Objets masqués :
+	Hidden Layer	Calque masqué
+	Make Visible	Rendre visibles
+	Text:	Texte :
+	Editable	Modifiable
+	PDF-compatible	Compatible PDF
 	Legacy vector clipboard (no transparency)	Presse-papiers vectoriel hérité (sans transparence)
 	Less	Moins
 	Letter	Lettre US
@@ -1999,6 +2024,7 @@
 	Panel menu	Menu du panneau
 	Panel Options…	Options du panneau…
 	Panels	Panneaux
+	Panels Except Tools and Control	Panneaux sauf Outils et Contrôle
 	Paragraph	Paragraphe
 	Paragraph Style	Style de paragraphe
 	Paragraph Style Options	Options de style de paragraphe
@@ -2023,6 +2049,7 @@
 	Pathfinder Options…	Options Pathfinder…
 	Pathfinders:	Pathfinders :
 	Paths	Tracés
+	Path Length	Longueur des tracés
 	Paths: {paths}    Anchors: {anchors}    Colors: {colors}	Tracés : {paths}    Points d’ancrage : {anchors}    Couleurs : {colors}
 	Pattern	Motif
 	Pattern Editing	Modification du motif
@@ -2581,6 +2608,17 @@
 	Scripts	Scripts
 	Search	Rechercher
 	Search All	Rechercher partout
+	Filter	Filtre
+	Clear All	Tout effacer
+	By Object	Par objet
+	By Layer	Par calque
+	Images	Images
+	Groups	Groupes
+	Linked Files	Fichiers liés
+	Locked	Verrouillés
+	Hidden	Masqués
+	Filter Layers Panel Rows	Filtrer les lignes du panneau Calques
+@msg	`{key}` must be an array of these names: {_1}	`{key}` doit être un tableau de noms parmi {_1}
 	Search commands and tools	Chercher commandes et outils
 	Search commands and tools…	Chercher commandes et outils…
 	Search Commands…	Rechercher des commandes…
@@ -2718,6 +2756,7 @@
 	Show Modified	Afficher les éléments modifiés
 	Show Note	Afficher la note
 	Show Options	Afficher les options
+	Color Panel Options	Options du panneau Couleur
 	Show Package	Afficher le dossier d’assemblage
 	Show Panel	Afficher le panneau
 	Show Pattern Swatches	Afficher les nuances de motif
@@ -2730,6 +2769,7 @@
 	Show Slices	Afficher les tranches
 	Show Swatch Bounds	Afficher les limites de la nuance
 	Show Swatch Kinds	Afficher les types de nuance
+	Show Template	Afficher le modèle
 	Show Text Threads	Afficher les liens de texte
 	Show The Home Screen When No Documents Are Open	Afficher l’écran d’accueil lorsqu’aucun document n’est ouvert
 	Show Thumbnail	Afficher la vignette
@@ -3404,6 +3444,7 @@ imageTrace	Outline	Contour
 	 to set spacing and orientation	 pour définir l’espacement et l’orientation
 	:	 :
 	Isolate Selected Group	Isoler le groupe sélectionné
+	Isolate Selected Object	Isoler l’objet sélectionné
 	Release Clipping Mask	Annuler le masque d’écrêtage
 	Make Compound Path	Créer un tracé transparent
 	Release Compound Path	Annuler le tracé transparent
@@ -3489,6 +3530,8 @@ axis	Both	Les deux
 @msg	its type is to come in as outlines, which only its page has	son texte doit être importé sous forme de contours vectorisés, que seule sa page contient
 @msg	the art on them differs from the page's in {_1}% of it	le dessin des calques diffère de celui de la page sur {_1} % de sa surface
 @msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	le dessin des calques diffère de celui de la page sur {_1} % de sa surface : ils proviennent malgré tout de ses données de modification
+@msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	les calques du fichier n’ont pas été lus ({_1}) : il est ouvert tel que sa page, sur un seul calque
+@msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	les calques du fichier n’ont pas été lus depuis ses données de modification ({_1}) : ils proviennent de sa partie PDF
 @msg	`to` must be "corner" or "smooth"	`to` doit être "corner" ou "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	Les fichiers BMP sont en RVB ou en niveaux de gris : colorModel rgb ou gray
 @msg	Blend colors: select at least three objects with filled colours	Fusion des couleurs : sélectionnez au moins trois objets dotés d’un fond de couleur
@@ -3586,6 +3629,7 @@ axis	Both	Les deux
 @msg	`{key}` must be between {min} and {max} (got {x})	`{key}` doit être compris entre {min} et {max} (reçu : {x})
 @msg	`{key}` must be one of {_1}	`{key}` doit valoir l’une de ces valeurs : {_1}
 @msg	`{key}` must be true or false	`{key}` doit valoir true ou false
+@msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode` doit valoir grayscale, rgb, hsb, cmyk ou websafe
 @msg	`{k}` must be [x, y]	`{k}` doit être [x, y]
 @msg	`{name}` has no options	`{name}` n’a pas d’options
 @msg	`{name}` is a built-in workspace; choose another name	`{name}` est un espace de travail intégré ; choisissez un autre nom
@@ -3631,6 +3675,9 @@ axis	Both	Les deux
 @msg	axis must be "vertical", "horizontal" or an angle in degrees, not `{v}`	axis doit être "vertical", "horizontal" ou un angle en degrés, pas `{v}`
 @msg	background {other}: transparent, white, black or a colour such as "#ff8800"	arrière-plan {other} : transparent, white, black ou une couleur comme "#ff8800"
 @msg	bad color {v}	couleur non valide {v}
+@msg	the Color Picker is not open	le Sélecteur de couleurs n’est pas ouvert
+@msg	the screen color sampler is already open	l’outil de prélèvement de couleur à l’écran est déjà ouvert
+@msg	this system has no screen color sampler	ce système n’a pas d’outil de prélèvement de couleur à l’écran
 @msg	bad colour `{hex}` (#rrggbb)	couleur non valide `{hex}` (#rrggbb)
 @msg	bad page tree	arborescence des pages non valide
 @msg	bad shortcut	raccourci non valide
@@ -3942,7 +3989,7 @@ axis	Both	Les deux
 @msg	this file's PostScript couldn't be read ({why}): {what}	impossible de lire le PostScript de ce fichier ({why}) : {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	ce format ne contient qu’un plan de travail : exportez-en plusieurs au format PDF ou avec document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	c’est un dessin DWG, qui ne peut pas être lu : enregistrez-le depuis l’application de CAO au format DXF ASCII et ouvrez ce fichier
-@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), which can't be opened yet: save it as PDF, PDF-compatible .ai or SVG	c’est un fichier PostScript (un .ai enregistré dans un ancien format ou sans compatibilité PDF, ou un fichier EPS), qui ne peut pas encore être ouvert : enregistrez-le au format PDF, .ai compatible PDF ou SVG
+@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	c’est un fichier PostScript (un .ai enregistré dans un ancien format ou sans compatibilité PDF, ou un fichier EPS), pas un PDF : Fichier › Ouvrir et Fichier › Importer le lisent comme un EPS
 @msg	this is not a PostScript file	ce n’est pas un fichier PostScript
 @msg	tool shortcuts must be a single key (optionally with Shift)	les raccourcis d’outils doivent être une seule touche (éventuellement avec Maj)
 @msg	truncated	tronqué
@@ -4808,3 +4855,50 @@ theme	Appearance	Apparence
 	Softness	Douceur
 	Ambient Light	Lumière ambiante
 	Light behind the object	Lumière derrière l'objet
+
+# Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
+	Dimension	Cote
+	Drawing : real size — 1:10 labels 1 unit on the page as 10.	Dessin : taille réelle — 1:10 étiquette 1 unité de la page comme 10.
+	Preview (1 inch on the page)	Aperçu (1 pouce sur la page)
+	Set as Default	Définir par défaut
+	 out from a highlighted edge to place its dimension  |  	 vers l'extérieur depuis un bord mis en évidence pour placer sa cote  |  
+	 cancels  |  Double-click the tool for options	 annule  |  Double-clic sur l'outil pour les options
+	Angular	Angulaire
+	Away from the Line	À l'écart de la ligne
+	Between Line and Object	Entre la ligne et l'objet
+	Drag out from a segment, or click two points, then click to place.	Faites glisser vers l'extérieur depuis un segment, ou cliquez sur deux points, puis cliquez pour placer.
+	Drag out from a corner, or click two straight lines, then click to place.	Faites glisser vers l'extérieur depuis un angle, ou cliquez sur deux lignes droites, puis cliquez pour placer.
+	Drag out from a circle or arc for its radius, inwards for its diameter.	Faites glisser depuis un cercle ou un arc vers l'extérieur pour le rayon, vers l'intérieur pour le diamètre.
+@msg	Choose a circle or a perfect arc	Choisissez un cercle ou un arc parfait
+@msg	Choose a precision from 0 to 6	Choisissez une précision de 0 à 6
+	Create Dimension	Créer une cote
+	Dimension Tool	Outil Cotation
+	Dimension Tool Options	Options de l’outil Cotation
+	Display	Affichage
+	Font Family:	Famille de polices :
+	Font Style:	Style de police :
+	Precision:	Précision :
+	Update Dimensions	Mettre à jour les cotes
+@msg	Angles require two straight segments	Les angles nécessitent deux segments droits
+@msg	Choose two different points	Choisissez deux points différents
+@msg	Choose two non-parallel straight segments	Choisissez deux segments droits non parallèles
+@msg	Choose two nonzero angle arms	Choisissez deux côtés d’angle de longueur non nulle
+@msg	Dimension point is outside the canvas	Le point de cote est en dehors de la zone de travail
+@msg	Dimension size is outside its supported range	La taille de la cote est hors de la plage prise en charge
+@msg	First measured segment no longer exists	Le premier segment mesuré n’existe plus
+@msg	Invalid dimension distance	Distance de cote non valide
+@msg	Invalid dimension font name	Nom de police de cote non valide
+@msg	Invalid drawing scale	Échelle du dessin non valide
+@msg	Invalid real scale	Échelle réelle non valide
+@msg	Measured anchor no longer exists	Le point d’ancrage mesuré n’existe plus
+@msg	Measured segment no longer exists	Le segment mesuré n’existe plus
+@msg	Non-finite dimension	Cote non finie
+@msg	Scale must be drawing:real, for example 1:10	L’échelle doit être dessin:réel, par exemple 1:10
+@msg	Scale ratio must be between 1:1000000 and 1000000:1	Le rapport d’échelle doit être compris entre 1:1000000 et 1000000:1
+@msg	Second measured segment no longer exists	Le second segment mesuré n’existe plus
+@msg	Unknown dimension mode	Mode de cote inconnu
+@msg	Unknown dimension option {k}	Option de cote inconnue {k}
+@msg	Unknown dimension style	Style de cote inconnu
+@msg	Unknown unit	Unité inconnue
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	Ferme les extrémités circulaires des profils ouverts. Les rotations partielles conservent leurs faces de coupe ouvertes.

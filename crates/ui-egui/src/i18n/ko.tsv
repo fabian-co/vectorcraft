@@ -325,6 +325,7 @@
 	Fit Headline	제목에 맞추기
 	Decrease Font Size	글꼴 크기 줄이기
 	Increase Font Size	글꼴 크기 키우기
+	Reset Tracking and Kerning	자간 및 커닝 재설정
 	Step Type	단계별 문자
 	Find Font…	글꼴 찾기…
 	Change Case	대소문자 변경
@@ -470,6 +471,7 @@
 	Monitor RGB	모니터 RGB
 	Color blindness – Protanopia-type	색맹 – 적색맹 유형
 	Color blindness – Deuteranopia-type	색맹 – 녹색맹 유형
+	Color blindness – Tritanopia-type	색맹 – 청색맹 유형
 	Customize…	사용자 지정…
 	Proof Colors	교정 색상
 	Zoom In	확대
@@ -477,6 +479,7 @@
 	Fit Artboard in Window	창에 아트보드 맞추기
 	Fit All in Window	창에 모두 맞추기
 	Actual Size	실제 크기
+	Rotate View	보기 회전
 	Reset Rotate View	회전 보기 재설정
 	Hide Edges	가장자리 숨기기
 	Hide Artboards	아트보드 숨기기
@@ -491,6 +494,7 @@
 	Show Video Rulers	비디오 눈금자 표시
 	Hide Bounding Box	경계 상자 숨기기
 	Show Transparency Grid	투명도 격자 표시
+	Hide Template	템플릿 숨기기
 	Hide Text Threads	문자 연결선 숨기기
 	Hide Gradient Annotator	그레이디언트 주석 숨기기
 	Hide Corner Widget	모퉁이 위젯 숨기기
@@ -651,6 +655,7 @@
 	Preview	미리 보기
 	Show Edges	가장자리 표시
 	Show Corner Widget	모퉁이 위젯 표시
+	Show Template	템플릿 표시
 	Show Text Threads	문자 스레드 표시
 	Hide Hidden Characters	숨겨진 문자 숨기기
 	Show Gradient Annotator	그레이디언트 주석 도구 표시
@@ -668,6 +673,7 @@
 	Auto Color	자동 색상
 	Automatic	자동
 	Isolate Selected Group	선택한 그룹 격리
+	Isolate Selected Object	선택한 개체 격리
 	Exit Isolation Mode	격리 모드 종료
 	Make Clipping Mask	클리핑 마스크 만들기
 	Release Clipping Mask	클리핑 마스크 해제
@@ -851,7 +857,6 @@
 	Art using a deleted global swatch keeps its colour.	삭제된 글로벌 견본을 사용한 아트워크는 색상을 유지합니다.
 	ArtCraft website	ArtCraft 웹사이트
 	Artboard Options	아트보드 옵션
-	Artboard Options: edit with the Artboard tool	아트보드 옵션: 아트보드 도구로 편집
 	Artboard Options…	아트보드 옵션…
 	Artboard Tool	아트보드 도구
 	Artboard {number}	아트보드 {number}
@@ -1129,6 +1134,7 @@
 	DXF Options	DXF 옵션
 	DXF Options Dialog	DXF 옵션 대화상자
 	Darken	어둡게
+	Darkness	어둡기
 	Dashed	점선
 	Dashed Line	점선
 	Data Recovery	데이터 복구
@@ -1375,6 +1381,9 @@
 	Export:	내보내기:
 	Export…	내보내기…
 	Eyedropper	스포이드
+	Sample Color from Screen	화면에서 색상 추출
+	This system has no screen color sampler	이 시스템에는 화면 색상 추출기가 없습니다
+	The active document changed while the screen color sampler was open	화면 색상 추출기가 열려 있는 동안 활성 문서가 바뀌었습니다
 	Eyedropper Applies:	스포이드 적용 대상:
 	Eyedropper Options	스포이드 옵션
 	Eyedropper Picks Up:	스포이드 추출 대상:
@@ -1400,6 +1409,7 @@
 	Fill Rule	칠 규칙
 	Fill and Stroke	칠과 선
 	Fill new strokes	새 선 칠하기
+	Keep selected	선택 유지
 	Fill:	칠:
 	Find	찾기
 	Find Font	글꼴 찾기
@@ -1661,6 +1671,20 @@
 	Left Plane	왼쪽 평면
 	Left:	왼쪽:
 	Legacy vector clipboard	레거시 벡터 클립보드
+	Legacy (version 7)	레거시 (버전 7)
+	Transparent Images:	투명 이미지:
+	Flatten	병합
+	Omit	생략
+	Legacy .ai Options	레거시 .ai 옵션
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	레거시 .ai 파일에는 대지가 하나만 들어갑니다. 선택한 각 대지는 별도의 파일로 저장됩니다.
+	{count} of {total} artboards	대지 {total}개 중 {count}개
+	Check an artboard to save.	저장할 대지를 선택하십시오.
+	Hidden Objects:	숨겨진 개체:
+	Hidden Layer	숨겨진 레이어
+	Make Visible	표시
+	Text:	텍스트:
+	Editable	편집 가능
+	PDF-compatible	PDF 호환
 	Legacy vector clipboard (no transparency)	레거시 벡터 클립보드 (투명도 없음)
 	Less	간단히
 	Ligatures are off while the text is tracked.	자간이 적용된 텍스트에서는 합자가 꺼집니다.
@@ -2073,6 +2097,7 @@
 	Panel Options…	패널 옵션…
 	Panel menu	패널 메뉴
 	Panels	패널
+	Panels Except Tools and Control	도구와 컨트롤을 제외한 패널
 	Paragraph Style Options	단락 스타일 옵션
 	Password	암호
 	Paste Offset	붙여넣기 간격
@@ -2083,6 +2108,7 @@
 	Pathfinder Options…	패스파인더 옵션…
 	Pathfinders:	패스파인더:
 	Paths	패스
+	Path Length	패스 길이
 	Paths: {paths}    Anchors: {anchors}    Colors: {colors}	패스: {paths}    앵커: {anchors}    색상: {colors}
 	Pattern Editing	패턴 편집
 	Pattern options are available in pattern editing mode.	패턴 옵션은 패턴 편집 모드에서 사용할 수 있습니다.
@@ -2452,6 +2478,17 @@
 	Screen	스크린
 	Screens	화면
 	Search All	모두 검색
+	Filter	필터
+	Clear All	모두 지우기
+	By Object	개체별
+	By Layer	레이어별
+	Images	이미지
+	Groups	그룹
+	Linked Files	연결된 파일
+	Locked	잠김
+	Hidden	숨김
+	Filter Layers Panel Rows	레이어 패널 행 필터링
+@msg	`{key}` must be an array of these names: {_1}	`{key}`은(는) 다음 이름의 배열이어야 합니다: {_1}
 	Search commands and tools	명령 및 도구 검색
 	Search commands and tools…	명령 및 도구 검색…
 	Secondary	보조
@@ -2535,6 +2572,7 @@
 	Show List View	목록 보기 표시
 	Show Note	메모 표시
 	Show Options	옵션 표시
+	Color Panel Options	색상 패널 옵션
 	Show Package	패키지 표시
 	Show Panel	패널 표시
 	Show Perspective Grid	원근 격자 표시
@@ -3470,6 +3508,10 @@ theme	Appearance	외관
 	Draft	초안
 	Good	좋음
 	Best	최상
+	Mode	모드
+	Blur Mode	흐림 모드
+	Edge Only	가장자리만
+	Overlay Edge	가장자리 오버레이
 @msg	Reset {_1}	{_1}을(를) 재설정했습니다
 @msg	Saving	저장 중
 @msg	Saving {_1}	{_1} 저장 중
@@ -3791,6 +3833,8 @@ theme	Appearance	외관
 @msg	its page has text, and its layers have no text objects to put it in	페이지에 텍스트가 있지만 레이어에는 이를 넣을 텍스트 개체가 없습니다
 @msg	the art on them differs from the page's in {_1}% of it	이들의 아트웍이 페이지와 {_1}% 다릅니다
 @msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	이들의 아트웍이 페이지와 {_1}% 다릅니다. 그래도 편집 데이터에서 가져왔습니다
+@msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	파일의 레이어를 읽지 못했습니다({_1}). 페이지로 하나의 레이어에 가져옵니다
+@msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	편집 데이터에서 파일의 레이어를 읽지 못했습니다({_1}). PDF 부분에서 가져옵니다
 @msg	its Windows metafile preview was opened instead, which may simplify the art	대신 Windows 메타파일 미리 보기를 열었으며, 아트웍이 단순화될 수 있습니다
 @msg	its preview was placed instead, at screen resolution	대신 미리 보기를 화면 해상도로 가져왔습니다
 @msg	shadings of more than 4096 patches or triangles were left out	패치나 삼각형이 4096개를 넘는 셰이딩은 제외했습니다
@@ -3833,7 +3877,7 @@ theme	Appearance	외관
 @msg	the PDF is password-protected: give its password	PDF가 암호로 보호되어 있습니다: 암호를 입력하세요
 @msg	the PDF password is wrong	PDF 암호가 올바르지 않습니다
 @msg	the file holds only a placeholder page, not its art (it was saved without PDF compatibility): save it again with PDF compatibility on, or as PDF or SVG	파일에 아트웍 없이 대체 페이지만 들어 있습니다(PDF 호환 없이 저장됨): PDF 호환을 켜고 다시 저장하거나 PDF나 SVG로 저장하세요
-@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), which can't be opened yet: save it as PDF, PDF-compatible .ai or SVG	PostScript 파일(이전 형식이나 PDF 호환 없이 저장한 .ai, 또는 EPS 파일)이라 아직 열 수 없습니다: PDF, PDF 호환 .ai 또는 SVG로 저장하세요
+@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	PDF가 아니라 PostScript 파일(이전 형식이나 PDF 호환 없이 저장한 .ai, 또는 EPS 파일)입니다: 파일 › 열기와 파일 › 가져오기는 이 파일을 EPS로 읽습니다
 @msg	unsupported: {0}	지원되지 않음: {0}
 @msg	a page is missing	페이지가 없습니다
 @msg	a page tree kid isn't a reference	페이지 트리 하위 항목이 참조가 아닙니다
@@ -3871,6 +3915,9 @@ theme	Appearance	외관
 @msg	{label}…	{label}…
 @msg	no blend options	혼합 옵션이 없습니다
 @msg	bad color {v}	잘못된 색상 {v}
+@msg	the Color Picker is not open	색상 피커가 열려 있지 않습니다
+@msg	the screen color sampler is already open	화면 색상 추출기가 이미 열려 있습니다
+@msg	this system has no screen color sampler	이 시스템에는 화면 색상 추출기가 없습니다
 @msg	Corners edits the corners of a path	모퉁이는 패스의 모퉁이를 편집합니다
 @msg	give corners of the path: anchors where its sides meet at an angle	패스의 모퉁이, 즉 변이 각을 이루며 만나는 앵커를 지정하세요
 @msg	select one path, or give its `id`	패스를 하나 선택하거나 `id`를 지정하세요
@@ -3963,6 +4010,7 @@ theme	Appearance	외관
 @msg	Opened {url}	{url}을(를) 열었습니다
 @msg	No saved views (View → New View…)	저장된 보기가 없습니다(보기 → 새 보기…)
 @msg	`command` must be a command whose menu item opens a dialog (see ui.menuDialog)	`command`는 메뉴 항목이 대화상자를 여는 명령이어야 합니다(ui.menuDialog 참조)
+@msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode`은(는) grayscale, rgb, hsb, cmyk, websafe 중 하나여야 합니다
 @msg	`{key}` must be true or false	`{key}`은(는) true 또는 false여야 합니다
 @msg	brightness must be dark|mediumDark|mediumLight|light	brightness는 dark|mediumDark|mediumLight|light 중 하나여야 합니다
 @msg	index must be a number or first, previous, next or last	index는 숫자이거나 first, previous, next, last 중 하나여야 합니다
@@ -4344,3 +4392,54 @@ lighting	Light	광원
 	Softness	부드러움
 	Ambient Light	주변광
 	Light behind the object	개체 뒤의 조명
+
+# Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
+	Dimension	치수
+	Drawing : real size — 1:10 labels 1 unit on the page as 10.	도면 : 실제 크기 — 1:10은 페이지의 1단위를 10으로 표시합니다.
+	Preview (1 inch on the page)	미리 보기 (페이지의 1인치)
+	Set as Default	기본값으로 설정
+	 out from a highlighted edge to place its dimension  |  	 강조된 가장자리에서 바깥쪽으로 끌어 치수 배치  |  
+	 cancels  |  Double-click the tool for options	 취소  |  도구를 두 번 클릭하면 옵션
+	Linear	선형
+	Angular	각도
+	Away from the Line	선에서 떨어짐
+	Between Line and Object	선과 개체 사이
+	Drag out from a segment, or click two points, then click to place.	세그먼트에서 바깥쪽으로 끌거나, 두 점을 클릭한 다음 클릭하여 배치합니다.
+	Drag out from a corner, or click two straight lines, then click to place.	모서리에서 바깥쪽으로 끌거나, 두 직선을 클릭한 다음 클릭하여 배치합니다.
+	Drag out from a circle or arc for its radius, inwards for its diameter.	원이나 호에서 바깥쪽으로 끌면 반지름, 안쪽으로 끌면 지름입니다.
+@msg	Choose a circle or a perfect arc	원 또는 완전한 호를 선택하십시오
+@msg	Choose a precision from 0 to 6	정밀도를 0에서 6 사이로 선택하십시오
+	Create Dimension	치수 만들기
+	Dimension Tool	치수 도구
+	Dimension Tool Options	치수 도구 옵션
+	Display	표시
+	Font Family:	글꼴 패밀리:
+	Font Style:	글꼴 스타일:
+	Precision:	정밀도:
+	Update Dimensions	치수 업데이트
+	X:	X:
+	Y:	Y:
+@msg	Angles require two straight segments	각도에는 직선 세그먼트 두 개가 필요합니다
+@msg	Choose two different points	서로 다른 두 점을 선택하십시오
+@msg	Choose two non-parallel straight segments	평행하지 않은 직선 세그먼트 두 개를 선택하십시오
+@msg	Choose two nonzero angle arms	길이가 0이 아닌 각도 변 두 개를 선택하십시오
+@msg	Dimension point is outside the canvas	치수 점이 캔버스 밖에 있습니다
+@msg	Dimension size is outside its supported range	치수 크기가 지원 범위를 벗어났습니다
+@msg	First measured segment no longer exists	첫 번째 측정 세그먼트가 더 이상 없습니다
+@msg	Invalid dimension distance	잘못된 치수 거리
+@msg	Invalid dimension font name	잘못된 치수 글꼴 이름
+@msg	Invalid drawing scale	잘못된 도면 축척
+@msg	Invalid real scale	잘못된 실제 축척
+@msg	Measured anchor no longer exists	측정한 고정점이 더 이상 없습니다
+@msg	Measured segment no longer exists	측정한 세그먼트가 더 이상 없습니다
+@msg	Non-finite dimension	유한하지 않은 치수
+@msg	Scale must be drawing:real, for example 1:10	축척은 도면:실제 형식이어야 합니다(예: 1:10)
+@msg	Scale ratio must be between 1:1000000 and 1000000:1	축척 비율은 1:1000000에서 1000000:1 사이여야 합니다
+@msg	Second measured segment no longer exists	두 번째 측정 세그먼트가 더 이상 없습니다
+@msg	Unknown dimension mode	알 수 없는 치수 모드
+@msg	Unknown dimension option {k}	알 수 없는 치수 옵션 {k}
+@msg	Unknown dimension style	알 수 없는 치수 스타일
+@msg	Unknown unit	알 수 없는 단위
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	열린 프로파일의 원형 끝을 닫습니다. 부분 회전에서는 절단 측면이 열린 상태로 유지됩니다.
+	Distance	거리

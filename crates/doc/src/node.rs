@@ -543,6 +543,9 @@ pub struct NodeExtras {
     /// Index of the graph series this generated group belongs to. Axes, the legend and other
     /// children leave it unset, so a series named "Legend" or "Axes" is not mistaken for them.
     pub series_index: Option<u32>,
+    /// The group holds the glyph outlines of type. Geometry effects that reshape it move and scale
+    /// the placed gradients in it with the outlines.
+    pub type_outlines: bool,
     /// Editable Shaper composition; the original art is retained in its source child.
     pub shaper: Option<Box<crate::shaper::ShaperSpec>>,
     /// The [`crate::GraphicStyle::id`] last applied to this object. It stays linked while it keeps
@@ -555,6 +558,9 @@ pub struct NodeExtras {
     pub slice: Option<Box<crate::SliceOptions>>,
     /// Object › Perspective: the perspective grid plane the object is attached to.
     pub perspective: Option<Box<crate::PerspectiveAttachment>>,
+    /// Dimension object: the live measurement it draws; its ordinary group children hold its
+    /// exportable appearance (Object › Dimensions, the Dimension tool).
+    pub dimension: Option<Box<crate::dimension::Dimension>>,
 }
 
 /// No extras: what [`Node::extras`] gives for a node without any.
@@ -564,11 +570,13 @@ static NO_EXTRAS: NodeExtras = NodeExtras {
     wrap: None,
     graph: None,
     series_index: None,
+    type_outlines: false,
     shaper: None,
     graphic_style: None,
     attrs: None,
     slice: None,
     perspective: None,
+    dimension: None,
 };
 
 /// A node's [`NodeExtras`], if it has any ([`Node::extras`]). Extras that are all unset equal
@@ -692,6 +700,7 @@ impl Serialize for Node {
             e.wrap.is_none(),
             e.graph.is_none(),
             e.series_index.is_none(),
+            is_default(&e.type_outlines),
             e.shaper.is_none(),
             false,
             e.graphic_style.is_none(),
@@ -699,6 +708,7 @@ impl Serialize for Node {
             e.slice.is_none(),
             is_default(&self.bbox_angle),
             e.perspective.is_none(),
+            e.dimension.is_none(),
         ];
         let mut st = s.serialize_struct("Node", skips.iter().filter(|s| !**s).count())?;
         let mut skip = skips.into_iter();
@@ -726,6 +736,7 @@ impl Serialize for Node {
         field!("wrap", &e.wrap);
         field!("graph", &e.graph);
         field!("series_index", &e.series_index);
+        field!("type_outlines", &e.type_outlines);
         field!("shaper", &e.shaper);
         field!("kind", &self.kind);
         field!("graphic_style", &e.graphic_style);
@@ -733,6 +744,7 @@ impl Serialize for Node {
         field!("slice", &e.slice);
         field!("bbox_angle", &self.bbox_angle);
         field!("perspective", &e.perspective);
+        field!("dimension", &e.dimension);
         st.end()
     }
 }
@@ -772,6 +784,8 @@ struct NodeWire {
     #[serde(default)]
     series_index: Option<u32>,
     #[serde(default)]
+    type_outlines: bool,
+    #[serde(default)]
     shaper: Option<Box<crate::shaper::ShaperSpec>>,
     kind: NodeKind,
     #[serde(default)]
@@ -784,6 +798,8 @@ struct NodeWire {
     bbox_angle: f64,
     #[serde(default)]
     perspective: Option<Box<crate::PerspectiveAttachment>>,
+    #[serde(default)]
+    dimension: Option<Box<crate::dimension::Dimension>>,
 }
 
 impl From<NodeWire> for Node {
@@ -794,11 +810,13 @@ impl From<NodeWire> for Node {
             wrap: w.wrap,
             graph: w.graph,
             series_index: w.series_index,
+            type_outlines: w.type_outlines,
             shaper: w.shaper,
             graphic_style: w.graphic_style,
             attrs: w.attrs,
             slice: w.slice,
             perspective: w.perspective,
+            dimension: w.dimension,
         };
         Node {
             id: w.id,
@@ -1159,6 +1177,12 @@ impl Node {
         self.transform_scaled(a, &scaling.into());
     }
     fn transform_scaled(&mut self, a: Affine, sc: &Scaling) {
+        // A dimension's measurement moves with it.
+        if let Some(e) = self.extras_if_any()
+            && let Some(dimension) = &mut e.dimension
+        {
+            dimension.transform(a);
+        }
         if !self.is_layer() {
             self.bbox_angle = crate::orient::transformed_angle(self.bbox_angle, a);
         }
@@ -1923,6 +1947,7 @@ mod tests {
             e.mask = Some(Box::new(OpacityMask::new(Node::group(NodeId(8), vec![]), true)));
             e.trace = Some(Box::new(serde_json::json!({"preset": "p"})));
             e.series_index = Some(2);
+            e.type_outlines = true;
             e.graphic_style = Some(3);
             e.attrs = Some(Box::default());
             e.slice = Some(Box::default());
@@ -1961,6 +1986,7 @@ mod tests {
             "mask",
             "trace",
             "series_index",
+            "type_outlines",
             "kind",
             "graphic_style",
             "attrs",

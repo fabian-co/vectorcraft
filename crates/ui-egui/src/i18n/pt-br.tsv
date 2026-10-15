@@ -228,7 +228,6 @@
 	ArtCraft Website	Site do ArtCraft
 	ArtCraft website	Site do ArtCraft
 	Artboard Options	Opções de Mesa de Trabalho
-	Artboard Options: edit with the Artboard tool	Opções de Mesa de Trabalho: edite com a ferramenta Mesa de Trabalho
 	Artboard Options…	Opções de Mesa de Trabalho…
 	Artboard Tool	Ferramenta Mesa de Trabalho
 	Artboard {number}	Mesa de Trabalho {number}
@@ -475,6 +474,7 @@
 	Color Type:	Tipo de Cor:
 	Color blindness – Deuteranopia-type	Daltonismo – tipo deuteranopia
 	Color blindness – Protanopia-type	Daltonismo – tipo protanopia
+	Color blindness – Tritanopia-type	Daltonismo – tipo tritanopia
 	Color conversion:	Conversão de cor:
 	Color images	Imagens coloridas
 	Color:	Cor:
@@ -929,6 +929,7 @@
 	Fill Rule	Regra de Preenchimento
 	Fill and Stroke	Preenchimento e Traçado
 	Fill new strokes	Preencher novos traçados
+	Keep selected	Manter selecionado
 	Fill with Placeholder Text	Preencher com Texto de Placeholder
 	Insert Inline Symbol	Inserir Símbolo no Texto
 	Fill:	Preenchimento:
@@ -947,6 +948,7 @@
 	Fit Headline	Ajustar Manchete
 	Decrease Font Size	Diminuir Tamanho da Fonte
 	Increase Font Size	Aumentar Tamanho da Fonte
+	Reset Tracking and Kerning	Redefinir Rastreamento e Kerning
 	Step Type	Ajustar Texto em Incrementos
 	Fit dashes to corners and ends	Ajustar tracejados aos cantos e extremidades
 	Fit in Window	Ajustar na Janela
@@ -1093,6 +1095,7 @@
 	Hide Print Tiling	Ocultar Tesselação de Impressão
 	Hide Rulers	Ocultar Réguas
 	Hide Slices	Ocultar Fatias
+	Hide Template	Ocultar Modelo
 	Hide Text Threads	Ocultar Fios de Texto
 	Hide Thumbnail	Ocultar Miniatura
 	Hide Thumbnails	Ocultar Miniaturas
@@ -1181,6 +1184,7 @@
 	Isolate Blending	Isolar Mesclagem
 	Isolate Group	Isolar Grupo
 	Isolate Selected Group	Isolar Grupo Selecionado
+	Isolate Selected Object	Isolar Objeto Selecionado
 	Italian	Italiano
 	Join	Unir
 	Join Our Discord	Junte-se ao nosso Discord
@@ -1225,6 +1229,20 @@
 	Left:	Esquerda:
 	Legacy Macintosh RGB (Gamma 1.8)	Macintosh RGB Legado (Gama 1.8)
 	Legacy vector clipboard	Área de transferência vetorial legada
+	Legacy (version 7)	Legado (versão 7)
+	Transparent Images:	Imagens transparentes:
+	Flatten	Achatar
+	Omit	Omitir
+	Legacy .ai Options	Opções de .ai legado
+	A legacy .ai file holds one artboard: each artboard you check is saved as a separate file.	Um arquivo .ai legado contém uma prancheta: cada prancheta marcada é salva como um arquivo separado.
+	{count} of {total} artboards	{count} de {total} pranchetas
+	Check an artboard to save.	Marque uma prancheta para salvar.
+	Hidden Objects:	Objetos ocultos:
+	Hidden Layer	Camada oculta
+	Make Visible	Tornar visíveis
+	Text:	Texto:
+	Editable	Editável
+	PDF-compatible	Compatível com PDF
 	Legacy vector clipboard (no transparency)	Área de transferência vetorial legada (sem transparência)
 	Less	Menos
 	Levels…	Níveis…
@@ -1641,6 +1659,7 @@
 	Panel Options…	Opções do Painel…
 	Panel menu	Menu do painel
 	Panels	Painéis
+	Panels Except Tools and Control	Painéis exceto Ferramentas e Controle
 	Paragraph	Parágrafo
 	Paragraph Style Options	Opções de Estilo de Parágrafo
 	Paragraph Styles	Estilos de Parágrafo
@@ -1967,6 +1986,7 @@
 	Reset Panel	Redefinir Painel
 	Reset Preferences	Redefinir Preferências
 	Reset Profiles	Redefinir Perfis
+	Rotate View	Girar Visualização
 	Reset Rotate View	Redefinir Visualização Girada
 	Reset the rows to the artwork's colors	Redefinir as linhas para as cores da arte
 	Reset to Default	Redefinir para o Padrão
@@ -2119,6 +2139,17 @@
 	Scribble…	Rabisco…
 	Scripts	Scripts
 	Search All	Pesquisar em Tudo
+	Filter	Filtro
+	Clear All	Limpar Tudo
+	By Object	Por Objeto
+	By Layer	Por Camada
+	Images	Imagens
+	Groups	Grupos
+	Linked Files	Arquivos Vinculados
+	Locked	Bloqueados
+	Hidden	Ocultos
+	Filter Layers Panel Rows	Filtrar linhas do painel Camadas
+@msg	`{key}` must be an array of these names: {_1}	`{key}` deve ser uma matriz destes nomes: {_1}
 	Search Commands…	Pesquisar Comandos…
 	Search commands and tools	Pesquisar comandos e ferramentas
 	Search commands and tools…	Pesquisar comandos e ferramentas…
@@ -2242,6 +2273,7 @@
 	Show Slices	Mostrar Fatias
 	Show Swatch Bounds	Mostrar Limites das Amostras
 	Show Swatch Kinds	Mostrar Tipos de Amostra
+	Show Template	Mostrar Modelo
 	Show Text Threads	Mostrar Fios de Texto
 	Show The Home Screen When No Documents Are Open	Mostrar a Tela Inicial quando não houver Documentos Abertos
 	Show Thumbnail	Mostrar Miniatura
@@ -3105,6 +3137,8 @@ axis	Both	Ambos
 @msg	its type is to come in as outlines, which only its page has	seu texto deve entrar como contornos, que somente sua página possui
 @msg	the art on them differs from the page's in {_1}% of it	a arte nelas difere da página em {_1}% do conteúdo
 @msg	the art on them differs from the page's in {_1}% of it: they come from its editing data all the same	a arte nelas difere da página em {_1}% do conteúdo: mesmo assim elas vêm dos seus dados de edição
+@msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	as camadas do arquivo não foram lidas ({_1}): ele entra como sua página, em uma só camada
+@msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	as camadas do arquivo não foram lidas dos seus dados de edição ({_1}): elas vêm da sua parte PDF
 @msg	`to` must be "corner" or "smooth"	`to` deve ser "corner" ou "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	arquivos BMP são RGB ou em tons de cinza: colorModel rgb ou gray
 @msg	Blend colors: select at least three objects with filled colours	Mesclar cores: selecione pelo menos três objetos com preenchimento de cor
@@ -3552,7 +3586,7 @@ axis	Both	Ambos
 @msg	this file's PostScript couldn't be read ({why}): {what}	não foi possível ler o PostScript deste arquivo ({why}): {what}
 @msg	this format holds one artboard: export several as PDF or with document.exportForScreens	este formato comporta uma prancheta: exporte várias como PDF ou com document.exportForScreens
 @msg	this is a DWG drawing, which can't be read: save it from the CAD app as an ASCII DXF and open that	este é um desenho DWG, que não pode ser lido: salve-o no aplicativo de CAD como DXF ASCII e abra esse arquivo
-@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), which can't be opened yet: save it as PDF, PDF-compatible .ai or SVG	este é um arquivo PostScript (um .ai salvo em formato mais antigo ou sem compatibilidade com PDF, ou um arquivo EPS), que ainda não pode ser aberto: salve-o como PDF, .ai compatível com PDF ou SVG
+@msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	este é um arquivo PostScript (um .ai salvo em formato mais antigo ou sem compatibilidade com PDF, ou um arquivo EPS), não um PDF: Arquivo › Abrir e Arquivo › Colocar o leem como EPS
 @msg	this is not a PostScript file	este não é um arquivo PostScript
 @msg	tool shortcuts must be a single key (optionally with Shift)	os atalhos de ferramenta devem ser uma única tecla (opcionalmente com Shift)
 @msg	truncated	truncado
@@ -3763,3 +3797,9 @@ axis	Both	Ambos
 	Softness	Suavidade
 	Ambient Light	Luz ambiente
 	Light behind the object	Luz atrás do objeto
+# Dimension tool (linked dimension annotations)
+	Dimension Tool	Ferramenta Cota
+	Create Dimension	Criar Cota
+	Update Dimensions	Atualizar Cotas
+# Revolve cap description
+	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	Fecha as extremidades circulares dos perfis abertos. Giros parciais mantêm as faces de corte abertas.

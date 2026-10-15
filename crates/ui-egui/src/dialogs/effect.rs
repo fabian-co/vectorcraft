@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use vectorcraft_color::Color;
 
-use super::{DialogSpec, form, transform_each};
+use super::{DialogSpec, form, free_distort, transform_each};
 use crate::panels::c32;
 use crate::state::Dialog;
 use crate::theme::Tokens;
@@ -139,11 +139,22 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
         None if id == TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
         None if id == ZIG_ZAG => zig_zag_fields(ui, d, app.session.general_unit()),
+        None if id == DROP_SHADOW => drop_shadow_fields(ui, d, app.session.general_unit()),
         None if id == "artistic.filmGrain" => film_grain_fields(ui, d),
+        None if id == free_distort::FREE_DISTORT => {
+            free_distort::fields(app, ui, d);
+            values_changed(d)
+        }
         None => {
             let doc = vectorcraft_effects::effect_info(&id).map(|e| e.params).unwrap_or_default();
             let unit = app.session.general_unit();
-            form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|k| choices(&id, k), &|k| doc_rank(doc, k), unit)
+            let changed =
+                form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|k| choices(&id, k), &|k| doc_rank(doc, k), unit);
+            // The fields show what the effect stores: Scribble's 270° angle reads -90°.
+            if let Value::Object(m) = vectorcraft_effects::upgrade_params(&id, &Value::Object(d.fields.clone())) {
+                d.fields = m;
+            }
+            changed
         }
     };
     ui.add_space(6.0);
@@ -188,6 +199,7 @@ fn choices(effect: &str, key: &str) -> Option<form::Choices> {
         ("blur.radial", "method") => Some(&[("Spin", "spin"), ("Zoom", "zoom")]),
         ("blur.radial", "quality") => Some(&[("Draft", "draft"), ("Good", "good"), ("Best", "best")]),
         ("blur.smart", "quality") => Some(&[("Low", "low"), ("Medium", "medium"), ("High", "high")]),
+        ("blur.smart", "blurMode") => Some(&vectorcraft_effects::pixel::SMART_BLUR_MODES),
         ("brushStrokes.sprayedStrokes", "strokeDirection") => Some(&vectorcraft_effects::pixel::STROKE_DIRECTIONS),
         ("distort.glass", "texture") => Some(&vectorcraft_effects::pixel::GLASS_TEXTURES),
         ("pixelate.mezzotint", "type") => Some(&vectorcraft_effects::pixel::MEZZOTINT_TYPES),
@@ -197,6 +209,7 @@ fn choices(effect: &str, key: &str) -> Option<form::Choices> {
         ("video.deinterlace", "eliminate") => Some(&[("Odd Fields", "odd"), ("Even Fields", "even")]),
         ("video.deinterlace", "create") => Some(&[("Duplication", "duplication"), ("Interpolation", "interpolation")]),
         ("stylize.innerGlow", "source") => Some(&[("Center", "center"), ("Edge", "edge")]),
+        ("stylize.dropShadow", "shade") => Some(SHADES),
         ("path.offsetPath", "joins") => Some(&[("Miter", "miter"), ("Round", "round"), ("Bevel", "bevel")]),
         ("distort.roughen" | "distort.zigZag", "points") => Some(&[("Smooth", "smooth"), ("Corner", "corner")]),
         _ => None,
@@ -385,6 +398,49 @@ fn zig_zag_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit
     values_changed(d)
 }
 
+/// Drop Shadow (Effect › Stylize › Drop Shadow…).
+const DROP_SHADOW: &str = "stylize.dropShadow";
+
+/// What Drop Shadow's shadow takes its color from (`shade`), as (label, value).
+pub(crate) const SHADES: form::Choices = &[("Color", "color"), ("Darkness", "darkness")];
+
+/// Drop Shadow's dialog: Mode, Opacity, the offsets and Blur as the other effects show them, then
+/// Color and Darkness as radio buttons, each with its field (the field of the one not chosen is
+/// dimmed). Returns whether the values differ from those last previewed.
+fn drop_shadow_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit) -> bool {
+    let doc = vectorcraft_effects::effect_info(DROP_SHADOW).map(|e| e.params).unwrap_or_default();
+    // The generic rows, without the three this dialog shows as radio buttons.
+    let own: Vec<(String, Value)> = ["shade", "color", "darkness"].iter().filter_map(|k| d.fields.remove(*k).map(|v| (k.to_string(), v))).collect();
+    form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(DROP_SHADOW, k, false), &|k| choices(DROP_SHADOW, k), &|k| doc_rank(doc, k), unit);
+    d.fields.extend(own);
+    let darkness = d.str("shade").eq_ignore_ascii_case("darkness");
+    ui.add_space(4.0);
+    egui::Grid::new("fx-shade").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        if widgets::radio(ui, tl!("Color"), !darkness, true) {
+            d.fields.insert("shade".into(), json!("color"));
+        }
+        ui.add_enabled_ui(!darkness, |ui| match d.fields.get("color") {
+            Some(Value::String(_)) | None => {
+                form::text(ui, d, "color", 128.0);
+            }
+            Some(other) => {
+                widgets::dim_label(ui, &other.to_string());
+            }
+        });
+        ui.end_row();
+        if widgets::radio(ui, tl!("Darkness"), darkness, true) {
+            d.fields.insert("shade".into(), json!("darkness"));
+        }
+        ui.add_enabled_ui(darkness, |ui| {
+            if let Some(v) = widgets::range_field(ui, "fx-darkness", d.f64("darkness", 100.0), 0.0..=100.0, "%", 0, 70.0) {
+                d.fields.insert("darkness".into(), json!(v));
+            }
+        });
+        ui.end_row();
+    });
+    values_changed(d)
+}
+
 /// Curves' graph of its `points` (input across, output up, 0..255): drag a point to move it
 /// between its neighbours, press on the graph away from the points to add one there, drag one
 /// off the graph to remove it (two always stay).
@@ -499,9 +555,13 @@ mod tests {
     #[test]
     fn fields_that_pick_a_value_are_dropdowns_of_its_values() {
         // The values come from the effect's parameter documentation (`joins: "miter"|"round"|…`).
-        for (effect, key) in
-            [("path.offsetPath", "joins"), ("distort.zigZag", "points"), ("distort.roughen", "points"), ("stylize.innerGlow", "source")]
-        {
+        for (effect, key) in [
+            ("path.offsetPath", "joins"),
+            ("distort.zigZag", "points"),
+            ("distort.roughen", "points"),
+            ("stylize.innerGlow", "source"),
+            (DROP_SHADOW, "shade"),
+        ] {
             let doc = vectorcraft_effects::effect_info(effect).unwrap().params;
             let listed = doc.split(&format!("{key}: ")).nth(1).unwrap().split([',', '}', ' ']).next().unwrap().to_string();
             let values: Vec<String> = choices(effect, key).unwrap().iter().map(|(_, v)| format!("\"{v}\"")).collect();

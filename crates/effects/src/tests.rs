@@ -1,11 +1,21 @@
 use serde_json::{Value, json};
 use vectorcraft_doc::Effect;
-use vectorcraft_geom::{PathData, Point, Rect, Shape, SubPath, shapes};
+use vectorcraft_geom::{Affine, PathData, Point, Rect, Shape, SubPath, shapes};
 
 use super::*;
 
 fn fx(id: &str, params: Value) -> Effect {
     Effect { id: id.into(), params, visible: true }
+}
+
+/// Every image under `n`, in document order (its placement's x).
+fn image_xs(n: &Node, out: &mut Vec<f64>) {
+    if let NodeKind::Image(im) = &n.kind {
+        out.push(im.xf.as_coeffs()[4]);
+    }
+    for c in n.children().into_iter().flatten() {
+        image_xs(c, out);
+    }
 }
 
 fn square() -> PathData {
@@ -224,10 +234,103 @@ fn stacked_transform_copies_stay_within_the_anchor_budget() {
     assert_eq!(run("distort.transform", p, &square()).subpaths.len(), 1001);
 }
 
+/// #2042: stacked Transform effects multiply their image copies as they do their anchors; the
+/// image nodes they make are bounded, whatever each one's count.
+#[test]
+fn stacked_transform_copies_stay_within_the_image_budget() {
+    use std::sync::Arc;
+
+    use vectorcraft_doc::{ImageObject, NodeId};
+    let id = NodeId(9);
+    let image = || {
+        Node::new(
+            id,
+            NodeKind::Image(Box::new(ImageObject {
+                key: "k".into(),
+                width: 40,
+                height: 40,
+                xf: Affine::translate((10.0, 0.0)),
+                link: None,
+                placement: Default::default(),
+            })),
+        )
+    };
+    let count = |art: &Node| {
+        let mut xs = vec![];
+        image_xs(art, &mut xs);
+        xs.len()
+    };
+    let m = Affine::translate((70.0, 0.0));
+    let mut art = Node::group(id, vec![Arc::new(image())]);
+    let mut counts = vec![];
+    for _ in 0..3 {
+        crate::reshape::transform_images_within(&mut art, m, 1000, 100);
+        counts.push(count(&art));
+    }
+    assert_eq!(counts, [100, 100, 100], "99 copies, then no room for a copy of them");
+    // Within the budget every copy is made, and the effect's own budget takes a thousand copies.
+    let mut art = Node::group(id, vec![Arc::new(image())]);
+    crate::reshape::transform_images_within(&mut art, m, 24, 100);
+    assert_eq!(count(&art), 25);
+    let mut g = Node::group(id, vec![Arc::new(image())]);
+    g.appearance.effects.push(fx("distort.transform", json!({"moveH": 70, "copies": 1000})));
+    assert_eq!(count(&evaluate_container(&g).unwrap()), 1001);
+}
+
 #[test]
 fn transform_copies_stop_before_they_overflow() {
     let out = run("distort.transform", json!({"scaleH": 100000, "scaleV": 100000, "copies": 1000}), &square());
     assert!(all_finite(&out) && out.subpaths.len() < 10, "{}", out.subpaths.len());
+}
+
+/// #2023: a Transform effect on a group moves, scales and copies its images like its paths: the
+/// map goes into each image's placement, and every copy is an image node of its own.
+#[test]
+fn transform_on_a_group_moves_and_copies_its_images() {
+    use std::sync::Arc;
+
+    use vectorcraft_doc::{Appearance, ImageObject, Node, NodeId, NodeKind};
+    let id = NodeId(9);
+    let sq = Node::path(id, square(), Appearance::default());
+    let image = Node::new(
+        id,
+        NodeKind::Image(Box::new(ImageObject {
+            key: "k".into(),
+            width: 40,
+            height: 40,
+            xf: Affine::translate((10.0, 0.0)),
+            link: None,
+            placement: Default::default(),
+        })),
+    );
+    let mut g = Node::group(id, vec![Arc::new(sq), Arc::new(image)]);
+    g.appearance.effects.push(fx("distort.transform", json!({"moveH": 70, "copies": 2})));
+    let art = evaluate_container(&g).unwrap();
+    let mut xs = vec![];
+    image_xs(&art, &mut xs);
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs, [10.0, 80.0, 150.0], "the image and its two copies, 70 pt apart");
+    // Without copies the image itself takes the transform, as a path does.
+    let mut g = Node::group(
+        id,
+        vec![Arc::new(Node::new(
+            id,
+            NodeKind::Image(Box::new(ImageObject {
+                key: "k".into(),
+                width: 40,
+                height: 40,
+                xf: Affine::translate((10.0, 0.0)),
+                link: None,
+                placement: Default::default(),
+            })),
+        ))],
+    );
+    g.appearance.effects.push(fx("distort.transform", json!({"scaleH": 50, "scaleV": 50, "reference": 8})));
+    let art = evaluate_container(&g).unwrap();
+    let mut xs = vec![];
+    image_xs(&art, &mut xs);
+    // The bounds are the image itself, so the bottom-right reference is its own: it halves in place.
+    assert_eq!(xs, [30.0], "scaled about its own bottom-right corner");
 }
 
 #[test]
@@ -437,6 +540,59 @@ fn scribble_produces_filled_outline_inside_bounds() {
 }
 
 #[test]
+fn scribble_variations_are_separate() {
+    // At 0° the lines run along x: the Path Overlap variation moves their ends in x only, the
+    // Spacing variation moves them in y only, and the Curviness variation curves some of the turns.
+    let base =
+        json!({"angle": 0, "curviness": 0, "strokeWidth": 0.5, "spacing": 10, "overlapVariation": 0, "spacingVariation": 0, "curvinessVariation": 0});
+    let with = |key: &str, v: f64| {
+        let mut p = base.clone();
+        p[key] = json!(v);
+        run("stylize.scribble", p, &square())
+    };
+    let plain = run("stylize.scribble", base.clone(), &square());
+    let b = plain.bounds().unwrap();
+    let moved = |a: f64, b: f64| (a - b).abs() > 0.5;
+    let along = with("overlapVariation", 4.0).bounds().unwrap();
+    assert!(close(along.y0, b.y0, 0.06) && close(along.y1, b.y1, 0.06), "{along:?} {b:?}");
+    assert!(moved(along.x0, b.x0) || moved(along.x1, b.x1), "{along:?} {b:?}");
+    let across = with("spacingVariation", 4.0).bounds().unwrap();
+    assert!(close(across.x0, b.x0, 0.06) && close(across.x1, b.x1, 0.06), "{across:?} {b:?}");
+    assert!(moved(across.y0, b.y0) || moved(across.y1, b.y1), "{across:?} {b:?}");
+    assert_ne!(with("curvinessVariation", 50.0), plain);
+    // On a curviness of its own, the variation changes how much each turn curves.
+    let mut p = base.clone();
+    p["curviness"] = json!(20);
+    let even = run("stylize.scribble", p.clone(), &square());
+    p["curvinessVariation"] = json!(20);
+    assert_ne!(run("stylize.scribble", p, &square()), even);
+}
+
+#[test]
+fn scribble_reads_its_earlier_single_variation() {
+    // Before the separate variations, one `variation` moved the ends both along and across.
+    let old = run("stylize.scribble", json!({"variation": 3}), &square());
+    assert_eq!(old, run("stylize.scribble", json!({"overlapVariation": 3, "spacingVariation": 3}), &square()));
+    assert_eq!(upgrade_params("stylize.scribble", &json!({"variation": 3})), json!({"overlapVariation": 3, "spacingVariation": 3}));
+    // A current key given with it wins.
+    assert_eq!(
+        upgrade_params("stylize.scribble", &json!({"variation": 3, "spacingVariation": 1})),
+        json!({"overlapVariation": 3, "spacingVariation": 1})
+    );
+    assert!(default_params("stylize.scribble").unwrap().get("variation").is_none());
+}
+
+#[test]
+fn scribble_angle_is_stored_above_minus_180_and_up_to_180() {
+    for (given, stored) in [(270.0, -90.0), (-180.0, 180.0), (180.0, 180.0), (540.0, 180.0), (-270.0, 90.0), (-200.0, 160.0)] {
+        assert_eq!(new_effect("stylize.scribble", &json!({"angle": given})).unwrap().params["angle"].as_f64(), Some(stored), "{given}");
+    }
+    // An angle in range is kept as given; other effects' angles are not changed.
+    assert_eq!(upgrade_params("stylize.scribble", &json!({"angle": 45})), json!({"angle": 45}));
+    assert_eq!(upgrade_params("distort.twist", &json!({"angle": 270})), json!({"angle": 270}));
+}
+
+#[test]
 fn effects_chain_in_order_and_skip_hidden_and_raster() {
     let chain = [fx("distort.transform", json!({"moveH": 10})), fx("distort.transform", json!({"scaleH": 200}))];
     let b = apply_geometry(&chain, &square(), Rect::new(0.0, 0.0, 100.0, 100.0)).bounds().unwrap();
@@ -462,17 +618,32 @@ fn raster_effects_parse_and_outset() {
     let r = raster_effects(&list);
     assert_eq!(r.len(), 5);
     match &r[0] {
-        RasterFx::DropShadow { mode, opacity, dx, dy, blur, color } => {
+        RasterFx::DropShadow { mode, opacity, dx, dy, blur, color, darkness } => {
             assert_eq!(*mode, vectorcraft_doc::color::BlendMode::Multiply);
             assert!(close(*opacity as f64, 0.5, 1e-6));
             assert_eq!((*dx, *dy, *blur), (10.0, -4.0, 6.0));
             assert_eq!(color.to_rgb(), [1.0, 0.0, 0.0]);
+            assert_eq!(*darkness, None);
         }
         other => panic!("{other:?}"),
     }
     assert!(matches!(r[2], RasterFx::InnerGlow { center: true, .. }));
     assert!(close(outset(&list, vectorcraft_geom::Rect::ZERO), 10.0 + 9.0, 1e-9));
     assert_eq!(outset(&[], vectorcraft_geom::Rect::ZERO), 0.0);
+}
+
+#[test]
+fn drop_shadow_darkness_replaces_its_color_when_chosen() {
+    let darkness = |params: Value| match raster_effects(&[fx("stylize.dropShadow", params)]).as_slice() {
+        [RasterFx::DropShadow { darkness, .. }] => *darkness,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(darkness(json!({"shade": "darkness", "darkness": 60})), Some(0.6));
+    assert_eq!(darkness(json!({"shade": "darkness"})), Some(1.0));
+    assert_eq!(darkness(json!({"shade": "darkness", "darkness": 250})), Some(1.0));
+    // Color is the default: a Darkness value alone leaves the shadow its color.
+    assert_eq!(darkness(json!({"darkness": 60})), None);
+    assert_eq!(darkness(json!({})), None);
 }
 
 #[test]
