@@ -179,8 +179,10 @@ const MESH_RASTER_MAX_PIXELS: usize = 16 << 20;
 /// Draw a tessellated gradient mesh as one image: its quads are filled into a pixel buffer of the
 /// mesh's on-screen box by scanline (each pixel takes the quad its centre is in, so neighbouring
 /// quads meet without seams or overlap), and the buffer is drawn through the mesh's outline, which
-/// antialiases the outer edge. Drawing every quad as a path of its own costs a path's setup per
-/// quad: a page of thousands of meshes made millions of them at print size (minutes), where this
+/// antialiases the outer edge. The outline is grown by half a device pixel ([`grown_outline`]), as
+/// the quads drawn one by one are: a page of meshes laid edge to edge would otherwise show the
+/// background through each shared, antialiased edge. Drawing every quad as a path of its own costs a
+/// path's setup per quad: a page of thousands of meshes made millions of them at print size (minutes), where this
 /// costs about one write per covered pixel. → false (nothing drawn) when the box is too large for
 /// one buffer, so the caller draws the quads.
 fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads: &[MeshQuad], alpha: f32) -> bool {
@@ -190,8 +192,8 @@ fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads:
         return false;
     }
     let (cw, ch) = (f64::from(ctx.width()), f64::from(ctx.height()));
-    let (x0, y0) = ((dev.x0.floor() - 1.0).max(0.0), (dev.y0.floor() - 1.0).max(0.0));
-    let (x1, y1) = ((dev.x1.ceil() + 1.0).min(cw), (dev.y1.ceil() + 1.0).min(ch));
+    let (x0, y0) = ((dev.x0.floor() - 2.0).max(0.0), (dev.y0.floor() - 2.0).max(0.0));
+    let (x1, y1) = ((dev.x1.ceil() + 2.0).min(cw), (dev.y1.ceil() + 2.0).min(ch));
     if x1 <= x0 || y1 <= y0 {
         // Off the context: nothing to draw.
         return true;
@@ -209,13 +211,70 @@ fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads:
         let c = if q.opacity > 0.0 { f.ink.color(&q.color, q.opacity * alpha).premultiply().to_rgba8() } else { clear };
         fill_quad(&mut px, &mut filled, w, h, q.pts.map(|p| to_buffer * p), c);
     }
-    spread_to_edges(&mut px, &filled, w, h);
+    // Twice: the grown edge samples pixels up to about a pixel and a half out from the quads.
+    let filled = spread_to_edges(&mut px, filled, w, h);
+    spread_to_edges(&mut px, filled, w, h);
     let pm = Arc::new(vello_cpu::Pixmap::from_parts(px, w as u16, h as u16));
     ctx.set_transform(Affine::translate((x0, y0)));
     ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler: peniko::ImageSampler::default() });
-    ctx.fill_path(&(Affine::translate((-x0, -y0)) * f.view * outline));
+    ctx.fill_path(&grown_outline(&(Affine::translate((-x0, -y0)) * f.view * outline), 0.5));
     ctx.set_transform(Affine::IDENTITY);
     true
+}
+
+/// `path` (device pixels) flattened and each closed subpath moved out by `grow` along its edges'
+/// normals (mitred, the mitre capped at twice `grow`), so one fill covers the outline and a band
+/// around it once: filling the outline and stroking it as well would paint a translucent mesh's
+/// edge twice, a darker line.
+fn grown_outline(path: &BezPath, grow: f64) -> BezPath {
+    let mut rings: Vec<Vec<Point>> = Vec::new();
+    vectorcraft_geom::kurbo::flatten(path, 0.1, |el| match el {
+        vectorcraft_geom::PathEl::MoveTo(p) => rings.push(vec![p]),
+        vectorcraft_geom::PathEl::LineTo(p) => {
+            if let Some(r) = rings.last_mut()
+                && r.last().is_none_or(|q| (*q - p).hypot() > 1e-9)
+            {
+                r.push(p);
+            }
+        }
+        _ => {}
+    });
+    let mut out = BezPath::new();
+    for mut r in rings {
+        if r.len() > 1 && r.first().zip(r.last()).is_some_and(|(a, b)| (*a - *b).hypot() <= 1e-9) {
+            r.pop();
+        }
+        let n = r.len();
+        if n < 3 {
+            continue;
+        }
+        // (d.y, -d.x) points out of a ring with a positive shoelace sum (clockwise on a y-down screen).
+        let area: f64 = (0..n).map(|i| r[i].to_vec2().cross(r[(i + 1) % n].to_vec2())).sum();
+        let side = if area > 0.0 { 1.0 } else { -1.0 };
+        let normal = |a: Point, b: Point| {
+            let d = b - a;
+            let l = d.hypot();
+            if l > 1e-12 { Vec2::new(d.y, -d.x) * (side / l) } else { Vec2::ZERO }
+        };
+        for i in 0..n {
+            let (prev, p, next) = (r[(i + n - 1) % n], r[i], r[(i + 1) % n]);
+            let (a, b) = (normal(prev, p), normal(p, next));
+            let sum = a + b;
+            let k = 1.0 + a.dot(b);
+            let mut d = if k > 1e-6 { sum * (grow / k) } else { a * grow };
+            if d.hypot() > 2.0 * grow {
+                d = d * (2.0 * grow / d.hypot());
+            }
+            let q = p + d;
+            if i == 0 {
+                out.move_to(q);
+            } else {
+                out.line_to(q);
+            }
+        }
+        out.close_path();
+    }
+    out
 }
 
 /// Fill the pixels of the `w`×`h` buffer whose centres are inside quad `p` (buffer pixels, even-odd
@@ -256,7 +315,9 @@ fn fill_quad(px: &mut [vello_cpu::color::PremulRgba8], filled: &mut [bool], w: u
 
 /// Give each pixel no quad covered the colour of a covered neighbour: the outline's antialiased
 /// edge samples pixels whose centres fall just outside the quads, which would otherwise fade it.
-fn spread_to_edges(px: &mut [vello_cpu::color::PremulRgba8], filled: &[bool], w: usize, h: usize) {
+/// → the pixels covered now (the given ones and those just given a colour).
+fn spread_to_edges(px: &mut [vello_cpu::color::PremulRgba8], filled: Vec<bool>, w: usize, h: usize) -> Vec<bool> {
+    let mut now = filled.clone();
     for y in 0..h {
         for x in 0..w {
             let i = y * w + x;
@@ -269,9 +330,13 @@ fn spread_to_edges(px: &mut [vello_cpu::color::PremulRgba8], filled: &[bool], w:
                 && let Some(d) = px.get_mut(i)
             {
                 *d = c;
+                if let Some(k) = now.get_mut(i) {
+                    *k = true;
+                }
             }
         }
     }
+    now
 }
 
 impl Renderer {
@@ -518,8 +583,29 @@ mod tests {
             }
         }
         let filled: Vec<bool> = count.iter().map(|c| *c > 0).collect();
-        spread_to_edges(&mut px, &filled, w, h);
+        let filled = spread_to_edges(&mut px, filled, w, h);
         assert_eq!(px[2 * w + 2].a, 255, "the pixel outside the corner takes its neighbour's colour");
+        assert_eq!(px[2 * w + 1].a, 0, "one pass reaches one pixel out");
+        spread_to_edges(&mut px, filled, w, h);
+        assert_eq!(px[2 * w + 1].a, 255, "a second pass reaches the next one, which the grown outline samples");
+    }
+
+    /// A grown square covers half a pixel more on every side, whichever way it winds.
+    #[test]
+    fn an_outline_grows_by_half_a_pixel_both_ways_round() {
+        for square in [vectorcraft_geom::shapes::rectangle(Rect::new(2.0, 3.0, 10.0, 8.0)).to_bezpath(), {
+            let mut p = BezPath::new();
+            p.move_to((2.0, 3.0));
+            p.line_to((2.0, 8.0));
+            p.line_to((10.0, 8.0));
+            p.line_to((10.0, 3.0));
+            p.close_path();
+            p
+        }] {
+            let b = vectorcraft_geom::Shape::bounding_box(&grown_outline(&square, 0.5));
+            assert!((b.x0 - 1.5).abs() < 1e-6 && (b.y0 - 2.5).abs() < 1e-6, "{b:?}");
+            assert!((b.x1 - 10.5).abs() < 1e-6 && (b.y1 - 8.5).abs() < 1e-6, "{b:?}");
+        }
     }
     use vectorcraft_doc::{Appearance, EnvelopeKind, Symbol};
     use vectorcraft_geom::{Affine, Rect, shapes};
