@@ -212,6 +212,7 @@
 	Join	Spojit
 	Average…	Zprůměrovat…
 	Outline Stroke	Převést tah na obrys
+	Outline Object	Převést objekt na obrys
 	Offset Path…	Odsadit cestu…
 	Reverse Path Direction	Obrátit směr cesty
 	Simplify…	Zjednodušit…
@@ -391,6 +392,7 @@
 	Area Text Objects	Textové objekty v oblasti
 	Start Global Edit	Zahájit globální úpravy
 	Save Selection…	Uložit výběr…
+	Update Selection	Aktualizovat výběr
 	Edit Selection…	Upravit výběr…
 	Effect	Efekt
 	Apply Last Effect	Použít poslední efekt
@@ -425,6 +427,8 @@
 	Add	Přidat
 @id	pathfinder.add	Sjednotit
 	Intersect	Protnout
+	Intertwine	Proplést
+	Arrange Intertwine Area	Uspořádat oblast propletení
 	Exclude	Vyloučit
 	Subtract	Odečíst
 	Minus Back	Odečíst zadní
@@ -488,6 +492,7 @@
 	Fit All in Window	Přizpůsobit vše oknu
 	Actual Size	Skutečná velikost
 	Reset Rotate View	Obnovit otočení zobrazení
+	Rotate View to Selection	Otočit zobrazení podle výběru
 	Hide Edges	Skrýt okraje
 	Show Edges	Zobrazit okraje
 	Hide Artboards	Skrýt pracovní plochy
@@ -1578,6 +1583,9 @@ lighting	Light	Světlo
 	Updated {} image(s)	Aktualizováno obrázků: {}
 	Break Link	Zrušit propojení
 	Tolerance:	Tolerance:
+	Corner Point Angle Threshold:	Prahový úhel rohových bodů:
+	Convert to Straight Lines	Převést na přímé čáry
+	Show Original Path	Zobrazit původní cestu
 	Transparency Options	Možnosti průhlednosti
 	Color Mixer (Shift-click the chip)	Míchání barev (Shift+kliknutí na políčko)
 	Fill: click for swatches, Shift-click for the color mixer	Výplň: kliknutím otevřete vzorník, Shift+kliknutím míchání barev
@@ -1602,6 +1610,14 @@ lighting	Light	Světlo
 	Every-line Composer	Sazba všech řádků
 	First-line Left Indent	Odsazení prvního řádku zleva
 	Hyphenation…	Dělení slov…
+	Words Longer Than:	Slova delší než:
+	After First:	Po prvních:
+	Before Last:	Před posledními:
+	Hyphen Limit:	Limit spojovníků:
+	Hyphenation Zone:	Zóna dělení slov:
+	letters	písmen
+	hyphens	spojovníků
+	Hyphenate Capitalized Words	Dělit slova s velkým počátečním písmenem
 	Justification…	Zarovnání do bloku…
 	Justify with last line aligned center	Do bloku, poslední řádek na střed
 	Justify with last line aligned right	Do bloku, poslední řádek vpravo
@@ -2107,6 +2123,7 @@ lighting	Light	Světlo
 	Fidelity:	Věrnost:
 	Fill new strokes	Vyplňovat nové tahy
 	Keep selected	Ponechat vybrané
+	Merge only with selection	Sloučit jen s výběrem
 	The document has no colour swatches.	Dokument nemá ve vzorníku žádné barvy.
 	Style Name:	Název stylu:
 	Crop To	Oříznout na
@@ -2650,6 +2667,32 @@ lighting	Light	Světlo
 	Summary	Souhrn
 	Download	Stáhnout
 	Export Artboard	Exportovat pracovní plochu
+	A File per Object	Jeden soubor na objekt
+	Example: {name}	Příklad: {name}
+	Export Preset:	Přednastavení exportu:
+	Folders:	Složky:
+	Insert	Vložit
+	Nothing is selected. Select the art to export, then open this tab again.	Nic není vybráno. Vyberte kresbu k exportu a znovu otevřete tuto kartu.
+	One File of the Selection	Jeden soubor z výběru
+	Start at:	Začít od:
+	{n} objects selected	Vybráno objektů: {n}
+	Delete Export Preset	Odstranit přednastavení exportu
+	Export Presets	Přednastavení exportu
+	Save Export Preset	Uložit přednastavení exportu
+	Export Layer	Exportovat vrstvu
+	Export Selection	Exportovat výběr
+	All in One Folder	Vše v jedné složce
+	By Size or Row	Podle velikosti nebo řádku
+	By Format	Podle formátu
+	By Artboard or Item	Podle kreslicí plochy nebo položky
+	By Item, Then Format	Podle položky, pak formátu
+	Document Name	Název dokumentu
+	Artboard or Item Name	Název kreslicí plochy nebo položky
+	Number (####)	Číslo (####)
+	Date (YYYYMMDD)	Datum (RRRRMMDD)
+	Date (YYYY-MM-DD)	Datum (RRRR-MM-DD)
+	Time (hhmmss)	Čas (hhmmss)
+	PDF Print	PDF pro tisk
 	Encoding:	Kódování:
 	UTF-16 (Unicode)	UTF-16 (Unicode)
 	Line Endings:	Konce řádků:
@@ -2742,6 +2785,9 @@ effect	Soft	Měkký
 	Blocks	Bloky
 	Frosted	Matné sklo
 	Tiny Lens	Drobné čočky
+	Loaded Texture	Načtená textura
+	Load Texture…	Načíst texturu…
+	Texture Image	Obraz textury
 	Right Diagonal	Pravá diagonála
 	Left Diagonal	Levá diagonála
 effect	Horizontal	Vodorovný
@@ -3475,8 +3521,11 @@ axis	Both	Obě
 	Duplicate Artboard	Duplikovat pracovní plochu
 	Area / Path Type	Text v oblasti / na cestě
 	Decrease Font Size	Zmenšit velikost písma
+	Decrease Font Size by Five Steps	Zmenšit velikost písma o pět kroků
 	Increase Font Size	Zvětšit velikost písma
+	Increase Font Size by Five Steps	Zvětšit velikost písma o pět kroků
 	Reset Tracking and Kerning	Obnovit prostrkání a vyrovnání párů
+	Reset Horizontal Scale	Obnovit vodorovnou změnu velikosti
 	Step Type	Krokovat text
 	Get Text Range	Získat rozsah textu
 	Punctuation	Interpunkce
@@ -3995,6 +4044,8 @@ imageTrace	Outline	Obrys
 @msg	cannot split an open path at its end point	otevřenou cestu nelze rozdělit v jejím koncovém bodu
 @msg	closing needs three anchors	uzavření vyžaduje tři kotevní body
 @msg	check an asset to export	zaškrtněte prvek k exportu
+@msg	check a layer to export	zaškrtněte vrstvu k exportu
+@msg	select the art to export first	nejprve vyberte kresbu k exportu
 @msg	choice must be "merge" or "add", not `{choice}`	volba musí být "merge" nebo "add", ne `{choice}`
 @msg	choose a direction to divide in	zvolte směr rozdělení
 @msg	choose a folder to export to	zvolte složku pro export
@@ -4106,6 +4157,7 @@ imageTrace	Outline	Obrys
 @msg	no saved presets	žádná uložená přednastavení
 @msg	no saved print preset named `{name}` ({DEFAULT_PRESET} is protected: start a new one from it)	uložené přednastavení tisku s názvem `{name}` neexistuje ({DEFAULT_PRESET} je chráněné: vytvořte z něj nové)
 @msg	no saved profiles	žádné uložené profily
+@msg	no saved selection recalled	není vyvolán žádný uložený výběr
 @msg	no saved selections	žádné uložené výběry
 @msg	no saved themes	žádné uložené motivy
 @msg	no segment {segment} on line {line}	na čáře {line} není segment {segment}
@@ -4197,6 +4249,7 @@ imageTrace	Outline	Obrys
 @msg	select a gradient mesh	vyberte přechodovou síť
 @msg	select a linked image: an embedded one has no file	vyberte propojený obrázek: vložený nemá soubor
 @msg	select a repeat	vyberte opakování
+@msg	select an Intertwine group	vyberte skupinu propletení
 @msg	select a stroke with a variable width	vyberte tah s proměnnou šířkou
 @msg	select a symbol instance	vyberte instanci symbolu
 @msg	select an Image Trace object	vyberte objekt vektorizace obrazu
@@ -4363,6 +4416,8 @@ imageTrace	Outline	Obrys
 @msg	{_1} files	Soubory {_1}
 @msg	The graphics were lost and have been restarted	Grafika byla ztracena a byla restartována
 @msg	The graphics processor tried first couldn't show the window, so VectorCraft started again on {summary}	Grafický procesor zkoušený jako první nedokázal zobrazit okno, proto se VectorCraft znovu spustil na {summary}
+@msg	The last start of VectorCraft ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Poslední spuštění aplikace VectorCraft skončilo na {name} dřív, než se zobrazilo okno, proto se spustila na {summary}. Chcete-li tento grafický procesor zkusit znovu, změňte Předvolby › Výkon › Grafický procesor nebo ji spusťte s nastavenou proměnnou WGPU_BACKEND
+@msg	The last start of VectorCraft ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Poslední spuštění aplikace VectorCraft skončilo během zjišťování grafických procesorů, proto se spustila na {summary} jen s OpenGL. Chcete-li znovu zkusit ostatní grafická rozhraní, změňte Předvolby › Výkon › Grafický procesor nebo ji spusťte s nastavenou proměnnou WGPU_BACKEND
 @msg	Loading VectorCraft…	Načítání VectorCraftu…
 @msg	VectorCraft failed to start: {e}	VectorCraft se nepodařilo spustit: {e}
 @msg	A browser with WebGPU or WebGL2 is required.	Je potřeba prohlížeč s WebGPU nebo WebGL2.
@@ -4834,6 +4889,7 @@ mark-style	Japanese	Japonské
 @msg	unknown parameter `{key}`; the command takes: {keys}	neznámý parametr `{key}`; příkaz přijímá: {keys}
 	Load EPS into Clipboard	Načíst EPS do schránky
 @msg	an image of {w} × {h} pixels is too large to draw	obraz o velikosti {w} × {h} obrazových bodů je příliš velký na vykreslení
+@msg	the image can't be read as a texture	obraz nelze načíst jako texturu
 	Fill and Stroke Controls	Ovládací prvky výplně a tahu
 	Coloring Controls	Ovládací prvky barev
 	Draw Mode Controls	Ovládací prvky režimu kreslení
@@ -4855,9 +4911,9 @@ mark-style	Japanese	Japonské
 	Softness	Měkkost
 	Ambient Light	Okolní světlo
 	Light behind the object	Světlo za objektem
+	Registration:	Registrace:
 # Dimension tool (linked dimension annotations)
 	Display	Zobrazení
-
 # Dimension tool and Object › Dimensions (dimension groups, their dialog and messages).
 	Dimension	Rozměr
 	Drawing : real size — 1:10 labels 1 unit on the page as 10.	Výkres : skutečná velikost — 1:10 označí 1 jednotku na stránce jako 10.
@@ -4903,3 +4959,43 @@ mark-style	Japanese	Japonské
 @msg	Unknown unit	Neznámá jednotka
 # Revolve cap description
 	Close the circular ends of open profiles. Partial sweeps keep their cut sides open.	Uzavře kruhové konce otevřených profilů. Boční řezy částečného otočení zůstávají otevřené.
+@msg	span must be "object" or "selection", got {v}	span musí být "object" nebo "selection", ne {v}
+@msg	span: "selection" places a `gradient`, not a swatch	span: "selection" umísťuje `gradient`, ne vzorník
+@msg	span: "selection" places a gradient: give `gradient`	span: "selection" umísťuje přechod: zadejte `gradient`
+@msg	span: "selection" places a linear or radial gradient, not a freeform one	span: "selection" umísťuje lineární nebo radiální přechod, ne volný přechod
+@msg	span: "selection" places the gradient itself: leave out `start` and `end` (they already place it in document coordinates)	span: "selection" umísťuje samotný přechod: vynechte `start` a `end` (ty ho už umísťují v souřadnicích dokumentu)
+	Make Image Dynamic	Nastavit obraz jako dynamický
+	Import Data Sets…	Importovat sady dat…
+	Export Data Sets…	Exportovat sady dat…
+	Make Graph Dynamic	Nastavit graf jako dynamický
+	Batch…	Dávka…
+	Source Folder:	Zdrojová složka:
+	Destination Folder:	Cílová složka:
+	Overrides	Přepsání
+	Uses every data set of the open document.	Použije každou sadu dat otevřeného dokumentu.
+@msg	Batch: {count} processed	Dávka: zpracováno {count}
+@msg	Batch: {count} processed, {failed} failed	Dávka: zpracováno {count}, selhalo {failed}
+@msg	choose a destination folder	vyberte cílovou složku
+@msg	choose a source folder	vyberte zdrojovou složku
+@msg	open a document with data sets	otevřete dokument se sadami dat
+@msg	the action has no steps	akce nemá žádné kroky
+
+# User Interface › Accent Color
+	Accent Color	Barva zvýraznění
+	Amber	Jantarová
+	Coral	Korálová
+	Violet	Fialová
+	Sketch	Skica
+	Halftone Pattern…	Polotónový vzorek…
+	Halftone Pattern	Polotónový vzorek
+	Pattern Type	Typ vzorku
+	Dot	Tečka
+# User Interface › Color Scheme
+	Color Scheme	Barevné schéma
+	Modern	Moderní
+
+# Symbol Options › Export Type
+	Export Type:	Typ exportu:
+	Movie Clip	Filmový klip
+@msg	name is empty	název je prázdný
+@msg	no symbol named `{n}`	žádný symbol s názvem `{n}`

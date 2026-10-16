@@ -1841,23 +1841,22 @@ impl<'a> Reader<'a> {
         for y in 0..h as usize {
             let line = samples.get(y * row..(y + 1) * row).unwrap_or_default();
             for x in 0..w as usize {
-                let px = if *bits == 1.0 {
-                    let bit = line.get(x / 8).map_or(0, |b| (b >> (7 - x % 8)) & 1);
-                    let v = if bit == 1 { 255 } else { 0 };
-                    [v, v, v]
-                } else {
-                    let s = |c: usize| line.get(x * channels + c).copied().unwrap_or(0);
-                    match channels {
-                        1 => [s(0); 3],
-                        4 => {
-                            let key = [s(0), s(1), s(2), s(3)];
-                            if self.cmyk_cache.len() > 1 << 16 {
-                                self.cmyk_cache.clear();
-                            }
-                            *self.cmyk_cache.entry(key).or_insert_with(|| cmyk_rgb(key))
+                // A 1-bit row holds each pixel's channels in turn, a bit each, padded to a whole
+                // byte (`row`); a set bit is the channel at full strength (255).
+                let s = |c: usize| {
+                    let i = x * channels + c;
+                    if *bits == 1.0 { line.get(i / 8).map_or(0, |b| ((b >> (7 - i % 8)) & 1) * 255) } else { line.get(i).copied().unwrap_or(0) }
+                };
+                let px = match channels {
+                    1 => [s(0); 3],
+                    4 => {
+                        let key = [s(0), s(1), s(2), s(3)];
+                        if self.cmyk_cache.len() > 1 << 16 {
+                            self.cmyk_cache.clear();
                         }
-                        _ => [s(0), s(1), s(2)],
+                        *self.cmyk_cache.entry(key).or_insert_with(|| cmyk_rgb(key))
                     }
+                    _ => [s(0), s(1), s(2)],
                 };
                 let a = opacity.and_then(|o| o.get(y * w as usize + x)).copied().unwrap_or(255);
                 rgba.extend_from_slice(&[px[0], px[1], px[2], a]);
@@ -1876,10 +1875,12 @@ impl<'a> Reader<'a> {
     /// `alpha` (its alpha channel, one byte a pixel) as its opacity mask when it hides part of the
     /// image.
     fn add_raster(&mut self, blob: ImageBlob, alpha: Option<&[u8]>, m: &[f64], (w, h): (u32, u32)) -> Result<(), String> {
-        // The matrix maps pixels (y down) into art space with its y flipped.
+        // The matrix is an art-space matrix (y up) applied to the pixels with their rows running
+        // downwards, (u, -v): pixels → (u, -v) → art space. Flipping the matrix's result instead
+        // gives the same place only when the image isn't rotated (b = c = 0).
         let [a, b, c, d, tx, ty] = m else { return Ok(()) };
         let to_doc = self.space();
-        let xf = to_doc * FLIP * Affine::new([*a, *b, *c, *d, *tx, -*ty]);
+        let xf = to_doc * Affine::new([*a, *b, *c, *d, *tx, *ty]) * FLIP;
         if !xf.as_coeffs().iter().all(|v| v.is_finite()) || xf.determinant().abs() < 1e-12 {
             return Ok(());
         }

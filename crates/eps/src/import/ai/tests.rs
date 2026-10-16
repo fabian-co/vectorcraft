@@ -584,6 +584,33 @@ fn pixels(doc: &Document) -> (image::RgbaImage, kurbo::Affine) {
     (image::load_from_memory(&blob.bytes).unwrap().to_rgba8(), im.xf)
 }
 
+/// A 1-bit image's row holds each pixel's channels in turn, one bit each, padded to whole bytes;
+/// a set bit is the channel at full strength.
+#[test]
+fn one_bit_images_read_each_channel() {
+    let one_bit = |src: Vec<u8>, kind: u32| {
+        let text = String::from_utf8(src).unwrap();
+        text.replacen(&format!(" 8 {kind} 0 0 1 0 "), &format!(" 1 {kind} 0 0 0 0 "), 1).into_bytes()
+    };
+    // 3 × 2 RGB in hex: red, green, blue (100 010 001), then white, black, yellow (111 000 110).
+    let doc = read(&one_bit(image("[ 1 0 0 1 0 100 ]", (3, 2), ("DeviceRGB", 3, 0), b"8880e300", 11), 3)).unwrap().doc;
+    let img = pixels(&doc).0;
+    let row = |y: u32| (0..3).map(|x| img.get_pixel(x, y).0).collect::<Vec<_>>();
+    assert_eq!(row(0), [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]);
+    assert_eq!(row(1), [[255, 255, 255, 255], [0, 0, 0, 255], [255, 255, 0, 255]]);
+    // 2 × 1 CMYK: cyan, then black (1000 0001).
+    let doc = read(&one_bit(image("[ 1 0 0 1 0 100 ]", (2, 1), ("DeviceCMYK", 4, 0), b"81", 5), 4)).unwrap().doc;
+    let img = pixels(&doc).0;
+    for (x, ink) in [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]].into_iter().enumerate() {
+        let [r, g, b, _] = Color::cmyk(ink[0], ink[1], ink[2], ink[3]).to_rgba8(1.0);
+        assert_eq!(img.get_pixel(x as u32, 0).0, [r, g, b, 255], "pixel {x}");
+    }
+    // 3 × 1 gray: a bit a pixel (101).
+    let doc = read(&one_bit(image("[ 1 0 0 1 0 100 ]", (3, 1), ("DeviceGray", 1, 0), b"a0", 5), 1)).unwrap().doc;
+    let img = pixels(&doc).0;
+    assert_eq!((0..3).map(|x| img.get_pixel(x, 0).0[0]).collect::<Vec<_>>(), [255, 0, 255]);
+}
+
 #[test]
 fn images_with_alpha_channels() {
     // RGB samples, then the alpha channel (not counted in the data's size).
@@ -603,6 +630,33 @@ fn images_with_alpha_channels() {
     // Data cut short: the image goes, with a warning.
     let r = read(&image("[ 1 0 0 1 0 100 ]", (4, 4), ("DeviceRGB", 3, 0), &[1, 2, 3], 6)).unwrap();
     assert!(art(&r.doc).is_empty() && r.warnings.iter().any(|w| w.contains("cut short")));
+}
+
+/// The raster matrix `[a b c d tx ty]` is an art-space matrix (y up) applied to the image's pixels
+/// with their rows running downwards, `(u, -v)`: art x = a·u − c·v + tx, art y = b·u − d·v + ty.
+/// Without rotation (b = c = 0) that is the same as flipping the matrix's result; a rotated image
+/// tells the two apart (#2269).
+#[test]
+fn a_rotated_image_is_placed_as_its_matrix_maps_it() {
+    // Turned 90° counter-clockwise: in art space each row runs upwards, the next row to its right.
+    let doc = read(&image("[ 0 10 -10 0 50 50 ]", (2, 1), ("DeviceRGB", 3, 0), &[255, 0, 0, 0, 0, 255], 6)).unwrap().doc;
+    let xf = pixels(&doc).1;
+    // Art (x, y) is (x, 100 - y) on the page.
+    let page = |x: f64, y: f64| Point::new(x, 100.0 - y);
+    assert_eq!(xf * Point::ZERO, page(50.0, 50.0), "the top left pixel's corner stays at the matrix's origin");
+    assert_eq!(xf * Point::new(2.0, 0.0), page(50.0, 70.0), "the first row runs up");
+    assert_eq!(xf * Point::new(0.0, 1.0), page(60.0, 50.0), "the next row is to its right");
+    // Any rotation and scale: the same formula.
+    let (s, c) = 30f64.to_radians().sin_cos();
+    let m = [3.0 * c, 3.0 * s, -2.0 * s, 2.0 * c, 40.0, 60.0];
+    let matrix = format!("[ {} ]", m.map(|v| v.to_string()).join(" "));
+    let doc = read(&image(&matrix, (2, 1), ("DeviceRGB", 3, 0), &[255, 0, 0, 0, 0, 255], 6)).unwrap().doc;
+    let xf = pixels(&doc).1;
+    for (u, v) in [(0.0, 0.0), (2.0, 0.0), (0.0, 1.0), (2.0, 1.0)] {
+        let want = page(m[0] * u - m[2] * v + m[4], m[1] * u - m[3] * v + m[5]);
+        let got = xf * Point::new(u, v);
+        assert!((got - want).hypot() < 1e-9, "pixel ({u}, {v}): {got:?}, want {want:?}");
+    }
 }
 
 /// CMYK images keep their ink amounts, as the file's PDF part keeps them, and an alpha channel
