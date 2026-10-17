@@ -17,7 +17,7 @@ use std::sync::{Arc, Weak};
 use vectorcraft_doc::live::{GradientMesh, MeshQuad};
 use vectorcraft_doc::placed_document::ReadDocument;
 use vectorcraft_doc::{Document, Node, NodeKind};
-use vectorcraft_geom::{BezPath, Vec2};
+use vectorcraft_geom::{Affine, BezPath, Point, Vec2};
 use vello_cpu::RenderContext;
 use vello_cpu::peniko;
 
@@ -172,6 +172,108 @@ fn mesh_level(m: &GradientMesh, bounds_px: f64) -> usize {
     ((per / 5.0).ceil() as usize).clamp(2, 32)
 }
 
+/// The most pixels a gradient mesh is rasterized into at once ([`draw_mesh_raster`]); a larger
+/// one is drawn quad by quad.
+const MESH_RASTER_MAX_PIXELS: usize = 16 << 20;
+
+/// Draw a tessellated gradient mesh as one image: its quads are filled into a pixel buffer of the
+/// mesh's on-screen box by scanline (each pixel takes the quad its centre is in, so neighbouring
+/// quads meet without seams or overlap), and the buffer is drawn through the mesh's outline, which
+/// antialiases the outer edge. Drawing every quad as a path of its own costs a path's setup per
+/// quad: a page of thousands of meshes made millions of them at print size (minutes), where this
+/// costs about one write per covered pixel. → false (nothing drawn) when the box is too large for
+/// one buffer, so the caller draws the quads.
+fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads: &[MeshQuad], alpha: f32) -> bool {
+    let outline = m.outline().to_bezpath();
+    let dev = f.view.transform_rect_bbox(vectorcraft_geom::Shape::bounding_box(&outline));
+    if ![dev.x0, dev.y0, dev.x1, dev.y1].iter().all(|v| v.is_finite()) {
+        return false;
+    }
+    let (cw, ch) = (f64::from(ctx.width()), f64::from(ctx.height()));
+    let (x0, y0) = ((dev.x0.floor() - 1.0).max(0.0), (dev.y0.floor() - 1.0).max(0.0));
+    let (x1, y1) = ((dev.x1.ceil() + 1.0).min(cw), (dev.y1.ceil() + 1.0).min(ch));
+    if x1 <= x0 || y1 <= y0 {
+        // Off the context: nothing to draw.
+        return true;
+    }
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    if w * h > MESH_RASTER_MAX_PIXELS || w > usize::from(u16::MAX) || h > usize::from(u16::MAX) {
+        return false;
+    }
+    let clear = vello_cpu::color::PremulRgba8 { r: 0, g: 0, b: 0, a: 0 };
+    let mut px = vec![clear; w * h];
+    let mut filled = vec![false; w * h];
+    let to_buffer = Affine::translate((-x0, -y0)) * f.view;
+    for q in quads {
+        // A fully transparent quad still claims its pixels, so the edge fill below leaves them clear.
+        let c = if q.opacity > 0.0 { f.ink.color(&q.color, q.opacity * alpha).premultiply().to_rgba8() } else { clear };
+        fill_quad(&mut px, &mut filled, w, h, q.pts.map(|p| to_buffer * p), c);
+    }
+    spread_to_edges(&mut px, &filled, w, h);
+    let pm = Arc::new(vello_cpu::Pixmap::from_parts(px, w as u16, h as u16));
+    ctx.set_transform(Affine::translate((x0, y0)));
+    ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler: peniko::ImageSampler::default() });
+    ctx.fill_path(&(Affine::translate((-x0, -y0)) * f.view * outline));
+    ctx.set_transform(Affine::IDENTITY);
+    true
+}
+
+/// Fill the pixels of the `w`×`h` buffer whose centres are inside quad `p` (buffer pixels, even-odd
+/// so a twisted quad is filled as drawn) with `c`, and mark them `filled`.
+fn fill_quad(px: &mut [vello_cpu::color::PremulRgba8], filled: &mut [bool], w: usize, h: usize, p: [Point; 4], c: vello_cpu::color::PremulRgba8) {
+    if !p.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
+        return;
+    }
+    let (min_y, max_y) = p.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| (a.min(q.y), b.max(q.y)));
+    let first = (min_y - 0.5).ceil().max(0.0) as usize;
+    let last = ((max_y - 0.5).ceil().max(0.0) as usize).min(h);
+    for y in first..last {
+        let yc = y as f64 + 0.5;
+        let mut xs = [0.0f64; 4];
+        let mut n = 0;
+        for i in 0..4 {
+            let (a, b) = (p[i], p[(i + 1) % 4]);
+            if (a.y <= yc) != (b.y <= yc) {
+                xs[n] = a.x + (yc - a.y) * (b.x - a.x) / (b.y - a.y);
+                n += 1;
+            }
+        }
+        let xs = &mut xs[..n];
+        xs.sort_by(f64::total_cmp);
+        for [a, b] in xs.as_chunks::<2>().0 {
+            let from = (a - 0.5).ceil().clamp(0.0, w as f64) as usize;
+            let to = (b - 0.5).ceil().clamp(0.0, w as f64) as usize;
+            let row = y * w;
+            for (d, k) in
+                px.get_mut(row + from..row + to).unwrap_or_default().iter_mut().zip(filled.get_mut(row + from..row + to).unwrap_or_default())
+            {
+                *d = c;
+                *k = true;
+            }
+        }
+    }
+}
+
+/// Give each pixel no quad covered the colour of a covered neighbour: the outline's antialiased
+/// edge samples pixels whose centres fall just outside the quads, which would otherwise fade it.
+fn spread_to_edges(px: &mut [vello_cpu::color::PremulRgba8], filled: &[bool], w: usize, h: usize) {
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if filled.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            let near = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < h).then(|| i + w)];
+            if let Some(j) = near.into_iter().flatten().find(|j| filled.get(*j).copied().unwrap_or(false))
+                && let Some(c) = px.get(j).copied()
+                && let Some(d) = px.get_mut(i)
+            {
+                *d = c;
+            }
+        }
+    }
+}
+
 impl Renderer {
     /// The [`resources_key`] of `n` in `doc`, with the frame's [`DocInputs`] ([`Found`]): `n` is a
     /// live node, or an object with effects whose art ([`Renderer::fx_art`]) can be made from
@@ -286,10 +388,13 @@ impl Renderer {
         let Some(b) = m.bounds() else { return };
         let level = mesh_level(m, b.width().max(b.height()) / f.px.max(1e-12));
         let quads = self.mesh_quads(f.doc, a, m, level, cache);
-        ctx.set_transform(f.view);
         ctx.set_fill_rule(peniko::Fill::NonZero);
-        let grow = f.px * 0.5;
         let alpha = self.alpha;
+        if draw_mesh_raster(ctx, f, m, &quads, alpha) {
+            ctx.set_transform(f.view);
+            return;
+        }
+        ctx.set_transform(f.view);
         // Where a patch narrows to slivers, many quads share each pixel, each covering a little of it: their edges
         // composite to part coverage, and hard edges drop each one. An opaque patch is backed by its own outline in
         // its middle colour, one path that covers fully, so the background can't show through.
@@ -310,6 +415,7 @@ impl Renderer {
                 ctx.fill_path(&bp);
             }
         }
+        let grow = f.px * 0.5;
         for q in quads.iter() {
             if q.opacity <= 0.0 {
                 continue;
@@ -381,6 +487,39 @@ mod tests {
         let holes =
             (0..120).flat_map(|y| (0..440).map(move |x| (x, y))).filter(|&(x, y)| smooth.pixel(x, y)[3] >= 200 && hard.pixel(x, y)[3] == 0).count();
         assert!(holes < 60, "{holes} pixels the smooth render covers are empty with hard edges");
+    }
+
+    /// Quads that share edges fill every pixel of their union once: no gap, no overlap.
+    #[test]
+    fn quads_meeting_edge_to_edge_fill_their_union_once() {
+        let (w, h) = (20, 20);
+        let clear = vello_cpu::color::PremulRgba8 { r: 0, g: 0, b: 0, a: 0 };
+        let red = vello_cpu::color::PremulRgba8 { r: 255, g: 0, b: 0, a: 255 };
+        let mut px = vec![clear; w * h];
+        let mut count = vec![0u8; w * h];
+        // A 2×2 grid over (2.3, 2.7)–(17.6, 16.2) with an inner corner off the pixel grid.
+        let xs = [2.3, 9.71, 17.6];
+        let ys = [2.7, 8.35, 16.2];
+        for j in 0..2 {
+            for i in 0..2 {
+                let pts = [Point::new(xs[i], ys[j]), Point::new(xs[i + 1], ys[j]), Point::new(xs[i + 1], ys[j + 1]), Point::new(xs[i], ys[j + 1])];
+                let mut mine = vec![false; w * h];
+                fill_quad(&mut px, &mut mine, w, h, pts, red);
+                for (c, m) in count.iter_mut().zip(&mine) {
+                    *c += u8::from(*m);
+                }
+            }
+        }
+        for y in 0..h {
+            for x in 0..w {
+                let (cx, cy) = (x as f64 + 0.5, y as f64 + 0.5);
+                let inside = (2.3..17.6).contains(&cx) && (2.7..16.2).contains(&cy);
+                assert_eq!(count[y * w + x], u8::from(inside), "pixel {x},{y}");
+            }
+        }
+        let filled: Vec<bool> = count.iter().map(|c| *c > 0).collect();
+        spread_to_edges(&mut px, &filled, w, h);
+        assert_eq!(px[2 * w + 2].a, 255, "the pixel outside the corner takes its neighbour's colour");
     }
     use vectorcraft_doc::{Appearance, EnvelopeKind, Symbol};
     use vectorcraft_geom::{Affine, Rect, shapes};
