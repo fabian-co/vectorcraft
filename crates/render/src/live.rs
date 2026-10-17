@@ -173,8 +173,9 @@ fn mesh_level(m: &GradientMesh, bounds_px: f64) -> usize {
 }
 
 /// The most pixels a gradient mesh is rasterized into at once ([`draw_mesh_raster`]); a larger
-/// one is drawn quad by quad.
-const MESH_RASTER_MAX_PIXELS: usize = 16 << 20;
+/// one is drawn quad by quad. The buffer is clipped to the frame; at 4 MP it holds at most 16 MB
+/// of pixels per mesh and frame.
+const MESH_RASTER_MAX_PIXELS: usize = 4 << 20;
 
 /// Draw a tessellated gradient mesh as one image: its quads are filled into a pixel buffer of the
 /// mesh's on-screen box by scanline (each pixel takes the quad its centre is in, so neighbouring
