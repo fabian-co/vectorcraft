@@ -24,11 +24,12 @@
 //!   corner), painted `N n F f S s B b` (lower case closes first); guides `(N) *` before and after
 //!   the path (§6); fill rule `XR`; overprint `O`/`R`; stroke `w J j M d`.
 //! - Colours (§5.4): `g`/`G` (grey), `k`/`K` (CMYK), `Xa`/`XA` (`r g b`), `x`/`X` (a spot colour
-//!   at a tint). Gradient fills (§3.5.3): the path, `Bb`, `1 (name) x y angle length 1 0 0 1 0 0
-//!   Bg`, a radial's highlight `x y angle fraction Bh`, `f` (or `F`), and `0 BB`, or `2 BB` (`1 BB`
-//!   open) to stroke it too.
-//! - Images (§8): `%AI5_BeginRaster`, `[matrix] 0 0 w h w h 8 3 0 0 0 0 XI`, the RGB samples in
-//!   hex on comment lines, `%AI5_EndRaster`.
+//!   at a tint). Gradient fills (§3.5.3): the path, `Bb`, a radial's highlight `x y angle fraction
+//!   Bh` (`0 0 0 0 Bh` at the center, §3.5.5, §3.5.6), `1 (name) x y angle length 1 0 0 1 0 0 Bg`,
+//!   `f` (or `F`), and `0 BB`, or `2 BB` (`1 BB` open) to stroke it too.
+//! - Images (§8.1, §8.4): `%AI5_File:`, `%AI5_BeginRaster`,
+//!   `[ a b c d tx ty ] 0 0 w h w h 8 3 0 0 0 0 XI`, the RGB samples in hex on comment lines of 60
+//!   digits, `%AI5_EndRaster`.
 //! - Type (§15): point type, area type and type on a path as text objects, `type To`, `a b c d tx
 //!   ty startPt Tp` (the text matrix; the frame or path in art space between it and `TP`), each
 //!   run's paint style, `Tr` (fill, stroke, both or neither), `/_font size ascent descent Tf`,
@@ -75,16 +76,17 @@ use crate::{latin, ps};
 const MAX_NEST: u32 = 8;
 /// Largest image written (pixels).
 const MAX_IMAGE_PIXELS: u64 = 1 << 26;
-/// Hex digits on a line of image data.
-const HEX_LINE: usize = 64;
+/// Hex digits on a line of image data (§8.4).
+const HEX_LINE: usize = 60;
 
 pub const SUBLAYERS: &str = "sublayers are written as groups in their top-level layer (legacy .ai files have no sublayers)";
 pub const TYPE: &str = "type a legacy .ai can't hold as text (characters outside Windows Latin-1, vertical type, inline graphics, gradient or pattern fills) is written as outlines";
-pub const TYPE_ATTRIBUTES: &str = "type attributes legacy .ai files don't have (underline, strikethrough, small caps, superscript and subscript, character rotation, OpenType features, area type options, type on a path effects, space after paragraphs, tabs) are left out";
+pub const TYPE_ATTRIBUTES: &str = "type attributes legacy .ai files don't have (underline, strikethrough, small caps, superscript and subscript, character rotation, OpenType features, Variable Font settings, area type options, type on a path effects, space after paragraphs, tabs) are left out";
 pub const HIDDEN: &str = "hidden objects are left out (hidden layers are kept, hidden)";
 pub const HIDDEN_LAYER: &str = "hidden objects are moved to a hidden layer above their own (legacy .ai files can hide only layers)";
 pub const HIDDEN_SHOWN: &str = "hidden objects are written visible (legacy .ai files can hide only layers)";
 pub const TRANSPARENCY: &str = "transparency (opacity, blending modes, opacity masks) is written opaque: legacy .ai files have none";
+pub const LAYER_NAME: &str = "characters outside Windows Latin-1 in layer names are written as ? (legacy .ai files can't hold them)";
 pub const NAMES: &str = "object names are left out (legacy .ai files name only layers)";
 const PATTERNS: &str = "pattern fills are written as their tiles, clipped to the shape";
 const FREEFORM: &str = "freeform gradients are written as their average colour";
@@ -452,6 +454,25 @@ impl<'a> Writer<'a> {
 
     // ---------- layers and objects ----------
 
+    /// A layer's name as a PostScript string in Windows-1252, like the type; a character outside it
+    /// is written as `?`, with a warning.
+    fn layer_name(&mut self, name: &str) -> String {
+        let mut lost = false;
+        let bytes: Vec<u8> = name
+            .chars()
+            .map(|c| {
+                latin::encode(c).unwrap_or_else(|| {
+                    lost = true;
+                    b'?'
+                })
+            })
+            .collect();
+        if lost {
+            self.warn(LAYER_NAME);
+        }
+        ps::bytes(&bytes)
+    }
+
     /// A top-level layer. False when it isn't a layer.
     fn layer(&mut self, n: &Node) -> bool {
         let NodeKind::Layer { color, template, printable, children, clip, preview, dim_images } = &n.kind else { return false };
@@ -464,6 +485,7 @@ impl<'a> Writer<'a> {
             _ => -1,
         };
         let flag = |b: bool| u8::from(b);
+        let name = self.layer_name(n.name.as_deref().unwrap_or("Layer"));
         // A template layer doesn't print and shows dimmed.
         let _ = writeln!(
             self.body,
@@ -473,7 +495,7 @@ impl<'a> Writer<'a> {
             flag(!n.locked),
             flag(*printable && !*template),
             flag(dim_images.is_some() || *template),
-            ps::string(n.name.as_deref().unwrap_or("Layer")),
+            name,
         );
         self.locked = false;
         self.line("0 A");
@@ -501,13 +523,14 @@ impl<'a> Writer<'a> {
             _ => -1,
         };
         let name = format!("{} (hidden)", n.name.as_deref().unwrap_or("Layer"));
+        let name = self.layer_name(&name);
         let _ = writeln!(
             self.body,
             "%AI5_BeginLayer\n0 1 {} {} {} 0 {index} {r} {g} {b} Lb\n{} Ln",
             u8::from(!n.locked),
             u8::from(*printable && !*template),
             u8::from(*template),
-            ps::string(&name),
+            name,
         );
         self.locked = false;
         self.line("0 A");
@@ -974,8 +997,9 @@ impl<'a> Writer<'a> {
     // ---------- gradients ----------
 
     /// The definition gradient `g` uses (defined once for each distinct gradient), and its
-    /// instance on a path of bounds `bounds`: `Bb`, `1 (name) x y angle length 1 0 0 1 0 0 Bg`, a
-    /// radial's highlight `x y angle fraction Bh` (its distance a fraction of the radius, §3.5.5).
+    /// instance on a path of bounds `bounds`: `Bb`, a radial's highlight `x y angle fraction Bh`
+    /// (its distance a fraction of the radius, at most 1, §3.5.5; `0 0 0 0 Bh` at the center,
+    /// §3.5.6), `1 (name) x y angle length 1 0 0 1 0 0 Bg`.
     fn gradient(&mut self, g: &GradientPaint, bounds: Rect) -> String {
         let name = self.define(&g.gradient, g.swatch.as_deref());
         for stop in &g.gradient.stops {
@@ -1002,15 +1026,14 @@ impl<'a> Writer<'a> {
             self.warn(ELLIPTICAL);
         }
         let mut s = String::from("Bb\n");
-        if g.gradient.kind == GradientKind::Radial
-            && let Some(f) = geom.focal
-        {
-            let off: Vec2 = self.to_art * f - start;
-            if off.hypot() > 1e-9 && length > 1e-9 {
-                let fraction = (off.hypot() / length).min(1.0);
-                ps::push_nums(&mut s, &[off.x, off.y, off.y.atan2(off.x).to_degrees(), fraction]);
-                s.push_str("Bh\n");
-            }
+        if g.gradient.kind == GradientKind::Radial {
+            // Every radial instance has a highlight (§3.5.5), `0 0 0 0 Bh` at the center (§3.5.6).
+            // It lies within the gradient's circle: one past the radius is written on it.
+            let off: Vec2 = geom.focal.map_or(Vec2::ZERO, |f| self.to_art * f - start);
+            let fraction = if off.hypot() > 1e-9 && length > 1e-9 { off.hypot() / length } else { 0.0 };
+            let (off, angle) = if fraction > 0.0 { (off / fraction.max(1.0), off.y.atan2(off.x).to_degrees()) } else { (Vec2::ZERO, 0.0) };
+            ps::push_nums(&mut s, &[off.x, off.y, angle, fraction.min(1.0)]);
+            s.push_str("Bh\n");
         }
         s.push_str("1 ");
         s.push_str(&ps::string(&name));
@@ -1201,9 +1224,10 @@ impl<'a> Writer<'a> {
 
     // ---------- images ----------
 
-    /// An image (§8): `%AI5_BeginRaster`, its matrix (an art-space matrix applied to the pixels
-    /// with their rows running downwards, `(u, -v)`) and operands with `XI`, its RGB samples in hex
-    /// on comment lines, `%AI5_EndRaster`.
+    /// An image (§8): `%AI5_File:`, `%AI5_BeginRaster`, its matrix (an art-space matrix applied to
+    /// the pixels with their rows running downwards, `(u, -v)`) as `[ a b c d tx ty ]` and its
+    /// operands with `XI`, its RGB samples in hex on comment lines of [`HEX_LINE`] digits,
+    /// `%AI5_EndRaster`.
     fn image(&mut self, im: &ImageObject) {
         let flip = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, 0.0]);
         let m = self.to_art * im.xf * flip;
@@ -1253,9 +1277,8 @@ impl<'a> Writer<'a> {
         }
         let [a, b, c, d, e, f] = m.as_coeffs();
         let s = &mut self.body;
-        s.push_str("%AI5_File:\n%AI5_BeginRaster\n[");
+        s.push_str("%AI5_File:\n%AI5_BeginRaster\n[ ");
         ps::push_nums(s, &[a, b, c, d, e, f]);
-        s.pop();
         let _ = writeln!(s, "] 0 0 {w} {h} {w} {h} 8 3 0 0 0 0 XI");
         s.push_str(&hex);
         s.push_str("%AI5_EndRaster\n");
@@ -1279,7 +1302,13 @@ fn writable(t: &TextObject) -> bool {
 /// Has type `t` attributes a legacy `.ai` text object can't hold (lost when it's written as text)?
 fn lost_attributes(t: &TextObject) -> bool {
     let run_lost = |s: &CharStyle| {
-        s.underline || s.strikethrough || s.small_caps.is_some() || s.position != CharPosition::Normal || s.rotation != 0.0 || !s.features.is_empty()
+        s.underline
+            || s.strikethrough
+            || s.small_caps.is_some()
+            || s.position != CharPosition::Normal
+            || s.rotation != 0.0
+            || !s.features.is_empty()
+            || !s.font_axes.is_empty()
     };
     let para_lost = |p: &ParaStyle| p.space_after != 0.0 || !p.tabs.is_empty();
     t.runs.iter().any(|r| run_lost(&r.style))
