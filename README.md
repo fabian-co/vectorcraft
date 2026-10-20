@@ -163,6 +163,8 @@ exposes to agents, and exported by VectorCraft's own renderer. The source files 
 
 ## Quick start
 
+For posters and sewing patterns, see [Print a large poster across multiple pages](docs/print-tiling.md).
+
 ```sh
 git clone https://github.com/storytold/vectorcraft
 cd vectorcraft
@@ -177,6 +179,8 @@ cargo xtask bundle                                        # dist/VectorCraft.app
 cd apps/vectorcraft-web && trunk build --release            # web build → dist/web
 cargo xtask ci                                            # fmt, clippy, tests, layering, wasm, vendor names
 ```
+
+For text and custom letter shapes, see [Typography and Custom Lettering](docs/typography-lettering.md).
 
 Japanese fonts come from [storytold/craft-fonts](https://github.com/storytold/craft-fonts), an optional
 build input (releases always use it): `CRAFT_FONTS_DIR="$PWD/../craft-fonts" cargo run --release -p vectorcraft` (an absolute path).
@@ -246,7 +250,7 @@ The scores are self-assessed from our code against public documentation;
 - reliable exchange of .ai files (layer structure in real files; proprietary editing data isn't written);
 - an interaction-fidelity pass covering every tool's modifiers and small behaviours;
 - 3D and Materials beyond the initial live Revolve (Extrude & Bevel, Inflate, Rotate, materials);
-- about half of the raster effects (24 of 57 still missing; Cutout, Film Grain, Neon Glow and Poster Edges are available under Artistic, Halftone Pattern under Sketch) and the Effect Gallery;
+- most of the raster effects (12 of 57 still missing; Cutout, Film Grain, Neon Glow, Plastic Wrap, Poster Edges, Smudge Stick, Sponge and Watercolor are available under Artistic, Bas Relief, Chalk & Charcoal, Charcoal, Chrome, Graphic Pen, Halftone Pattern, Photocopy, Plaster, Reticulation and Stamp under Sketch) and the Effect Gallery;
 - CJK composition for vertical type (vertical type itself has initial support, with a Japanese interface);
 - scripting, and the rest of Variables (image and graph kinds, dataset import);
 - generative AI features.

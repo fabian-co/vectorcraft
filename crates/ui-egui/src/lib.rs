@@ -311,6 +311,9 @@ pub struct CanvasCache {
     /// drag's lower resolution ([`vectorcraft_render::FrameStats::moved`]): the next frame outside
     /// an interaction runs them again, on the worker when there is one.
     pub moved: bool,
+    /// The frame shown was rendered on the worker: an interaction's frames stay there
+    /// ([`canvas::show`]).
+    pub from_worker: bool,
     pub worker: Option<render_worker::Worker>,
     pub worker_started: bool,
     /// The slices as laid out for (document uid, revision): the canvas draws them every frame.
@@ -395,6 +398,8 @@ pub struct VectorcraftApp {
     pub titlebar_inset: f32,
     /// Last applied effect (Effect → Apply Last Effect).
     pub last_effect: Option<(String, serde_json::Value)>,
+    /// Last confirmed Warp Options (bend, distortion, orientation) for the next new warp dialog.
+    pub last_warp: Option<serde_json::Value>,
     /// Commands run through [`Self::run`] so far: the native menu bar reads its rows again when it
     /// moves ([`native_menu::sync`]).
     run_count: u64,
@@ -525,6 +530,7 @@ impl VectorcraftApp {
                 key: None,
                 last_ms: 0.0,
                 moved: false,
+                from_worker: false,
                 worker: None,
                 worker_started: false,
                 slices: None,
@@ -538,6 +544,7 @@ impl VectorcraftApp {
             perf: Perf::default(),
             titlebar_inset: 0.0,
             last_effect: None,
+            last_warp: None,
             run_count: 0,
             clipboard_out: None,
             clipboard_published: None,
@@ -677,6 +684,7 @@ impl VectorcraftApp {
             // nor the Live Corners widgets, and the tools do not answer the pointer on them.
             show_bbox: self.ui.view.bounding_box && self.ui.view.edges,
             snap_to_point: self.ui.view.snap_to_point,
+            snap_to_glyph: self.ui.view.snap_to_glyph,
             corner_widgets: self.ui.view.corner_widgets && self.ui.view.edges,
             screen: self.screen_frame(),
             artboard: self.view().map_or(0, |v| v.artboard),
@@ -708,6 +716,7 @@ impl VectorcraftApp {
 
     /// [`Self::run`] it, inside what asks for file dialogs.
     fn run_now(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         self.run_count = self.run_count.wrapping_add(1);
         // In debug builds the app's own calls are held to the params descriptions too (#1442): a
         // panel passing a key its command doesn't read shows up in the tests.
@@ -1420,6 +1429,7 @@ impl VectorcraftApp {
     }
 
     fn ui_frame(&mut self, ui: &mut egui::Ui) {
+        crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
@@ -1456,6 +1466,13 @@ impl VectorcraftApp {
                 chrome::doc_tabs(self, ui);
             }
             canvas::show(self, ui);
+            // Over the canvas inside the rulers, so the rulers and scroll bars stay uncovered.
+            if self.ui.screen_mode < 3
+                && !menus::home_showing(self)
+                && let Some(area) = self.canvas_rect
+            {
+                chrome::isolation_bar(self, ui, area);
+            }
         });
         dock::floating_panel(self, &ctx);
         floating::show(self, &ctx);
@@ -1469,6 +1486,9 @@ impl VectorcraftApp {
         scrub::end_frame(self, &ctx);
         native_menu::sync(self, &ctx);
         self.drop_formats_after_egui_copy(&ctx);
+        if opening::long_operation_busy(self) {
+            ctx.set_cursor_icon(egui::CursorIcon::Progress);
+        }
         self.perf.frame_ms = now_ms() - t0;
         let _ = json!(null);
     }

@@ -53,7 +53,7 @@ use vectorcraft_color::{BlendMode, Paint};
 use vectorcraft_doc::cmyk::Inks;
 use vectorcraft_doc::{
     Appearance, AppearanceItem, Artboard, ColorMode, Dash, Document, FillLayer, ImageBlob, ImageObject, Knockout, LayerColor, LineCap, LineJoin,
-    LinkInfo, Node, NodeId, NodeKind, OpacityMask, PatternDef, StrokeLayer,
+    LinkInfo, Node, NodeId, NodeKind, OpacityMask, PatternDef, StrokeLayer, Unit,
 };
 use vectorcraft_geom::{FillRule, PathData};
 
@@ -80,6 +80,19 @@ const MAX_PIXELS: u64 = 1 << 25;
 const MAX_HEX: usize = (MAX_PIXELS as usize) * 10;
 /// Largest side of the document and its artboards (points).
 const MAX_SIDE: f64 = 1e6;
+
+/// `%AI5_RulerUnits` → [`Unit`] (Illustrator 7 spec table 3; centimeters is 4; pixels is 6 in later files).
+fn ruler_unit(v: u8) -> Option<Unit> {
+    Some(match v {
+        0 => Unit::Inches,
+        1 => Unit::Millimeters,
+        2 => Unit::Points,
+        3 => Unit::Picas,
+        4 => Unit::Centimeters,
+        6 => Unit::Pixels,
+        _ => return None,
+    })
+}
 /// Art space (y up) → a pattern's space in the document's terms (y down).
 const FLIP: Affine = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, 0.0]);
 /// Most patterns read (others can't fill art).
@@ -507,6 +520,8 @@ struct Reader<'a> {
     /// (see [`Reader::ensure_space`]); 1 (no scaling) when the file doesn't declare one, `None`
     /// when the declared factor is not applied ([`read`]).
     large_canvas: Option<f64>,
+    /// `%AI5_RulerUnits` from the header (Illustrator 7 spec table 3, plus centimeters and pixels).
+    ruler_units: Option<u8>,
     /// This reader reads a pattern's definition (see [`Reader::define_pattern`]).
     pattern: Option<PatternHead>,
     /// The tile (y down) of each pattern read, by name.
@@ -643,6 +658,7 @@ impl<'a> Reader<'a> {
             art_size: None,
             template_center: None,
             large_canvas: None,
+            ruler_units: None,
             pattern: None,
             pattern_tiles: HashMap::new(),
             text: None,
@@ -773,6 +789,11 @@ impl<'a> Reader<'a> {
                     self.cropmarks = Some(r);
                 }
             }
+        } else if self.frames.is_empty()
+            && let Some(v) = line.strip_prefix("AI5_RulerUnits:")
+            && let Ok(n) = v.trim().parse::<u8>()
+        {
+            self.ruler_units = Some(n);
         } else if let Some(v) = line.strip_prefix("AI5_ArtSize:") {
             self.art_size = two(v);
         } else if let Some(v) = line.strip_prefix("AI3_TemplateBox:") {
@@ -1324,6 +1345,10 @@ impl<'a> Reader<'a> {
             // Far-Eastern type) and final-form positions (§15.3).
             "Tk" | "TK" | "TC" | "TW" | "Tq" | "Tc" | "Tw" | "Tm" | "Td" | "T*" | "TR" | "T+" | "T-" | "TV" | "Tv" | "Ty" | "TY" | "TG" | "Tg"
             | "Tu" | "Xu" => {}
+            // Hyphenation and tab-ruler attributes the reader doesn't keep either (§22): `Th`
+            // hyphen control, `XL` hyphenation language, `Xb`/`XB` a tab definition (and the `Xe`
+            // tab descriptions between them).
+            "Th" | "XL" | "Xb" | "XB" | "Xe" => {}
             "TE" => self.te(&vals),
             // An image whose samples follow in comment lines (read at `%AI5_EndRaster`).
             "XI" if self.raster.is_some() => {
@@ -2012,9 +2037,15 @@ impl<'a> Reader<'a> {
     /// An image of operands `vals` and samples `data`.
     fn image_from(&mut self, vals: Vec<V>, data: &[u8]) -> Result<(), String> {
         let space = self.raster.as_ref().and_then(|r| r.space.clone()).unwrap_or_default();
-        let Some(m) = vals.iter().find_map(|v| if let V::Arr(a) = v { Some(Self::nums(a)) } else { None }) else { return Ok(()) };
+        let Some(m) = vals.iter().find_map(|v| if let V::Arr(a) = v { Some(Self::nums(a)) } else { None }) else {
+            self.warn("an image VectorCraft can't read was left out");
+            return Ok(());
+        };
         let n = Self::nums(&vals);
-        let [_, _, _, _, w, h, bits, kind, alpha, _, binary, ..] = n.as_slice() else { return Ok(()) };
+        let [_, _, _, _, w, h, bits, kind, alpha, _, binary, ..] = n.as_slice() else {
+            self.warn("an image VectorCraft can't read was left out");
+            return Ok(());
+        };
         let (w, h) = (*w as u64, *h as u64);
         if w == 0 || h == 0 || w.saturating_mul(h) > MAX_PIXELS || ![1.0, 8.0].contains(bits) {
             self.warn("an image VectorCraft can't read was left out");
@@ -2080,7 +2111,10 @@ impl<'a> Reader<'a> {
                 rgba.extend_from_slice(&[px[0], px[1], px[2], a]);
             }
         }
-        let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, rgba) else { return Ok(()) };
+        let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, rgba) else {
+            self.warn("an image VectorCraft can't read was left out");
+            return Ok(());
+        };
         let mut png = vec![];
         if img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_err() {
             self.warn("an image VectorCraft can't read was left out");
@@ -2096,10 +2130,14 @@ impl<'a> Reader<'a> {
         // The matrix is an art-space matrix (y up) applied to the pixels with their rows running
         // downwards, (u, -v): pixels → (u, -v) → art space. Flipping the matrix's result instead
         // gives the same place only when the image isn't rotated (b = c = 0).
-        let [a, b, c, d, tx, ty] = m else { return Ok(()) };
+        let [a, b, c, d, tx, ty] = m else {
+            self.warn("an image VectorCraft can't read was left out");
+            return Ok(());
+        };
         let to_doc = self.space();
         let xf = to_doc * Affine::new([*a, *b, *c, *d, *tx, *ty]) * FLIP;
         if !xf.as_coeffs().iter().all(|v| v.is_finite()) || xf.determinant().abs() < 1e-12 {
+            self.warn("an image VectorCraft can't read was left out");
             return Ok(());
         }
         let mask = alpha.and_then(|a| self.alpha_mask(a, w, h, xf));
@@ -2263,6 +2301,9 @@ impl<'a> Reader<'a> {
             doc.color_mode = ColorMode::Cmyk;
             let (swatches, groups) = vectorcraft_color::default_swatches(ColorMode::Cmyk.model());
             (doc.swatches, doc.swatch_groups) = (swatches.into(), groups.into());
+        }
+        if let Some(u) = self.ruler_units.and_then(ruler_unit) {
+            doc.units = u;
         }
         for n in &self.spots {
             if doc.swatch(&n.name).is_none() {

@@ -410,8 +410,9 @@ type ClipEntry = (Arc<Node>, Option<Arc<(BezPath, FillRule)>>);
 /// A clipping path (kept alive) and what it paints: its fills and its strokes ([`Node::clip_paint`]).
 type ClipPaintEntry = (Arc<Node>, Option<Arc<Node>>, Option<Arc<Node>>);
 /// An object with effects (kept alive), the art drawn for it ([`Renderer::fx_art`]), and, when that
-/// art can be made from evaluated live objects (`fx::evaluates_live`), the inputs of their
-/// evaluation ([`live::Found`]).
+/// art can be made from evaluated live objects (`fx::evaluates_live`) or from type, symbol art or
+/// colors shaded through the color settings (`fx::reads_outside`), the inputs it was made with
+/// ([`live::Found`]).
 type FxArtEntry = (Arc<Node>, Arc<Node>, Option<live::Found>);
 /// What symbol art placed by [`Renderer::placed_art`] is kept under: the art's address, the bits
 /// of the transform's coefficients, whether strokes scale with it, and the stain ([`stain_bits`]).
@@ -1222,7 +1223,9 @@ impl Renderer {
     /// In isolation mode, while drawing outside the isolated container and the art dimmed around
     /// it: the isolated container and its layers and groups, from the top layer down to it.
     fn isolation_path(&mut self, f: &Frame) -> Option<(NodeId, Vec<NodeId>)> {
-        let isolated = f.opts.isolated.filter(|_| !self.isolation_settled)?;
+        // Opacity-mask editing isolates the temporary layer for tools; that layer is not painted on
+        // the page (the mask applies on the object), so canvas dimming would wash out everything.
+        let isolated = f.opts.isolated.filter(|_| f.doc.mask_edit.is_none() && !self.isolation_settled)?;
         let doc = std::ptr::from_ref(f.doc) as usize;
         if self.isolation.as_ref().is_none_or(|(stamp, d, id, _)| (*stamp, *d, *id) != (self.stamp, doc, isolated)) {
             self.isolation = Some((self.stamp, doc, isolated, f.doc.ancestry(isolated).unwrap_or_default()));
@@ -2525,3 +2528,5 @@ mod tests_setup;
 mod tests_strokegradient;
 #[cfg(test)]
 mod tests_tileedge;
+#[cfg(test)]
+mod tests_viewraster;

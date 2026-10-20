@@ -46,6 +46,7 @@ mod save;
 mod screens;
 mod svg;
 mod text;
+mod tgaread;
 pub mod zip;
 
 use serde_json::{Value, json};
@@ -206,7 +207,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "PDF Info",
             [],
             None,
-            "{path | name? | dataBase64 (a file's path, or its bytes), password?, thumbnail?: page (1-based), thumbnailSize?: 160 (px, longest side), cropTo?: crop (the thumbnail's box)} → {pages, needsPassword, wrongPassword?, pageInfo: [{width, height (pt, as shown), rotation, boxes: {media, crop, bleed, trim, art: [x0, y0, x1, y1] (PDF space, pt)}}], thumbnail?: PNG dataBase64}; a page whose UserUnit (PDF 1.6) is above 1 gives its size and boxes in pt, its numbers times the UserUnit (one above 75,000 counts as 75,000); an encrypted PDF without its password → {pages: 0, needsPassword: true}",
+            "{path | name? | dataBase64 (a file's path, or its bytes), password?, thumbnail?: page (1-based), thumbnailSize?: 160 (px, longest side), cropTo?: crop (the thumbnail's box)} → {pages, needsPassword, wrongPassword?, pageInfo: [{width, height (pt, as shown), rotation, boxes: {media, crop, bleed, trim, art: [x0, y0, x1, y1] (PDF space, pt)}}], thumbnail?: PNG dataBase64}; a page whose UserUnit (PDF 1.6) is above 1 gives its size and boxes in pt, its numbers times the UserUnit (one above 75,000 counts as 75,000); an encrypted PDF without its password → {pages: 0, needsPassword: true}; a PostScript file (an EPS, a .ps file, a .ai in PostScript form) → {pages: 1, needsPassword: false, pageInfo: [{width, height (its bounding box, a US Letter page without one), rotation: 0, boxes: {}}]} (password and cropTo don't apply; thumbnail: 1 shows what the page prints)",
             always,
             pdfimport::pdf_info
         ),
@@ -646,11 +647,20 @@ pub const FORMATS: &[Format] = &[
     },
     Format { id: "emf", label: "EMF", extensions: &["emf"], mime: "image/emf", read: true, write: true, raster: false, options: metafile::OPTIONS },
     Format { id: "wmf", label: "WMF", extensions: &["wmf"], mime: "image/wmf", read: true, write: true, raster: false, options: metafile::OPTIONS },
-    Format { id: "tga", label: "Targa", extensions: &["tga"], mime: "image/x-tga", read: false, write: true, raster: true, options: TGA_OPTIONS },
+    Format {
+        id: "tga",
+        label: "Targa",
+        extensions: &["tga", "vda", "icb", "vst"],
+        mime: "image/x-tga",
+        read: true,
+        write: true,
+        raster: true,
+        options: TGA_OPTIONS,
+    },
     Format { id: "psd", label: "PSD", extensions: &["psd"], mime: "image/x-psd", read: true, write: true, raster: true, options: PSD_OPTIONS },
     // Affinity Photo's `.afphoto` opens by its content but isn't listed: Finder shouldn't offer a
     // vector app for a raster editor's documents.
-    reader("affinity", "Affinity", &["af", "afdesign", "afpub"], "application/vnd.affinity", false),
+    reader("affinity", "Affinity", &["af", "afdesign", "afpub"], "application/x-affinity", false),
     // Photoshop's large document format: read like a PSD (its merged image), never written.
     reader("psb", "PSB", &["psb"], "image/x-psb", true),
     // PostScript programs, read as EPS files are; Print to PostScript writes them, exports don't.
@@ -674,6 +684,10 @@ pub const OPEN_EXTS: &[&str] = &[
     "tif",
     "tiff",
     "bmp",
+    "tga",
+    "vda",
+    "icb",
+    "vst",
     "psd",
     "psb",
     "vctemplate",
@@ -688,11 +702,12 @@ pub const OPEN_EXTS: &[&str] = &[
     "afpub",
 ];
 
-/// Extensions in [`OPEN_EXTS`] the desktop packaging doesn't associate with VectorCraft: Photoshop
-/// documents belong to raster editors, so Finder and file managers don't offer a vector app for
-/// them, and the packaging declares no `.epsf` or `.ps` type (File › Open and Place still read
-/// them all).
-pub const UNASSOCIATED_EXTS: &[&str] = &["psd", "psb", "epsf", "ps"];
+/// Extensions in [`OPEN_EXTS`] the packaging declares no type for: Photoshop documents belong to
+/// raster editors, so Finder and file managers don't offer a vector app for them, and there is no
+/// `.epsf`, `.ps` or Targa type (File › Open and Place still read them all). On Linux the desktop
+/// entry's EPS type (shared-mime-info's) also covers `.epsf`, so file managers offer VectorCraft
+/// for it.
+pub const UNASSOCIATED_EXTS: &[&str] = &["psd", "psb", "epsf", "ps", "tga", "vda", "icb", "vst"];
 
 /// The extension that picks each writable format when exporting (the format's first; PNG-8 shares
 /// `.png` with PNG, so `.png` comes once), in [`FORMATS`] order.
@@ -733,6 +748,10 @@ pub const PLACE_EXTS: &[&str] = &[
     "tif",
     "tiff",
     "bmp",
+    "tga",
+    "vda",
+    "icb",
+    "vst",
     "psd",
     "psb",
     "vctemplate",
@@ -1085,14 +1104,74 @@ pub(crate) fn absolute_path(path: &str) -> String {
 /// stored in, when it has one: a relative path is taken from its folder. Only files on this
 /// computer, or on the network share the document is on, are followed (see `craft_docpath`); a
 /// path that is still relative (no document) is refused, as the working directory isn't the
-/// document's choice. Every stored path reaches the file system through this.
+/// document's choice. On Windows, a document on a mapped drive is on the share behind the drive
+/// ([`share_path`]): a path refused as on another computer is checked again against the
+/// document's path on that share. Every stored path reaches the file system through this.
 pub(crate) fn document_path(stored: &str, document: Option<&str>) -> std::result::Result<String, craft_docpath::Refused> {
+    document_path_with(stored, document, share_path)
+}
+
+/// [`document_path`], with `share` giving a document's path on the network share behind its drive.
+pub(crate) fn document_path_with(
+    stored: &str,
+    document: Option<&str>,
+    share: impl FnOnce(&str) -> Option<String>,
+) -> std::result::Result<String, craft_docpath::Refused> {
+    use craft_docpath::Refused;
     let document = document.map(absolute_path);
-    let path = craft_docpath::resolve(stored, document.as_deref().map(std::path::Path::new))?;
+    let resolve = |document: Option<&str>| craft_docpath::resolve(stored, document.map(std::path::Path::new));
+    let path = match resolve(document.as_deref()) {
+        Err(Refused::Network) => {
+            let share = document.as_deref().and_then(share).ok_or(Refused::Network)?;
+            resolve(Some(share.as_str()))?
+        }
+        path => path?,
+    };
     if !path.is_absolute() {
-        return Err(craft_docpath::Refused::Invalid);
+        return Err(Refused::Invalid);
     }
-    path.into_os_string().into_string().map_err(|_| craft_docpath::Refused::Invalid)
+    path.into_os_string().into_string().map_err(|_| Refused::Invalid)
+}
+
+/// The path of `document` (on a drive, `Z:\jobs\doc.vectorcraft`) on the network share the drive is
+/// mapped to (`\\server\share\jobs\doc.vectorcraft`), when its folder is on one and automation may
+/// read the folder. The folder's final path ([`std::fs::canonicalize`]) names the share as
+/// `\\?\UNC\server\share\…`.
+#[cfg(windows)]
+pub(crate) fn share_path(document: &str) -> Option<String> {
+    share_of(document, |folder| {
+        may_read(folder).ok()?;
+        std::fs::canonicalize(folder).ok()
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn share_path(_: &str) -> Option<String> {
+    None
+}
+
+/// The path of `document` on the network share its drive is mapped to, given `final_path`, which
+/// returns the final path of a folder: `None` when `document` is not on a drive (`C:\` or `C:/`)
+/// or `final_path` gives no share (`\\?\UNC\server\share\…`), such as a folder on a local volume.
+#[cfg(any(windows, test))]
+pub(crate) fn share_of(document: &str, final_path: impl FnOnce(&str) -> Option<std::path::PathBuf>) -> Option<String> {
+    let mut chars = document.chars();
+    if !matches!((chars.next(), chars.next(), chars.next()), (Some(l), Some(':'), Some('\\' | '/')) if l.is_ascii_alphabetic()) {
+        return None;
+    }
+    // The drive's root folder keeps its separator (`Z:\`).
+    let split = document.rfind(['\\', '/'])?;
+    let (folder, name) = (document.get(..split.max(3))?, document.get(split + 1..)?);
+    if name.is_empty() {
+        return None;
+    }
+    let target = final_path(folder)?;
+    let target = target.to_str()?;
+    let unc = target.get(..8).filter(|p| p.eq_ignore_ascii_case(r"\\?\UNC\")).and(target.get(8..))?.trim_end_matches('\\');
+    if unc.split('\\').filter(|c| !c.is_empty()).count() < 2 {
+        return None;
+    }
+    Some(format!(r"\\{unc}\{name}"))
 }
 
 #[cfg(target_arch = "wasm32")]

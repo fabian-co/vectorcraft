@@ -79,14 +79,16 @@ USAGE:
   vectorcraft-cli run [--in FILE] [--cmd ID [--params JSON]]... [--export FILE]... [--scale N]
       Headless batch: open FILE (any readable format) or start a new document, run commands in
       order, export each FILE in the format its extension picks (see Writable formats; a .ait FILE
-      is a template, written as file.saveAsTemplate writes it). Prints one JSON result per step.
+      is a template, written as file.saveAsTemplate writes it). --scale sizes raster exports
+      (pixels per point, default 1); other formats leave it out. Prints one JSON result per step.
 
   vectorcraft-cli commands
       Print the command catalogue as JSON.
 
   vectorcraft-cli convert IN OUT [--scale N] [--artboard I | --range R] [--outline-text] [--decimals N] [--replace-lossy] [--editing-data] [--ai-version 7|pdf] [--hidden-objects layer|omit|visible] [--transparent-images flatten|omit]
       Open IN (any readable format) and export OUT in the format its extension picks (see Writable
-      formats). --artboard is 0-based, --range 1-based (\"1-3,5\"); a PDF gets every artboard
+      formats). --scale sizes a raster OUT (pixels per point, default 1); other formats leave it
+      out. --artboard is 0-based, --range 1-based (\"1-3,5\"); a PDF gets every artboard
       unless one of them is given, EPS the bounds of the art, the other formats the first artboard.
       A .ait OUT is a template of every artboard, written as file.saveAsTemplate writes it (not with
       --artboard or --range).
@@ -278,7 +280,8 @@ fn convert(args: &[String]) -> Result<(), String> {
     } else {
         // A conversion keeps hidden layers and objects, written hidden, where the format can (SVG,
         // PSD).
-        let mut params = json!({"path": output, "scale": scale, "artboard": artboard, "range": range, "outlineText": outline_text, "hiddenLayers": true, "acknowledgeLoss": replace_lossy});
+        let params = json!({"path": output, "artboard": artboard, "range": range, "outlineText": outline_text, "hiddenLayers": true, "acknowledgeLoss": replace_lossy});
+        let mut params = with_pixel_scale(params, &output, scale);
         if let Some(decimals) = decimals {
             params["decimals"] = json!(decimals);
         }
@@ -300,6 +303,16 @@ fn convert(args: &[String]) -> Result<(), String> {
 /// Is `path` a `.ait` template? `file.saveAsTemplate` writes it; exports don't.
 fn is_template(path: &str) -> bool {
     vectorcraft_engine::cmd::fileio::format_for_name(path).is_some_and(|f| f.id == "ait")
+}
+
+/// The export `params` for `path`, with `--scale` (pixels per point) when its format is raster.
+/// DXF has a `scale` of its own (drawing units per unit), which would resize the drawing and leave
+/// its units unset.
+fn with_pixel_scale(mut params: Value, path: &str, scale: f64) -> Value {
+    if vectorcraft_engine::cmd::fileio::writable_format(None, Some(path)).is_ok_and(|f| f.raster) {
+        params["scale"] = json!(scale);
+    }
+    params
 }
 
 fn info(args: &[String]) -> Result<(), String> {
@@ -391,7 +404,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 let r = if is_template(&path) {
                     h.call("engine.execute", json!({"command": "file.saveAsTemplate", "params": {"path": path, "format": "ait"}}))
                 } else {
-                    h.call("app.export", json!({"path": path, "scale": scale}))
+                    h.call("app.export", with_pixel_scale(json!({"path": path}), &path, scale))
                 };
                 let r = r.map_err(|e| format!("export {path}: {e}"))?;
                 emit(json!({"step": "export", "result": r}))?;

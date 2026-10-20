@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Delete Anchor Point",
             [],
             None,
-            "{id, subpath, anchor} remove one anchor, re-fitting the curve",
+            "{id, subpath?, anchor} remove one anchor, re-fitting the curve",
             has_doc,
             remove_anchor
         ),
@@ -71,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Convert Anchor Point",
             [],
             None,
-            "{id, subpath, anchor, to: \"corner\"|\"smooth\", x?, y?} (smooth with x/y: out handle there, in handle mirrored; without: as the Curvature tool curves a point, along the circle through it and its neighbours, or at an open end one handle into the curve)",
+            "{id, subpath?, anchor, to: \"corner\"|\"smooth\", x?, y?} (smooth with x/y: out handle there, in handle mirrored; without: as the Curvature tool curves a point, along the circle through it and its neighbours, or at an open end one handle into the curve)",
             has_doc,
             convert_anchor
         ),
@@ -80,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reshape Segment",
             [],
             None,
-            "{id, subpath, segment, t, dx, dy, perpendicular?: bool} bend a segment so the point at t moves by (dx, dy); with perpendicular (Shift), both handles stand at right angles to the line between its anchors at one length, and the point at t lies as far from that line as the moved point does",
+            "{id, subpath?, segment, t, dx, dy, perpendicular?: bool} bend a segment so the point at t moves by (dx, dy); with perpendicular (Shift), both handles stand at right angles to the line between its anchors at one length, and the point at t lies as far from that line as the moved point does",
             has_doc,
             reshape_segment
         ),
@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Split Path",
             [],
             None,
-            "{id, subpath, segment, t} or {id, subpath, anchor}: closed paths open there, open paths become two → {ids}",
+            "{id, subpath?, segment, t} or {id, subpath?, anchor}: closed paths open there, open paths become two → {ids}",
             has_doc,
             split
         ),
@@ -213,6 +213,15 @@ fn within_input_bound(q: Point) -> bool {
 
 fn usize_req(p: &Value, key: &str, cmd: &str) -> Result<usize> {
     p.get(key).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(cmd, format!("missing integer `{key}`")))
+}
+
+/// The whole number of 0 or more that `key` holds, or `None` when `key` is absent or null. Any other
+/// value is [`usize_req`]'s error.
+pub(super) fn usize_opt(p: &Value, key: &str, cmd: &str) -> Result<Option<usize>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => usize_req(p, key, cmd).map(Some),
+    }
 }
 
 fn path_mut(d: &mut Document, id: NodeId) -> Result<&mut PathData> {
@@ -795,7 +804,7 @@ fn curvature_edit(s: &mut Session, p: &Value) -> Result<Value> {
     use vectorcraft_tools::draw2::{EndCurve, curvature_close, curvature_extend, curvature_insert, curvature_move};
     const C: &str = "path.curvatureEdit";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let si = p.get("subpath").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let si = usize_opt(p, "subpath", C)?.unwrap_or(0);
     let at = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
         (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some(Point::new(x, y)),
         (None, None) => None,
@@ -859,7 +868,7 @@ fn curvature_edit(s: &mut Session, p: &Value) -> Result<Value> {
 fn remove_anchor(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "path.removeAnchor";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let si = p.get("subpath").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let si = usize_opt(p, "subpath", C)?.unwrap_or(0);
     let ai = usize_req(p, "anchor", C)?;
     let removed = s.edit("Delete Anchor Point", |d, sel| {
         let sp = path_mut(d, id)?.subpaths.get(si).ok_or_else(|| EngineError::Other("no such subpath".into()))?;
@@ -966,7 +975,7 @@ fn remove_anchors_of(
 fn convert_anchor(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "path.convertAnchor";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let si = p.get("subpath").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let si = usize_opt(p, "subpath", C)?.unwrap_or(0);
     let ai = usize_req(p, "anchor", C)?;
     let smooth = str_param(p, "to") == Some("smooth");
     let target = match (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
@@ -1001,7 +1010,7 @@ fn convert_anchor(s: &mut Session, p: &Value) -> Result<Value> {
 fn reshape_segment(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "path.reshapeSegment";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let si = p.get("subpath").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let si = usize_opt(p, "subpath", C)?.unwrap_or(0);
     let seg = usize_req(p, "segment", C)?;
     let t = f64_or(p, "t", 0.5).clamp(0.05, 0.95);
     let dv = Vec2::new(f64_or(p, "dx", 0.0), f64_or(p, "dy", 0.0));
@@ -1026,9 +1035,9 @@ fn reshape_segment(s: &mut Session, p: &Value) -> Result<Value> {
 fn split(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "path.split";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let si = p.get("subpath").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let anchor = p.get("anchor").and_then(Value::as_u64).map(|v| v as usize);
-    let seg = p.get("segment").and_then(Value::as_u64).map(|v| v as usize);
+    let si = usize_opt(p, "subpath", C)?.unwrap_or(0);
+    let anchor = usize_opt(p, "anchor", C)?;
+    let seg = usize_opt(p, "segment", C)?;
     if anchor.is_none() && seg.is_none() {
         return Err(bad(C, "need `anchor` or `segment` + `t`"));
     }

@@ -2452,6 +2452,29 @@ fn object_mosaic_refuses_columns_and_rows_that_are_not_whole_numbers() {
     assert_eq!(r["tiles"], json!(2));
 }
 
+/// A new width or height, or a spacing, given as text or as another value that is not a number is an error naming the
+/// key, and no mosaic is made.
+#[test]
+fn object_mosaic_refuses_a_size_or_spacing_given_as_text() {
+    let mut s = session();
+    rect(&mut s, 0.0, 0.0, 100.0, 50.0);
+    s.execute("object.rasterize", &json!({"ppi": 72})).unwrap();
+    let undo = |s: &Session| s.doc().unwrap().history.undo.len();
+    let before = undo(&s);
+    for (p, msg) in [
+        (json!({"width": "200"}), "`width` must be a number, not \"200\""),
+        (json!({"columns": 2, "height": "50 pt"}), "`height` must be a number, not \"50 pt\""),
+        (json!({"spacingX": "4"}), "`spacingX` must be a number, not \"4\""),
+        (json!({"spacingY": [4]}), "`spacingY` must be a number, not [4]"),
+    ] {
+        let r = s.execute("object.createObjectMosaic", &p);
+        assert!(matches!(&r, Err(EngineError::BadParams { msg: m, .. }) if m == msg), "{p}: {r:?}");
+        assert_eq!(undo(&s), before, "{p}");
+    }
+    let r = s.execute("object.createObjectMosaic", &json!({"columns": 2, "rows": 1, "width": 200, "spacingX": null})).unwrap();
+    assert_eq!(r["tiles"], json!(2));
+}
+
 #[test]
 fn snap_to_pixel_rounds_drawing_and_moves() {
     let mut s = session();

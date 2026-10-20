@@ -26,6 +26,9 @@ pub struct Loaded {
     /// Only a stand-in picture of the file (an Affinity document whose native data couldn't be
     /// read): Open shows it with its warning; Place, templates and libraries refuse it.
     pub preview_only: bool,
+    /// A PDF, or a `.ai` or `.ait` that holds a PDF, read through the editor's own copy of its art
+    /// that it carries (its layers), not from its PDF part alone.
+    pub editing_data: bool,
 }
 
 impl Loaded {
@@ -156,17 +159,17 @@ pub fn load(name: &str, bytes: &[u8]) -> Result<Loaded> {
 /// of its art, which it carries: its layers and hidden objects as they were, and the art outside
 /// its artboard (its PDF part has only what is on the artboards), as an EPS of the editor is read.
 /// Anything else as it was. `unit`: the size in points of a unit of the PDF part's user space (its
-/// first page's `UserUnit`).
-fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, warnings: Vec<String>, unit: f64) -> (Document, Vec<String>) {
+/// first page's `UserUnit`) → (document, warnings, whether its layers were read).
+fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, warnings: Vec<String>, unit: f64) -> (Document, Vec<String>, bool) {
     if opts.pages.is_some() || !opts.layers || !opts.editing_data {
-        return (doc, warnings);
+        return (doc, warnings, false);
     }
-    let Some(private) = vectorcraft_pdf::illustrator_data(bytes, opts.password.as_deref()) else { return (doc, warnings) };
+    let Some(private) = vectorcraft_pdf::illustrator_data(bytes, opts.password.as_deref()) else { return (doc, warnings, false) };
     let outlined = opts.text_as == vectorcraft_pdf::TextAs::Outlines;
     let (doc, mut warnings, read) = vectorcraft_eps::layered_ai(&private, doc, warnings, outlined, opts.trust_editing_data, unit);
     // The layers weren't read (or couldn't be): the notes of reading the PDF part still hold.
     if !read {
-        return (doc, warnings);
+        return (doc, warnings, false);
     }
     // The layers' text objects hold type and the stroked paths around it, which can include stroked
     // glyphs the PDF part kept as outlines: without any such glyph in the document, the warnings on
@@ -177,7 +180,7 @@ fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, warning
     // The layers hold the art that the PDF part leaves out or, in a PDF, that the import clipped
     // to the page.
     warnings.retain(|w| w != vectorcraft_pdf::OFF_ARTBOARD_NOTE && w != vectorcraft_pdf::PAST_PAGE_NOTE);
-    (doc, warnings)
+    (doc, warnings, true)
 }
 
 /// A `.ai` saved without PDF compatibility (its PDF part is a placeholder page) from the editor's
@@ -194,6 +197,12 @@ fn from_editing_data_alone(bytes: &[u8], opts: &LoadOptions) -> Option<Result<(D
     )
 }
 
+/// Do `opts` read every page of the PDF `bytes`: no `pages`, or a range that names each one?
+fn every_page(bytes: &[u8], opts: &LoadOptions) -> bool {
+    let Some(range) = &opts.pages else { return true };
+    vectorcraft_pdf::info(bytes, opts.password.as_deref()).is_ok_and(|i| parse_range(range, i.pages.len()).is_ok_and(|p| p.len() == i.pages.len()))
+}
+
 /// [`load`] with `document.open` options (the PDF pages, box and password; the DXF options).
 pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded> {
     let format = detect(name, bytes).ok_or_else(|| match super::unsupported(&super::extension(name)) {
@@ -203,6 +212,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
     let title = file_name(name);
     let mut converted = false;
     let mut preview_only = false;
+    let mut editing_data = false;
     let (mut doc, mut warnings, restored) = match format.id {
         // EPS, .ps and PostScript .ai: the document our EPS files carry, else the PostScript read.
         _ if matches!(format.id, "eps" | "ps") || vectorcraft_pdf::is_postscript(bytes) => {
@@ -237,11 +247,20 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
                     // Pages of text alone: the editing copy alone where it reads, as for a file
                     // saved without its PDF part (#1387: else the page, which is the art).
                     let alone = r.only_text.then(|| from_editing_data_alone(bytes, opts)).flatten().and_then(|read| read.ok());
-                    Ok(alone.unwrap_or_else(|| through_editing_data(bytes, opts, r.document, r.warnings, r.user_unit)))
+                    let (doc, warnings, read) = match alone {
+                        Some((doc, warnings)) => (doc, warnings, true),
+                        None => through_editing_data(bytes, opts, r.document, r.warnings, r.user_unit),
+                    };
+                    editing_data = read;
+                    Ok((doc, warnings))
                 }
-                // Saved without its PDF part: the editing copy is all the file has.
+                // Saved without its PDF part: the editing copy is all the file has (`pages` that
+                // name every page read it as the whole file).
                 Err(e) if e.to_string() == vectorcraft_pdf::PdfError::PlaceholderOnly.to_string() => {
-                    from_editing_data_alone(bytes, opts).unwrap_or(Err(e))
+                    let whole = LoadOptions { pages: None, ..opts.clone() };
+                    from_editing_data_alone(bytes, if every_page(bytes, opts) { &whole } else { opts })
+                        .unwrap_or(Err(e))
+                        .inspect(|_| editing_data = true)
                 }
                 Err(e) => Err(e),
             })?
@@ -287,7 +306,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
         doc.title = title;
     }
     warnings.extend(doc.images.values().filter_map(|b| too_large_note(&b.bytes)));
-    Ok(Loaded { doc, format, warnings, restored, converted, preview_only })
+    Ok(Loaded { doc, format, warnings, restored, converted, preview_only, editing_data })
 }
 
 /// Import SVG text, reading the files its images link to (relative links from `folder`, the SVG's
@@ -481,6 +500,10 @@ pub(crate) fn too_large_note(bytes: &[u8]) -> Option<String> {
 /// too ([`vectorcraft_doc::cmyk::group3_tiff_rgba`]).
 /// Grayscale TIFFs with an alpha channel or other extra channels, which the decoder can't read
 /// either, become RGBA too, whether they store their channels together or one plane per channel.
+/// A Targa file, which starts with no signature, is recognized by its header
+/// ([`super::tgaread::is_targa`]) and becomes RGBA with the transparency it stores
+/// ([`super::tgaread::fix_alpha`]). An image stored as PNG whose decoded samples, or whose pixels
+/// as RGBA, need more than [`MAX_RASTER_ALLOC`] is refused as too large to draw.
 /// A TIFF with more strips or tiles than the decoder can count
 /// ([`vectorcraft_doc::cmyk::oversized_tiff`]) is refused as too large to draw.
 pub fn raster_image(bytes: &[u8]) -> Result<RasterImage> {
@@ -493,6 +516,9 @@ pub fn raster_image(bytes: &[u8]) -> Result<RasterImage> {
         return as_png(psdread::decode(bytes, MAX_RASTER_ALLOC, |c| cms.cmyk_to_srgb(c, false)).map_err(err)?, ppi);
     }
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(err)?;
+    if reader.format().is_none() && super::tgaread::is_targa(bytes) {
+        reader.set_format(image::ImageFormat::Tga);
+    }
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(MAX_RASTER_ALLOC);
     reader.limits(limits);
@@ -511,13 +537,25 @@ pub fn raster_image(bytes: &[u8]) -> Result<RasterImage> {
         let cms = vectorcraft_color::cms::active();
         vectorcraft_doc::cmyk::extra_samples_tiff_rgba(bytes, |c| cms.cmyk_to_srgb(c, false))
     };
-    let img = match (f.id == "tiff").then(extra_samples).flatten() {
+    let mut img = match (f.id == "tiff").then(extra_samples).flatten() {
         Some(img) => img,
         None => match (f.id == "tiff").then(|| vectorcraft_doc::cmyk::group3_tiff_rgba(bytes)).flatten() {
             Some(read) => read.map_err(err)?,
-            None => reader.decode().map_err(err)?.to_rgba8(),
+            None => {
+                use image::ImageDecoder as _;
+                let decoder = reader.into_decoder().map_err(err)?;
+                // The allowance counts the decoded samples and the RGBA pixels they become (#1717).
+                let (w, h) = decoder.dimensions();
+                if decoder.total_bytes() > MAX_RASTER_ALLOC || u64::from(w) * u64::from(h) * 4 > MAX_RASTER_ALLOC {
+                    return Err(err(format!("an image of {w} × {h} pixels is too large to draw")));
+                }
+                image::DynamicImage::from_decoder(decoder).map_err(err)?.to_rgba8()
+            }
         },
     };
+    if f.id == "tga" {
+        super::tgaread::fix_alpha(bytes, &mut img);
+    }
     as_png(img, ppi)
 }
 

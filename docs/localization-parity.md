@@ -45,13 +45,13 @@ plus review. Native-speaker review is human work and isn't in the hours.
 
 | Language | Code | Translated | Status |
 |---|---|---|---|
-| Traditional Chinese (Taiwan) | `zh-hant` | 3,425 rows, menus and literals complete; messages in English (80% overall) | partial |
+| Traditional Chinese (Taiwan) | `zh-hant` | 4,741 rows, 742 of them `@msg` (counted 2026-10-17): menus, `tl!` literals and messages complete under the tests (80% overall) | partial |
 | Italian | `it` | 4,011 / 4,020 | full |
 | Russian | `ru` | 4,009 / 4,020 | full |
 | Ukrainian | `uk` | 4,009 / 4,020 (one/few/many plurals) | full |
 | Hungarian | `hu` | 4,524 rows: menus, `tl!` literals and messages complete (tests); one plural form | full |
 | Polish | `pl` | 4,510 rows (counted 2026-10-13): menus, `tl!` literals and messages complete (tests); one/few/many plurals | full; native review pending |
-| Finnish | `fi` | 4,770 rows: menus, `tl!` literals and messages complete (tests); one/other plurals, 668 `@msg` rows | full; AI-assisted, native proofreading pending |
+| Finnish | `fi` | 5,218 rows: menus, `tl!` literals and messages complete (tests); one/other plurals, 769 `@msg` rows | full; AI-assisted, native proofreading pending |
 | Czech | `cs` | 4,411 catalog entries, including 636 `@msg` rows (measured locally 2026-10-11); menu, literal and message coverage enforced by tests | catalog complete; render-site gaps reduced; native review pending |
 | Swedish | `sv` | 4,770 rows, 668 of them `@msg` (counted 2026-10-15): menus, `tl!` literals and messages complete (tests); one/other plurals | full; native review welcome |
 | Bulgarian | `bg` | 4,910 rows, 703 of them `@msg` (counted 2026-10-16): menus, `tl!` literals and messages complete (tests) | full; AI-drafted, native review pending |

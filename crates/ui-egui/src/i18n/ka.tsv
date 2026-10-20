@@ -1398,7 +1398,7 @@ lighting	Light	სინათლე
 	This library is empty	ეს ბიბლიოთეკა ცარიელია
 	No results	შედეგები არ არის
 	No items in this library match “{query}”.	ამ ბიბლიოთეკაში „{query}“-ს შესაბამისი ელემენტი არ არის.
-	Right-click an item to move it into this group.	ამ ჯგუფში გადასატანად დაწკაპეთ ელემენტზე მარჯვენა ღილაკით.
+	Drag an item here, or right-click one, to put it in this group.	ამ ჯგუფში ჩასასმელად ჩაავლეთ ელემენტი აქ ან დაწკაპეთ მასზე მარჯვენა ღილაკით.
 	New Group	ახალი ჯგუფი
 	New Group…	ახალი ჯგუფი…
 	Move to Group	ჯგუფში გადატანა
@@ -1509,6 +1509,7 @@ lighting	Light	სინათლე
 	Left in Front	მარცხენა წინ
 	No document	დოკუმენტი არ არის
 	Open a document to edit its patterns.	გახსენით დოკუმენტი მისი პატერნების რედაქტირებისთვის.
+	Overlap	გადაფარვა
 	Overlap:	გადაფარვა:
 	Pattern options are available in pattern editing mode.	პატერნის პარამეტრები ხელმისაწვდომია პატერნის რედაქტირების რეჟიმში.
 	Right in Front	მარჯვენა წინ
@@ -1635,6 +1636,7 @@ lighting	Light	სინათლე
 	Right-Justified Tab	მარჯვნივ სწორებული ტაბულაცია
 	Select a text object to set its tab stops.	ტაბულაციის გაჩერებების დასაყენებლად მონიშნეთ ტექსტური ობიექტი.
 	Select text	მონიშნეთ ტექსტი
+	Snap to Unit	ერთეულზე მიბმა
 	+ Add Scale	+ მასშტაბის დამატება
 	Add Selected Artwork as One Asset	მონიშნული ნახატის დამატება ერთ რესურსად
 	Export Settings	ექსპორტის პარამეტრები
@@ -1978,6 +1980,7 @@ lighting	Light	სინათლე
 	Layers Panel Options	შრეების პანელის პარამეტრები
 	Row Size:	სტრიქონის ზომა:
 	Show Layers Only	მხოლოდ შრეების ჩვენება
+	Locate Selected Objects	მონიშნული ობიექტების მოძებნა
 	Thumbnails:	ესკიზები:
 	Anchor Points	საყრდენი წერტილები
 	Brush Affects:	ფუნჯი მოქმედებს:
@@ -3618,6 +3621,8 @@ effect	Regular	ჩვეულებრივი
 @msg	`{key}` must be `auto` or a language code such as `en` or `zh-hant`	`{key}` უნდა იყოს `auto` ან ენის კოდი, მაგალითად `en` ან `zh-hant`
 @msg	`{key}` must be a #rrggbb colour	`{key}` უნდა იყოს #rrggbb ფერი
 @msg	`{key}` must be a number	`{key}` უნდა იყოს რიცხვი
+@msg	`{key}` must be a number, not {v}	`{key}` უნდა იყოს რიცხვი და არა {v}
+@msg	{key} must be Unix seconds (an integer) or null	{key} უნდა იყოს Unix-დრო წამებში (მთელი რიცხვი) ან null
 @msg	`{key}` must be a string	`{key}` უნდა იყოს სტრიქონი
 @msg	`{key}` must be a whole number	`{key}` უნდა იყოს მთელი რიცხვი
 @msg	`{key}` must be a whole number between {min} and {max} (got {x})	`{key}` უნდა იყოს მთელი რიცხვი {min}-დან {max}-მდე (მიღებულია {x})
@@ -4108,6 +4113,9 @@ effect	Regular	ჩვეულებრივი
 @msg	`{text}`: step {i}'s result has no such value (write $$ for a literal $)	`{text}`: ნაბიჯ {i}-ის შედეგს ასეთი მნიშვნელობა არ აქვს (ლიტერალური $-ისთვის დაწერეთ $$)
 @msg	`{text}`: there is no step {i} before this one (steps count from 0; write $$ for a literal $)	`{text}`: ამის წინ ნაბიჯი {i} არ არის (ნაბიჯები 0-დან ითვლება; ლიტერალური $-ისთვის დაწერეთ $$)
 @msg	object ids are non-negative integers, not {v}	ობიექტების id არაუარყოფითი მთელი რიცხვებია და არა {v}
+@msg	{key} must be an array of non-negative integer object ids	{key} უნდა იყოს ობიექტების id-ების მასივი, სადაც ყოველი id არაუარყოფითი მთელი რიცხვია
+@msg	invalid object id {value}: expected a non-negative integer	ობიექტის არასწორი id {value}: მოსალოდნელია არაუარყოფითი მთელი რიცხვი
+@msg	no such object id {value}	ობიექტი id-ით {value} არ არსებობს
 @msg	automation filesystem access is not granted: read authority is absent: {path}	ავტომატიზაციას ფაილურ სისტემაზე წვდომა არ აქვს: წაკითხვის უფლება არ არის: {path}
 @msg	automation filesystem access is not granted: write authority is absent: {path}	ავტომატიზაციას ფაილურ სისტემაზე წვდომა არ აქვს: ჩაწერის უფლება არ არის: {path}
 @msg	automation path rejected: outside the read root {root}: {path}	ავტომატიზაციის გზა უარყოფილია: წაკითხვის ძირის {root} გარეთაა: {path}
@@ -4749,6 +4757,7 @@ imageTrace	Outline	კონტური
 @msg	the file's layers weren't read ({_1}): it comes in as its page, in one layer	ფაილის შრეები ვერ წაიკითხა ({_1}): ის გაიხსნება როგორც მისი გვერდი, ერთ შრეში
 @msg	the file's layers weren't read from its editing data ({_1}): they come from its PDF part	ფაილის შრეები რედაქტირების მონაცემებიდან ვერ წაიკითხა ({_1}): ისინი მისი PDF ნაწილიდან აიღება
 @msg	the Color Picker is not open	ფერის ამრჩევი გახსნილი არ არის
+@msg	the Simplify slider is not open	გამარტივების სლაიდერი გახსნილი არ არის
 @msg	the screen color sampler is already open	ეკრანიდან ფერის აღება უკვე გახსნილია
 @msg	this system has no screen color sampler	ამ სისტემას ეკრანიდან ფერის აღების საშუალება არ აქვს
 # Dimension tool and Object › Dimensions. A drafting dimension is ზომა (ზომის დასმა), like a dimension on a technical drawing.
@@ -4823,6 +4832,7 @@ imageTrace	Outline	კონტური
 	Intertwine	გადახლართვა
 	Arrange Intertwine Area	გადახლართვის არის დალაგება
 @msg	select an Intertwine group	მონიშნეთ გადახლართვის ჯგუფი
+@msg	select an Objects on Path group	მონიშნეთ ტრაექტორიაზე ობიექტების ჯგუფი
 	Registration:	საბაზისო წერტილი:
 @msg	span must be "object" or "selection", got {v}	span უნდა იყოს "object" ან "selection", მიღებულია {v}
 @msg	span: "selection" places a `gradient`, not a swatch	span: "selection" ათავსებს `gradient`-ს და არა ფერის ნიმუშს
@@ -4843,6 +4853,7 @@ imageTrace	Outline	კონტური
 @msg	choose a destination folder	აირჩიეთ დანიშნულების საქაღალდე
 @msg	choose a source folder	აირჩიეთ წყარო საქაღალდე
 @msg	open a document with data sets	გახსენით დოკუმენტი მონაცემთა ნაკრებებით
+@msg	nothing in data set {name} was applied: no object is bound to a variable it has a value for	მონაცემთა ნაკრები {name}: არაფერი გამოყენებულა; არცერთი ობიექტი არ არის მიბმული ცვლადზე, რომელსაც მასში მნიშვნელობა აქვს
 @msg	the action has no steps	მოქმედებას ნაბიჯები არ აქვს
 	Convert to Straight Lines	სწორ ხაზებად გარდაქმნა
 	Corner Point Angle Threshold:	კუთხოვანი წერტილის კუთხის ზღვარი:
@@ -4890,6 +4901,8 @@ imageTrace	Outline	კონტური
 	Rotate View to Selection	ხედის შემობრუნება მონიშნულის მიხედვით
 	Update Selection	მონიშნულის განახლება
 	Show Original Path	საწყისი ტრაექტორიის ჩვენება
+	Open this dialog with these settings next time	შემდეგ ჯერზე ამ დიალოგის ამ პარამეტრებით გახსნა
+	Auto-Simplify	ავტომატური გამარტივება
 	Texture Image	ტექსტურის გამოსახულება
 @msg	check a layer to export	მონიშნეთ საექსპორტო შრე
 @msg	select the art to export first	ჯერ მონიშნეთ საექსპორტო ნახატი
@@ -5007,6 +5020,12 @@ imageTrace	Outline	კონტური
 	Release Blend	გადასვლის მოხსნა
 	Release Envelope	გარსის მოხსნა
 	Release Intertwine	გადახლართვის მოხსნა
+	Objects on Path	ობიექტები ტრაექტორიაზე
+	Attach	მიმაგრება
+	Objects on Path Options	ტრაექტორიაზე ობიექტების პარამეტრები
+	Objects on Path Tool	ტრაექტორიაზე ობიექტების ხელსაწყო
+	Attach Objects on Path	ობიექტების ტრაექტორიაზე მიმაგრება
+	Expand Objects on Path	ტრაექტორიაზე ობიექტების გაშლა
 	Release Live Paint	ცოცხალი შეღებვის მოხსნა
 	Release Repeat	გამეორების მოხსნა
 	Release Slice	ნაჭრის მოხსნა
@@ -5027,6 +5046,8 @@ imageTrace	Outline	კონტური
 	Resize Type Area	ტექსტის არის ზომის შეცვლა
 	Scale Design	დიზაინის მასშტაბირება
 	Scale in Perspective	პერსპექტივაში მასშტაბირება
+	Select Fills	შევსებების მონიშვნა
+	Select Strokes	კონტურების მონიშვნა
 	Set History Limit…	ისტორიის ლიმიტის დაყენება…
 	Shape Builder Delete	ფიგურების კონსტრუქტორით წაშლა
 	Sliding	სრიალა
@@ -5072,6 +5093,7 @@ imageTrace	Outline	კონტური
 @msg	library panel `{given}` isn't open	ბიბლიოთეკის პანელი `{given}` გახსნილი არ არის
 @msg	mask art ends outside a mask dictionary	ნიღბის ნახატი ნიღბის ლექსიკონის გარეთ მთავრდება
 @msg	missing number `{key}`	აკლია რიცხვი `{key}`
+@msg	missing integer `{key}`	აკლია მთელი რიცხვი `{key}`
 @msg	no such spine point	ხერხემლის ასეთი წერტილი არ არსებობს
 @msg	no such spine segment	ხერხემლის ასეთი სეგმენტი არ არსებობს
 @msg	not a blend	ეს გადასვლა არ არის
@@ -5097,8 +5119,8 @@ imageTrace	Outline	კონტური
 	Full Justify	სრული ორმხრივი სწორება
 	Glyph Scaling:	გლიფების მასშტაბირება:
 	Justification	სწორება
-	Letter Spacing:	ასოთა დაშორება:
-	Word Spacing:	სიტყვათა დაშორება:
+	Letter Spacing:	ასოებს შორის დაშორება:
+	Word Spacing:	სიტყვებს შორის დაშორება:
 	Minimum must not exceed Desired, nor Desired Maximum.	მინიმალური არ უნდა აღემატებოდეს სასურველს, ხოლო სასურველი — მაქსიმალურს.
 	Single Word Justification:	ერთი სიტყვის სწორება:
 	Apply {name}	სტილის „{name}“ გამოყენება
@@ -5108,7 +5130,48 @@ imageTrace	Outline	კონტური
 @msg	no history to clear	გასასუფთავებელი ისტორია არ არის
 @msg	{_1} files are written by file.saveAsTemplate	{_1} ფაილებს წერს file.saveAsTemplate
 @msg	aiVersion 7 writes legacy .ai files; a .ait template is always PDF-compatible	aiVersion 7 წერს ძველი ფორმატის .ai ფაილებს; .ait შაბლონი ყოველთვის PDF-თან თავსებადია
-@msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	ფაილის ცვლადები და მონაცემთა ნაკრებები ვერ წაიკითხა (ცვლადები: {variables}, მონაცემთა ნაკრებები: {data_sets}): პანელი „ცვლადები“ მათ არ აჩვენებს
+@msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	ფაილის ცვლადებისა და მონაცემთა ნაკრებების წაკითხვა ვერ მოხერხდა (ცვლადები: {variables}, მონაცემთა ნაკრებები: {data_sets}): პანელი „ცვლადები“ მათ არ აჩვენებს
 @msg	its zlib compression is damaged	მისი zlib შეკუმშვა დაზიანებულია
 @msg	its Zstandard compression is damaged	მისი Zstandard შეკუმშვა დაზიანებულია
 @msg	it decompresses to more than {_1} MB	გაშლისას {_1} MB-ს აღემატება
+# Select by Color (select.color)
+	Select by Color	მონიშვნა ფერის მიხედვით
+@msg	thumbnail: no page {n} (the file has 1)	thumbnail: გვერდი {n} არ არსებობს (ფაილს 1 გვერდი აქვს)
+	Smudge Stick…	დასაზელი ჯოხი…
+	Smudge Stick	დასაზელი ჯოხი
+	Sponge…	ღრუბელი…
+	Sponge	ღრუბელი
+	Watercolor…	აკვარელი…
+	Watercolor	აკვარელი
+	Brush Size	ფუნჯის ზომა
+	Definition	განსაზღვრულობა
+	Brush Detail	ფუნჯის დეტალი
+	Shadow Intensity	ჩრდილის ინტენსივობა
+	Bas Relief…	დაბალი რელიეფი…
+	Bas Relief	დაბალი რელიეფი
+	Charcoal…	ნახშირი…
+	Charcoal	ნახშირი
+	Photocopy…	ფოტოასლი…
+	Photocopy	ფოტოასლი
+	Stamp…	ბეჭედი…
+	Stamp	ბეჭედი
+	Thickness	სისქე
+	Detail	დეტალი
+	Light/Dark Balance	ნათელი/მუქი ბალანსი
+	Move Anchor Point	საყრდენი წერტილის გადაადგილება
+	Alt key toggles to Smooth Tool	Alt კლავიში ჩართავს გაგლუვების ხელსაწყოს
+@msg	{label} keeps 1 of the document's {n} artboards: the file reopens with one. Turn on Preserve Editing Capabilities to keep them all.	{label} ინახავს დოკუმენტის {n} სამუშაო დაფიდან 1-ს: ფაილი ხელახლა ერთით გაიხსნება. ყველას შესანარჩუნებლად ჩართეთ „რედაქტირების შესაძლებლობების შენარჩუნება“.
+	Chalk & Charcoal…	ცარცი და ნახშირი…
+	Chalk & Charcoal	ცარცი და ნახშირი
+	Graphic Pen…	გრაფიკული კალამი…
+	Graphic Pen	გრაფიკული კალამი
+	Reticulation…	რეტიკულაცია…
+	Reticulation	რეტიკულაცია
+	Plastic Wrap…	პლასტიკური აფსკი…
+	Plastic Wrap	პლასტიკური აფსკი
+	Chrome…	ქრომი…
+	Chrome	ქრომი
+	Drop here to take it out of its group	ჯგუფიდან ამოსაღებად ჩააგდეთ აქ
+	Move Library Group	ბიბლიოთეკის ჯგუფის გადატანა
+	Plaster…	თაბაშირი…
+	Plaster	თაბაშირი

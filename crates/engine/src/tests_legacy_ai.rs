@@ -371,7 +371,7 @@ fn transparent_images_can_be_left_out_and_opacity_makes_one_transparent() {
     assert_eq!(v["options"]["transparentImages"]["value"], "flatten", "{v}");
 }
 
-/// #2692's files: an image clipped to a circle inside a circle's stroke, and an image with
+/// #2692's file, an image clipped to a circle inside a circle's stroke, and #2830's, an image with
 /// see-through pixels (which the save flattens into an image inside a clipping group), each with
 /// an orange square on the next layer.
 const CLIPPED_IMAGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="400" height="200" viewBox="0 0 400 200">
@@ -389,14 +389,16 @@ const SEE_THROUGH_IMAGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" xmln
   <g id="above"><rect x="220" y="20" width="160" height="160" fill="#f7941d"/></g>
 </svg>"##;
 
-/// #2692: the image inside a clipping group, clipped in the file or flattened by the save, is
-/// written as the version 7 specification shows one (§8.1, §8.4): the matrix with a space inside
-/// each bracket and the samples on comment lines of 60 hex digits, between `W n` and `Q`. The next
+/// #2692 and #2830: the image inside a clipping group, clipped in the file or flattened by the
+/// save, is written as the version 7 specification shows one (§8.1, §8.4): the matrix with a space
+/// inside each bracket and the samples on comment lines of 60 hex digits, between `W n` and `Q`.
+/// A line `F`, which the specification's examples do not show, follows `%AI5_EndRaster`. The next
 /// layer follows with the square's exact lines, and the file opens again with both layers, the
-/// clipping group, the image and the square.
+/// clipping group, the image, the square and, besides the clipping path, only the paths the SVG
+/// holds.
 #[test]
 fn a_clipped_or_flattened_image_is_written_as_the_specification_shows_it() {
-    for (svg, layer) in [(CLIPPED_IMAGE, "clipped-image"), (SEE_THROUGH_IMAGE, "alpha-image")] {
+    for (svg, layer, paths) in [(CLIPPED_IMAGE, "clipped-image", 2), (SEE_THROUGH_IMAGE, "alpha-image", 1)] {
         let mut s = Session::new();
         s.execute("document.open", &json!({"name": "t.svg", "dataBase64": vectorcraft_format::base64_encode(svg.as_bytes())})).unwrap();
         let r = s.execute("file.saveCopy", &json!({"format": "ai", "aiVersion": "7"})).unwrap();
@@ -411,7 +413,8 @@ fn a_clipped_or_flattened_image_is_written_as_the_specification_shows_it() {
         let end = at + lines[at..].iter().position(|l| *l == "%AI5_EndRaster").unwrap();
         let (last, full) = lines[at + 1..end].split_last().unwrap();
         assert!(full.iter().all(|l| l.len() == 61) && (2..=61).contains(&last.len()), "{layer}");
-        assert!(text.contains("\nW\nn\n%AI5_File:\n") && text.contains("\n%AI5_EndRaster\nQ\nLB\n%AI5_EndLayer--\n"), "{text}");
+        assert_eq!(lines[end + 1], "F", "{layer}");
+        assert!(text.contains("\nW\nn\n%AI5_File:\n") && text.contains("\n%AI5_EndRaster\nF\nQ\nLB\n%AI5_EndLayer--\n"), "{text}");
         let square = "%AI5_BeginLayer\n1 1 1 1 0 0 1 255 79 79 Lb\n(above) Ln\n0 A\n0.9686 0.5804 0.1137 Xa\n0 O\n0 XR\n\
                       220 180 m\n380 180 L\n380 20 L\n220 20 L\n220 180 L\nf\nLB\n%AI5_EndLayer--\n%%PageTrailer\n";
         assert!(text.contains(square), "{text}");
@@ -419,6 +422,9 @@ fn a_clipped_or_flattened_image_is_written_as_the_specification_shows_it() {
         let d = &s.doc().unwrap().doc;
         assert_eq!(layer_names(d), [layer, "above"]);
         assert_eq!(images(d), (1, 1), "{layer}");
+        let mut drawn = 0;
+        d.walk(|n| drawn += usize::from(matches!(n.kind, vectorcraft_doc::NodeKind::Path { clipping: false, .. })));
+        assert_eq!(drawn, paths, "{layer}");
         assert_eq!(colour_at(d, 300.0, 100.0), [247, 148, 29], "{layer}");
         assert_ne!(colour_at(d, 100.0, 100.0), [255, 255, 255], "{layer}");
     }

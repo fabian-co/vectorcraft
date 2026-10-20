@@ -69,6 +69,33 @@ fn pages_changed_elsewhere_open_as_artwork_with_a_warning() {
     assert_eq!(r["warnings"][0], load::EDITING_DAMAGED, "{r}");
 }
 
+/// `pdf` with its editing file's description rewritten by another app in UTF-16BE with a byte
+/// order mark: "hash " and the hash it held, padded with spaces to its length.
+fn utf16_described(pdf: &[u8]) -> Vec<u8> {
+    let from = b"(VectorCraft editing data; page hash ";
+    let at = pdf.windows(from.len()).position(|w| w == from).unwrap_or_else(|| panic!("no description"));
+    let (hash, len) = (&pdf[at + from.len()..at + from.len() + 16], from.len() + 17);
+    let mut desc = b"(\xFE\xFF".to_vec();
+    desc.extend(b"hash ".iter().chain(hash).flat_map(|&c| [0, c]));
+    desc.push(b')');
+    desc.resize(len, b' ');
+    patched(pdf, &pdf[at..at + len], &desc)
+}
+
+#[test]
+fn pages_changed_elsewhere_are_noticed_with_a_utf16_description() {
+    let mut s = rich();
+    let pdf = b64(&s.execute("document.exportPdf", &json!({"compression": {"compressText": false}})).unwrap());
+    let ai = b64(&s.execute("document.export", &json!({"format": "ai", "compress": false})).unwrap());
+    for (name, file) in [("edited.pdf", pdf), ("edited.ai", ai)] {
+        let r = open(&mut s, name, &utf16_described(&file));
+        assert_eq!((&r["warnings"], &r["restored"]), (&json!([]), &json!(true)), "{name}: the same pages: {r}");
+        let edited = patched(&file, b"/MediaBox[0 0 300 200]", b"/MediaBox[0 0 300 201]");
+        let r = open(&mut s, name, &utf16_described(&edited));
+        assert_eq!((&r["warnings"][0], &r["restored"]), (&json!(load::EDITING_STALE), &json!(false)), "{name}: {r}");
+    }
+}
+
 #[test]
 fn the_legacy_payload_name_is_accepted() {
     let mut s = rich();

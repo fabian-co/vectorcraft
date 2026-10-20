@@ -1648,6 +1648,23 @@ fn align_reflect_and_shear_param_errors_are_translated() {
     }
 }
 
+/// The warning that a data set with no value for a bound variable gives, which the status bar
+/// shows and the scan above doesn't read, is translated in each language of [`COMPLETE_MESSAGES`],
+/// with the data set's name kept.
+#[test]
+fn the_data_set_applied_nothing_warning_is_translated() {
+    use serde_json::json;
+    let mut s = vectorcraft_engine::Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("dataset.import", &json!({"csv": "name,Name\nRow 7,Ann\n"})).unwrap();
+    let v = s.execute("dataset.select", &json!({"name": "Row 7"})).unwrap();
+    let warning = v["warning"].as_str().unwrap();
+    for code in COMPLETE_MESSAGES {
+        let shown = message(Lang::from_code(code).unwrap(), warning);
+        assert!(shown.contains("Row 7") && !shown.contains("was applied"), "{code}: {shown}");
+    }
+}
+
 /// The parameter errors of the blend spine commands (Move Spine Point, Reshape Spine Segment, Add
 /// Spine Point and Delete Spine Point, which Direct Selection, the Pen and the Anchor Point tool
 /// send), whose text the scan above doesn't read, are translated whole in each language of
@@ -1823,9 +1840,53 @@ fn select_key_param_error_is_translated() {
     }
 }
 
+/// The errors of the parameter checks that many commands share (a number given as text, a missing
+/// number or index, a fraction for a whole number, `ids` that aren't a list of object ids, an
+/// object id that is negative or names no object, a date that isn't Unix seconds) are translated
+/// whole by their own rows in each language of [`COMPLETE_MESSAGES`], in Bulgarian, and in Danish,
+/// Indonesian and Dutch. The value in the message, such as a quoted `"60 mm"`, is shown as given.
+#[test]
+fn shared_param_check_errors_are_translated() {
+    use serde_json::json;
+    use vectorcraft_engine::EngineError;
+    let mut s = vectorcraft_engine::Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    s.execute("select.all", &json!({})).unwrap();
+    // A command, its params, the English template of its error and the template's values.
+    type Case = (&'static str, serde_json::Value, &'static str, &'static [(&'static str, &'static str)]);
+    let cases: [Case; 10] = [
+        ("object.move", json!({"dx": "60 mm"}), "`{key}` must be a number, not {v}", &[("key", "dx"), ("v", r#""60 mm""#)]),
+        ("object.rotate", json!({"angle": true}), "`{key}` must be a number, not {v}", &[("key", "angle"), ("v", "true")]),
+        ("object.setBounds", json!({"width": [1, 2]}), "`{key}` must be a number, not {v}", &[("key", "width"), ("v", "[1,2]")]),
+        ("shape.rectangle", json!({"x": 0, "y": 0, "width": 10}), "missing number `{key}`", &[("key", "height")]),
+        ("appearance.setItem", json!({}), "missing integer `{key}`", &[("key", "index")]),
+        ("object.transformEach", json!({"reference": 2.5}), "`{key}` must be a whole number", &[("key", "reference")]),
+        ("edit.clear", json!({"ids": "all"}), "{key} must be an array of non-negative integer object ids", &[("key", "ids")]),
+        ("edit.clear", json!({"ids": [-1]}), "invalid object id {value}: expected a non-negative integer", &[("value", "-1")]),
+        ("edit.clear", json!({"ids": [99999]}), "no such object id {value}", &[("value", "99999")]),
+        ("file.new", json!({"created": "yesterday"}), "{key} must be Unix seconds (an integer) or null", &[("key", "created")]),
+    ];
+    let mut untranslated = Vec::new();
+    for (cmd, p, template, values) in cases {
+        let e = s.execute(cmd, &p).unwrap_err();
+        assert!(matches!(&e, EngineError::BadParams { msg, .. } if *msg == fmt(template, values)), "{cmd} {p}: {e}");
+        for code in COMPLETE_MESSAGES.iter().chain(&["bg", "da", "id", "nl"]) {
+            let lang = Lang::from_code(code).unwrap();
+            let (entries, _) = parse_entries(lang.0.source);
+            let row = entries.iter().find(|(ctx, src, _)| ctx == "@msg" && src == template);
+            let shown = message(lang, &e.to_string());
+            if shown.contains("invalid parameters") || !row.is_some_and(|(_, _, tr)| shown.contains(&fmt(tr, values))) {
+                untranslated.push(format!("{code}: {shown}"));
+            }
+        }
+    }
+    assert!(untranslated.is_empty(), "untranslated parameter check errors:\n{}", untranslated.join("\n"));
+}
+
 /// Languages whose catalogs cover every status and error message.
 const COMPLETE_MESSAGES: &[&str] =
-    &["cs", "de", "el", "es", "fr", "hu", "it", "ja", "ka", "ko", "pl", "pt-br", "ru", "sv", "uk", "vi", "zh-hans", "fi"];
+    &["cs", "de", "el", "es", "fr", "hu", "it", "ja", "ka", "ko", "pl", "pt-br", "ru", "sv", "uk", "vi", "zh-hans", "zh-hant", "fi"];
 
 /// Crates whose error and status messages reach the status bar.
 const MESSAGE_CRATES: &[&str] = &["ui-egui", "engine", "doc", "format", "svg", "pdf", "eps", "text", "plugins", "metafile", "cad", "trace"];

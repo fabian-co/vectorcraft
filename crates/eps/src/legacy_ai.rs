@@ -29,7 +29,7 @@
 //!   `f` (or `F`), and `0 BB`, or `2 BB` (`1 BB` open) to stroke it too.
 //! - Images (§8.1, §8.4): `%AI5_File:`, `%AI5_BeginRaster`,
 //!   `[ a b c d tx ty ] 0 0 w h w h 8 3 0 0 0 0 XI`, the RGB samples in hex on comment lines of 60
-//!   digits, `%AI5_EndRaster`.
+//!   digits, `%AI5_EndRaster`, then a line `F` that §8.4's examples do not show.
 //! - Type (§15): point type, area type and type on a path as text objects, `type To`, `a b c d tx
 //!   ty startPt Tp` (the text matrix; the frame or path in art space between it and `TP`), each
 //!   run's paint style, `Tr` (fill, stroke, both or neither), `/_font size ascent descent Tf`,
@@ -50,7 +50,9 @@
 //! their own above their layer, are left out or show, as [`HiddenObjects`] says (in a hidden
 //! layer they stay where they are). Type that 8-bit text can't hold (characters outside
 //! Windows-1252, vertical type, inline graphics, gradient or pattern fills) is written as its
-//! outlines, and all type with [`LegacyAiOptions::outline_text`].
+//! outlines, and all type with [`LegacyAiOptions::outline_text`]. Layer, spot color and gradient
+//! names and the title are written in Windows-1252 too, and a character outside it is written as
+//! `?`. Two spot colors or two gradients whose names become the same that way are numbered (`? 2`).
 //!
 //! The prolog is a procedure set of the writer's own ([`PROLOG`]) that gives the operators their
 //! meaning in PostScript, so the file also prints and previews as a PostScript program (its
@@ -87,6 +89,8 @@ pub const HIDDEN_LAYER: &str = "hidden objects are moved to a hidden layer above
 pub const HIDDEN_SHOWN: &str = "hidden objects are written visible (legacy .ai files can hide only layers)";
 pub const TRANSPARENCY: &str = "transparency (opacity, blending modes, opacity masks) is written opaque: legacy .ai files have none";
 pub const LAYER_NAME: &str = "characters outside Windows Latin-1 in layer names are written as ? (legacy .ai files can't hold them)";
+pub const TITLE_AND_COLOR_NAMES: &str =
+    "characters outside Windows Latin-1 in the title and in spot color and gradient names are written as ? (legacy .ai files can't hold them)";
 pub const NAMES: &str = "object names are left out (legacy .ai files name only layers)";
 const PATTERNS: &str = "pattern fills are written as their tiles, clipped to the shape";
 const FREEFORM: &str = "freeform gradients are written as their average colour";
@@ -163,11 +167,12 @@ pub fn export_legacy_ai(doc: &Document, o: &LegacyAiOptions) -> Result<LegacyAiO
         .filter(|b| b.is_finite())
         .reduce(|a, b| a.union(b))
         .unwrap_or(Rect::new(0.0, below, width, top));
+    let title = w.latin_name(&o.title, TITLE_AND_COLOR_NAMES);
     let mut s = String::new();
     s.push_str(PS_HEADER);
     s.push('\n');
     let _ = writeln!(s, "%%Creator: VectorCraft {}", env!("CARGO_PKG_VERSION"));
-    let _ = writeln!(s, "%%Title: {}", ps::string(&o.title));
+    let _ = writeln!(s, "%%Title: {}", latin_string(&title));
     if let Some(t) = o.created {
         let [y, mo, d, h, mi, _] = vectorcraft_doc::metadata::civil(t);
         let _ = writeln!(s, "%%CreationDate: ({mo}/{d}/{y:04}) ({h:02}:{mi:02})");
@@ -179,12 +184,12 @@ pub fn export_legacy_ai(doc: &Document, o: &LegacyAiOptions) -> Result<LegacyAiO
     s.push('\n');
     s.push_str("%%DocumentProcessColors: Cyan Magenta Yellow Black\n");
     for (i, (name, _)) in w.spots.iter().enumerate() {
-        let _ = writeln!(s, "{} {}", if i == 0 { "%%DocumentCustomColors:" } else { "%%+" }, ps::string(name));
+        let _ = writeln!(s, "{} {}", if i == 0 { "%%DocumentCustomColors:" } else { "%%+" }, latin_string(name));
     }
     for (i, (name, cmyk)) in w.spots.iter().enumerate() {
         s.push_str(if i == 0 { "%%CMYKCustomColor: " } else { "%%+ " });
         ps::push_nums(&mut s, &cmyk.map(f64::from));
-        let _ = writeln!(s, "{}", ps::string(name));
+        let _ = writeln!(s, "{}", latin_string(name));
     }
     for (i, (name, _)) in w.fonts.iter().enumerate() {
         let _ = writeln!(s, "{} {name}", if i == 0 { "%%DocumentFonts:" } else { "%%+" });
@@ -335,7 +340,7 @@ const PS_HEADER: &str = "%!PS-Adobe-3.0"; // brand-ok: the PostScript header com
 /// A gradient definition: `%AI5_BeginGradient: (name)`, `(name) type stops Bd`, `[`, the stops
 /// last first (`colorSpec colorStyle midPoint rampPoint %_Bs`), `BD`, `%AI5_EndGradient`.
 fn gradient_def(s: &mut String, w: &Writer, name: &str, g: &Gradient) {
-    let name = ps::string(name);
+    let name = latin_string(name);
     let kind = if g.kind == GradientKind::Radial { 1 } else { 0 };
     let _ = writeln!(s, "%AI5_BeginGradient: {name}\n{name} {kind} {} Bd\n[", g.stops.len());
     for stop in g.stops.iter().rev() {
@@ -356,7 +361,7 @@ fn gradient_def(s: &mut String, w: &Writer, name: &str, g: &Gradient) {
             }
             Ink::Spot { cmyk, name, tint } => {
                 ps::push_nums(s, &cmyk.map(f64::from));
-                let _ = write!(s, "{} ", ps::string(&name));
+                let _ = write!(s, "{} ", latin_string(w.spot_name(&name)));
                 ps::push_num(s, f64::from(1.0 - tint));
                 s.push_str(" 3 ");
             }
@@ -393,6 +398,13 @@ fn invertible(a: Affine) -> bool {
     det.is_finite() && det.abs() > 1e-12
 }
 
+/// Name `name` as a PostScript string of its characters' Windows-1252 codes (a character outside
+/// Windows-1252 is left out: [`Writer::latin_name`] replaces them first).
+fn latin_string(name: &str) -> String {
+    let bytes: Vec<u8> = name.chars().filter_map(latin::encode).collect();
+    ps::bytes(&bytes)
+}
+
 struct Writer<'a> {
     doc: &'a Document,
     /// The document → art space.
@@ -401,8 +413,10 @@ struct Writer<'a> {
     body: String,
     /// Gradient definitions, by the name objects use.
     gradients: Vec<(String, Gradient)>,
-    /// Spot colours used: name and full CMYK equivalent.
+    /// Spot colors used: the name written and full CMYK equivalent.
     spots: Vec<(String, [f32; 4])>,
+    /// The name each spot color (by its swatch's name) is written with ([`Self::spot`]).
+    spot_names: Vec<(String, String)>,
     warnings: Vec<String>,
     /// The lock state the last `A` set.
     locked: bool,
@@ -430,6 +444,7 @@ impl<'a> Writer<'a> {
             body: String::new(),
             gradients: vec![],
             spots: vec![],
+            spot_names: vec![],
             warnings: vec![],
             locked: false,
             nest: 0,
@@ -454,23 +469,62 @@ impl<'a> Writer<'a> {
 
     // ---------- layers and objects ----------
 
-    /// A layer's name as a PostScript string in Windows-1252, like the type; a character outside it
-    /// is written as `?`, with a warning.
-    fn layer_name(&mut self, name: &str) -> String {
+    /// `name` with each character outside Windows-1252 (the encoding type and names are written
+    /// in) replaced by `?`; adds the warning `warning` when it replaces one.
+    fn latin_name(&mut self, name: &str, warning: &str) -> String {
         let mut lost = false;
-        let bytes: Vec<u8> = name
+        let kept = name
             .chars()
             .map(|c| {
-                latin::encode(c).unwrap_or_else(|| {
+                if latin::encode(c).is_some() {
+                    c
+                } else {
                     lost = true;
-                    b'?'
-                })
+                    '?'
+                }
             })
             .collect();
         if lost {
-            self.warn(LAYER_NAME);
+            self.warn(warning);
         }
-        ps::bytes(&bytes)
+        kept
+    }
+
+    /// A layer's name as a PostScript string in Windows-1252, like the type; a character outside it
+    /// is written as `?`, with a warning.
+    fn layer_name(&mut self, name: &str) -> String {
+        latin_string(&self.latin_name(name, LAYER_NAME))
+    }
+
+    /// Note spot color `name` (its swatch's name), of full CMYK equivalent `cmyk`, as a custom
+    /// color of the document, and give the name it is written with. Its characters outside
+    /// Windows-1252 are written as `?` (with a warning), and it is numbered when another spot color
+    /// is already written with that name; the name is the same each time.
+    fn spot(&mut self, name: &str, cmyk: [f32; 4]) -> String {
+        let written = match self.spot_names.iter().find(|(n, _)| n == name) {
+            Some((_, w)) => w.clone(),
+            None => {
+                let base = self.latin_name(name, TITLE_AND_COLOR_NAMES);
+                let mut written = base.clone();
+                let mut i = 1;
+                while self.spot_names.iter().any(|(_, w)| *w == written) {
+                    i += 1;
+                    written = format!("{base} {i}");
+                }
+                self.spot_names.push((name.to_string(), written.clone()));
+                written
+            }
+        };
+        if !self.spots.iter().any(|(n, _)| *n == written) {
+            self.spots.push((written.clone(), cmyk));
+        }
+        written
+    }
+
+    /// The name spot color `name` (its swatch's name) is written with, once [`Self::spot`] has
+    /// noted it.
+    fn spot_name<'n>(&'n self, name: &'n str) -> &'n str {
+        self.spot_names.iter().find(|(n, _)| n == name).map_or(name, |(_, w)| w.as_str())
     }
 
     /// A top-level layer. False when it isn't a layer.
@@ -965,7 +1019,10 @@ impl<'a> Writer<'a> {
 
     /// Set the fill (or with `stroke`, the stroke) colour to solid paint `p`.
     fn color(&mut self, p: &Paint, stroke: bool) {
-        let ink = self.ink(p);
+        let ink = match self.ink(p) {
+            Ink::Spot { cmyk, name, tint } => Ink::Spot { name: self.spot(&name, cmyk), cmyk, tint },
+            ink => ink,
+        };
         let op = |fill: &'static str, line: &'static str| if stroke { line } else { fill };
         let s = &mut self.body;
         match ink {
@@ -983,13 +1040,10 @@ impl<'a> Writer<'a> {
             }
             Ink::Spot { cmyk, name, tint } => {
                 ps::push_nums(s, &cmyk.map(f64::from));
-                let _ = write!(s, "{} ", ps::string(&name));
+                let _ = write!(s, "{} ", latin_string(&name));
                 // The format's tint is how much lighter than the full colour (0: full).
                 ps::push_num(s, f64::from(1.0 - tint));
                 let _ = writeln!(s, " {}", op("x", "X"));
-                if !self.spots.iter().any(|(n, _)| *n == name) {
-                    self.spots.push((name, cmyk));
-                }
             }
         }
     }
@@ -1009,10 +1063,8 @@ impl<'a> Writer<'a> {
             if let Some(sw) = &stop.swatch {
                 // Spot colours in stops are custom colours too.
                 let p = Paint::Solid { color: stop.color, swatch: Some(sw.clone()), tint: stop.tint };
-                if let Ink::Spot { cmyk, name, .. } = self.ink(&p)
-                    && !self.spots.iter().any(|(n, _)| *n == name)
-                {
-                    self.spots.push((name, cmyk));
+                if let Ink::Spot { cmyk, name, .. } = self.ink(&p) {
+                    self.spot(&name, cmyk);
                 }
             }
         }
@@ -1036,21 +1088,21 @@ impl<'a> Writer<'a> {
             s.push_str("Bh\n");
         }
         s.push_str("1 ");
-        s.push_str(&ps::string(&name));
+        s.push_str(&latin_string(&name));
         s.push(' ');
         ps::push_nums(&mut s, &[start.x, start.y, angle, length]);
         s.push_str("1 0 0 1 0 0 Bg\n");
         s
     }
 
-    /// The name of the definition of `g` (its swatch's name when it has one), defined the first
-    /// time.
+    /// The name of the definition of `g` (its swatch's name when it has one, with each character
+    /// outside Windows-1252 written as `?` and a warning), defined the first time.
     fn define(&mut self, g: &Gradient, swatch: Option<&str>) -> String {
         if let Some((name, _)) = self.gradients.iter().find(|(_, d)| d == g) {
             return name.clone();
         }
         let taken = |n: &str, defs: &[(String, Gradient)]| defs.iter().any(|(m, _)| m == n);
-        let base = swatch.filter(|s| !s.is_empty()).unwrap_or("Gradient").to_string();
+        let base = self.latin_name(swatch.filter(|s| !s.is_empty()).unwrap_or("Gradient"), TITLE_AND_COLOR_NAMES);
         let mut name = base.clone();
         let mut i = 1;
         while taken(&name, &self.gradients) {
@@ -1227,7 +1279,9 @@ impl<'a> Writer<'a> {
     /// An image (§8): `%AI5_File:`, `%AI5_BeginRaster`, its matrix (an art-space matrix applied to
     /// the pixels with their rows running downwards, `(u, -v)`) as `[ a b c d tx ty ]` and its
     /// operands with `XI`, its RGB samples in hex on comment lines of [`HEX_LINE`] digits,
-    /// `%AI5_EndRaster`.
+    /// `%AI5_EndRaster`, then `F`. §8.4's examples have no `F`; without it, an app reading the file
+    /// can leave out an image in a clipping group and the art after it. No path is open there, so
+    /// the `F` paints nothing.
     fn image(&mut self, im: &ImageObject) {
         let flip = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, 0.0]);
         let m = self.to_art * im.xf * flip;
@@ -1281,7 +1335,7 @@ impl<'a> Writer<'a> {
         ps::push_nums(s, &[a, b, c, d, e, f]);
         let _ = writeln!(s, "] 0 0 {w} {h} {w} {h} 8 3 0 0 0 0 XI");
         s.push_str(&hex);
-        s.push_str("%AI5_EndRaster\n");
+        s.push_str("%AI5_EndRaster\nF\n");
     }
 }
 

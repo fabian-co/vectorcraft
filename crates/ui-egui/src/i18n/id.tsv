@@ -1489,7 +1489,7 @@ lighting	Light	Cahaya
 	This library is empty	Pustaka ini kosong
 	No results	Tidak ada hasil
 	No items in this library match “{query}”.	Tidak ada item di pustaka ini yang cocok dengan “{query}”.
-	Right-click an item to move it into this group.	Klik kanan item untuk memindahkannya ke grup ini.
+	Drag an item here, or right-click one, to put it in this group.	Seret item ke sini, atau klik kanan item, untuk memasukkannya ke grup ini.
 	New Group	Grup baru
 	New Group…	Grup baru…
 	Move to Group	Pindahkan ke grup
@@ -1607,6 +1607,7 @@ lighting	Light	Cahaya
 	Left in Front	Kiri di depan
 	No document	Tidak ada dokumen
 	Open a document to edit its patterns.	Buka dokumen untuk mengedit polanya.
+	Overlap	Tumpang tindih
 	Overlap:	Tumpang tindih:
 	Pattern options are available in pattern editing mode.	Opsi pola tersedia dalam mode pengeditan pola.
 	Right in Front	Kanan di depan
@@ -1734,6 +1735,7 @@ lighting	Light	Cahaya
 	Right-Justified Tab	Tab rata kanan
 	Select a text object to set its tab stops.	Pilih objek teks untuk mengatur tab stop-nya.
 	Select text	Pilih teks
+	Snap to Unit	Snap ke satuan
 	+ Add Scale	+ Tambah skala
 	Add Selected Artwork as One Asset	Tambahkan karya seni terpilih sebagai satu aset
 	Export Settings	Pengaturan ekspor
@@ -2063,6 +2065,7 @@ lighting	Light	Cahaya
 	Edit selected paths within:	Edit jalur terpilih dalam jarak:
 	Fidelity:	Fidelitas:
 	Fill new strokes	Isi stroke baru
+	Alt key toggles to Smooth Tool	Tombol Alt beralih ke Alat penghalus
 	The document has no colour swatches.	Dokumen tidak memiliki swatch warna.
 	Style Name:	Nama gaya:
 	Crop To	Pangkas ke
@@ -2080,6 +2083,7 @@ lighting	Light	Cahaya
 	Layers Panel Options	Opsi panel lapisan
 	Row Size:	Ukuran baris:
 	Show Layers Only	Tampilkan lapisan saja
+	Locate Selected Objects	Temukan objek terpilih
 	Thumbnails:	Miniatur:
 	Anchor Points	Titik jangkar
 	Brush Affects:	Kuas memengaruhi:
@@ -3855,6 +3859,8 @@ imageTrace	Outline	Kontur
 @msg	`{key}` must be `auto` or a language code such as `en` or `zh-hant`	`{key}` harus `auto` atau kode bahasa seperti `en` atau `zh-hant`
 @msg	`{key}` must be a #rrggbb colour	`{key}` harus berupa warna #rrggbb
 @msg	`{key}` must be a number	`{key}` harus berupa angka
+@msg	`{key}` must be a number, not {v}	`{key}` harus berupa angka, bukan {v}
+@msg	{key} must be Unix seconds (an integer) or null	{key} harus berupa waktu Unix dalam detik (bilangan bulat) atau null
 @msg	`{key}` must be a string	`{key}` harus berupa string
 @msg	`{key}` must be a whole number	`{key}` harus berupa bilangan bulat
 @msg	`{key}` must be a whole number between {min} and {max} (got {x})	`{key}` harus berupa bilangan bulat antara {min} dan {max} (diperoleh {x})
@@ -3974,6 +3980,8 @@ imageTrace	Outline	Kontur
 @msg	missing `name`	`name` tidak ada
 @msg	missing `tool`	`tool` tidak ada
 @msg	missing index	indeks tidak ada
+@msg	missing number `{key}`	angka `{key}` tidak ada
+@msg	missing integer `{key}`	bilangan bulat `{key}` tidak ada
 @msg	multiple windows land with M11.5	beberapa jendela hadir bersama M11.5
 @msg	name the file	beri nama file
 @msg	no CSS to copy: select objects with CSS of their own	tidak ada CSS untuk disalin: pilih objek yang memiliki CSS sendiri
@@ -4356,6 +4364,9 @@ imageTrace	Outline	Kontur
 @msg	`{text}`: step {i}'s result has no such value (write $$ for a literal $)	`{text}`: hasil langkah {i} tidak memiliki nilai seperti itu (tulis $$ untuk $ literal)
 @msg	`{text}`: there is no step {i} before this one (steps count from 0; write $$ for a literal $)	`{text}`: tidak ada langkah {i} sebelum langkah ini (langkah dihitung mulai dari 0; tulis $$ untuk $ literal)
 @msg	object ids are non-negative integers, not {v}	id objek adalah bilangan bulat non-negatif, bukan {v}
+@msg	{key} must be an array of non-negative integer object ids	{key} harus berupa larik id objek yang berupa bilangan bulat non-negatif
+@msg	invalid object id {value}: expected a non-negative integer	id objek {value} tidak valid: harus berupa bilangan bulat non-negatif
+@msg	no such object id {value}	tidak ada objek dengan id {value}
 @msg	automation filesystem access is not granted: read authority is absent: {path}	akses sistem berkas otomatisasi tidak diberikan: otoritas baca tidak ada: {path}
 @msg	automation filesystem access is not granted: write authority is absent: {path}	akses sistem berkas otomatisasi tidak diberikan: otoritas tulis tidak ada: {path}
 @msg	automation path rejected: outside the read root {root}: {path}	jalur otomatisasi ditolak: di luar akar baca {root}: {path}
@@ -5042,6 +5053,8 @@ swatch	Bright Violet	Violet cerah
 	Outline Object	Kerangka objek
 	Update Selection	Perbarui seleksi
 	Show Original Path	Tampilkan jalur asli
+	Open this dialog with these settings next time	Buka dialog ini dengan pengaturan ini lain kali
+	Auto-Simplify	Sederhanakan otomatis
 @msg	check a layer to export	centang lapisan yang akan diekspor
 @msg	select the art to export first	pilih dulu karya yang akan diekspor
 @msg	no saved selection recalled	tidak ada seleksi tersimpan yang dipanggil
@@ -5067,6 +5080,8 @@ swatch	Bright Violet	Violet cerah
 	Chop Design	Potong desain
 	Clear Events	Hapus peristiwa
 	Close Gaps With Paths	Tutup celah dengan jalur
+	Select Fills	Pilih isian
+	Select Strokes	Pilih stroke
 	Column Type:	Jenis kolom:
 	Each Design Represents:	Setiap desain mewakili:
 	Event:	Peristiwa:
@@ -5144,6 +5159,12 @@ swatch	Bright Violet	Violet cerah
 	Release Blend	Lepaskan blend
 	Release Envelope	Lepaskan amplop
 	Release Intertwine	Lepaskan jalinan
+	Objects on Path	Objek pada jalur
+	Attach	Tempelkan
+	Objects on Path Options	Opsi objek pada jalur
+	Objects on Path Tool	Alat objek pada jalur
+	Attach Objects on Path	Tempelkan objek pada jalur
+	Expand Objects on Path	Perluas objek pada jalur
 	Release Live Paint	Lepaskan Live Paint
 	Release Repeat	Lepaskan perulangan
 	Release Slice	Lepaskan slice
@@ -5188,3 +5209,41 @@ swatch	Bright Violet	Violet cerah
 	Full Justify	Rata Penuh
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum tidak boleh melebihi Diinginkan, dan Diinginkan tidak boleh melebihi Maksimum.
 	Justification	Justifikasi
+# Select by Color (select.color)
+	Select by Color	Pilih berdasarkan warna
+	Smudge Stick…	Tongkat olesan…
+	Smudge Stick	Tongkat olesan
+	Sponge…	Spons…
+	Sponge	Spons
+	Watercolor…	Cat air…
+	Watercolor	Cat air
+	Brush Size	Ukuran kuas
+	Definition	Definisi
+	Brush Detail	Detail kuas
+	Shadow Intensity	Intensitas bayangan
+	Bas Relief…	Relief dangkal…
+	Bas Relief	Relief dangkal
+	Charcoal…	Arang…
+	Charcoal	Arang
+	Photocopy…	Fotokopi…
+	Photocopy	Fotokopi
+	Stamp…	Stempel…
+	Stamp	Stempel
+	Thickness	Ketebalan
+	Detail	Detail
+	Light/Dark Balance	Keseimbangan terang/gelap
+	Move Anchor Point	Pindahkan titik jangkar
+	Chalk & Charcoal…	Kapur dan arang…
+	Chalk & Charcoal	Kapur dan arang
+	Graphic Pen…	Pena grafis…
+	Graphic Pen	Pena grafis
+	Reticulation…	Retikulasi…
+	Reticulation	Retikulasi
+	Plastic Wrap…	Pembungkus plastik…
+	Plastic Wrap	Pembungkus plastik
+	Chrome…	Krom…
+	Chrome	Krom
+	Drop here to take it out of its group	Lepaskan di sini untuk mengeluarkannya dari grupnya
+	Move Library Group	Pindahkan grup pustaka
+	Plaster…	Plester…
+	Plaster	Plester
