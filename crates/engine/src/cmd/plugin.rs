@@ -5,12 +5,14 @@
 //! preference, and listed with `plugin.list` / `plugin.info`. Object filters run
 //! with `plugin.run` on the selected paths and compound paths (one undo step, transactional: a
 //! plug-in that fails leaves the document untouched); live-effect plug-ins are applied like any
-//! effect (`effect.apply {effect: "plugin.<id>"}`) and drawn by `vectorcraft-effects`.
+//! effect (`effect.apply {effect: "plugin.<id>"}`) and drawn by `vectorcraft-effects`; exporters
+//! add a file format that `document.export` writes (`fileio::plugin_formats`).
 
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
-use vectorcraft_plugins::{Kind, Plugin, effect, objects, registry};
+use vectorcraft_doc::{Effect, Node};
+use vectorcraft_plugins::{Kind, Plugin, effect, export, objects, registry};
 
 use super::*;
 
@@ -27,8 +29,13 @@ pub fn describe(p: &Plugin) -> Value {
         "params": m.params_doc(), "paramsSchema": serde_json::to_value(m).ok().and_then(|v| v.get("params").cloned()),
         "size": p.size(), "source": p.source(),
     });
-    if m.kind == Kind::Effect {
-        v["effect"] = json!(effect::effect_id(&m.id));
+    match m.kind {
+        Kind::Effect => v["effect"] = json!(effect::effect_id(&m.id)),
+        Kind::Exporter => {
+            v["format"] = json!(export::format_id(&m.id));
+            v["extensions"] = json!(m.extensions);
+        }
+        Kind::Filter => {}
     }
     v
 }
@@ -52,12 +59,22 @@ fn plugin_by_id(cmd: &str, p: &Value) -> Result<Arc<Plugin>> {
     registry::get(id).ok_or_else(|| err(vectorcraft_plugins::Error::NotFound(id.into())))
 }
 
+/// `plugin.run`: runs filter `id` on `ids` (else the selected paths and compound paths) with its
+/// parameters and `_context`, and applies its output as one undo step ([`objects::apply_output`];
+/// effect records as [`admit_effects`] admits them). → `{plugin, ids}`: what it made or changed,
+/// which is then selected.
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "plugin.run";
     let plugin = plugin_by_id(C, p)?;
     let m = plugin.manifest();
-    if m.kind != Kind::Filter {
-        return Err(bad(C, format!("`{}` is a live effect: apply it with effect.apply {{\"effect\": \"{}\"}}", m.id, effect::effect_id(&m.id))));
+    match m.kind {
+        Kind::Filter => {}
+        Kind::Effect => {
+            return Err(bad(C, format!("`{}` is a live effect: apply it with effect.apply {{\"effect\": \"{}\"}}", m.id, effect::effect_id(&m.id))));
+        }
+        Kind::Exporter => {
+            return Err(bad(C, format!("`{}` is an exporter: export with document.export {{\"format\": \"{}\"}}", m.id, export::format_id(&m.id))));
+        }
     }
     // Bad parameters fail before anything runs.
     let mut params = Value::Object(m.resolve_params(&plugin_params(p)).map_err(|e| bad(C, e.to_string()))?);
@@ -73,11 +90,55 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let params = serde_json::to_vec(&params).map_err(|e| bad(C, e.to_string()))?;
     let out = objects::decode(&plugin.run(&input, &params).map_err(err)?).map_err(err)?;
     let ids = s.edit(m.name.trim_end_matches('…'), |d, sel| {
-        let ids = objects::apply_output(d, &inputs, out, parent).map_err(err)?;
+        let ids = objects::apply_output(d, &inputs, out, parent, &admit_effects).map_err(err)?;
         sel.set(ids.iter().copied());
         Ok(ids)
     })?;
     Ok(json!({"plugin": m.id, "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
+/// Admits the effect records a filter returned for object `n` (written, its effects still its own)
+/// as `effect.apply` would apply them: each new record a known effect (one of ours, or an installed
+/// live-effect plug-in) with parameters it takes, filled in to their defaults. A record the object
+/// already had stays as it was. An object takes one 3D effect (its fills' and strokes' own
+/// counted), which must fit it, and the `textureImage` of an effect with Load Texture (Glass,
+/// Texturizer) comes as the effect stores it, never as a file to read: a plug-in can't have the
+/// host read one.
+fn admit_effects(fx: &[Effect], n: &Node) -> std::result::Result<Vec<Effect>, String> {
+    use vectorcraft_render::effects;
+    const C: &str = "plugin.run";
+    let mut out = Vec::with_capacity(fx.len());
+    for (j, e) in fx.iter().enumerate() {
+        if n.appearance.effects.contains(e) {
+            out.push(e.clone());
+            continue;
+        }
+        let refuse = |why: String| format!("[{j}] `{}`: {why}", e.id);
+        let params = if e.params.is_null() { json!({}) } else { e.params.clone() };
+        match effect::installed(&e.id) {
+            Some(plugin) => {
+                plugin.manifest().resolve_params(&params).map_err(|why| refuse(why.to_string()))?;
+            }
+            None => super::params::check_effect_params(C, &e.id, &params).map_err(|why| refuse(why.to_string()))?,
+        }
+        if super::effectcmd::texture_load_effect(&e.id)
+            && let Some(t) = params.get(effects::pixel::TEXTURE_IMAGE)
+            && t.as_str().is_none_or(|t| effects::pixel::texture(t).is_none())
+        {
+            return Err(refuse("`textureImage` must be a texture as effect.list gives it".into()));
+        }
+        let mut admitted = effects::new_effect(&e.id, &params).ok_or_else(|| refuse("no such effect".into()))?;
+        if effects::is_three_d(&e.id) {
+            effects::validate_three_d(n, &e.id, &admitted.params).map_err(refuse)?;
+        }
+        admitted.visible = e.visible;
+        out.push(admitted);
+    }
+    let items = n.appearance.items.iter().flat_map(|i| i.effects());
+    if out.iter().chain(items).filter(|e| effects::is_three_d(&e.id)).count() > 1 {
+        return Err(super::effectcmd::ONE_3D.into());
+    }
+    Ok(out)
 }
 
 /// Largest base64 payload `plugin.install` accepts (the module limit, encoded).
@@ -206,7 +267,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List Plug-ins",
             [],
             None,
-            "{} → {plugins: [{id, name, version, kind: \"filter\"|\"effect\", author, description, params (doc), paramsSchema, effect? (the effect id of a live effect: plugin.<id>), size, source}], folder: the Additional Plug-ins Folder load report {folder, loaded, failed: [{file, error}]} | null}",
+            "{} → {plugins: [{id, name, version, kind: \"filter\"|\"effect\"|\"exporter\", author, description, params (doc), paramsSchema, effect? (the effect id of a live effect: plugin.<id>), format? and extensions? (an exporter's format id, plugin.<id>, for document.export, and its file extensions), size, source}], folder: the Additional Plug-ins Folder load report {folder, loaded, failed: [{file, error}]} | null}",
             always,
             list
         ),

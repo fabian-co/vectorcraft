@@ -163,6 +163,13 @@ fn preview_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { vectorcraft_doc::links::PROXY_MIME }
 }
 
+/// The JSON of a native file without the data after it (version 4 keeps images there): a
+/// complete JSON value whose `images` give each image's MIME type and where its data was, without
+/// the data.
+pub fn json_part(file: &[u8]) -> &[u8] {
+    split_tail(file).0
+}
+
 /// The JSON of a file and the data after it (v4), split at [`BLOB_MAGIC`] after the first JSON
 /// value.
 fn split_tail(text: &[u8]) -> (&[u8], &[u8]) {
@@ -560,6 +567,8 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
     // Untrusted: the type's sizes, leading, baseline shifts and scales, its indents and paragraph
     // spacing, and its tab stops, each within its range (after the depth limit: the walk recurses).
     doc.keep_type_values_in_range();
+    // Untrusted: ruby ranges over the type's text, clamped to it (after the depth limit too).
+    doc.fix_ruby();
     // Untrusted: the raster effects resolution, within 1 to 2400 ppi (72 when it isn't finite).
     doc.raster_effects_ppi = Some(doc.raster_effects_ppi).filter(|v| v.is_finite()).unwrap_or(72.0).clamp(1.0, 2400.0);
     // Untrusted: the superscript, subscript and small caps proportions of the type, the graph

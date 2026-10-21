@@ -599,8 +599,10 @@ mod tests {
             id,
             name: "B".into(),
             rect: vectorcraft_geom::Rect::new(600.0, 0.0, 900.0, 300.0),
+            locked: false,
             show_center_mark: false,
             show_cross_hairs: false,
+            color: None,
         });
         d.guides = vec![Guide { artboard: Some(id), ..Guide::new(false, 150.0) }];
         let (s, p) = (Selection::default(), paint());
@@ -911,8 +913,10 @@ mod tests {
             id: 2,
             name: "Artboard 2".into(),
             rect: Rect::new(150.0, 200.0, 350.0, 400.0),
+            locked: false,
             show_center_mark: false,
             show_cross_hairs: false,
+            color: None,
         });
         doc.ruler_origin = Point::new(5.0, 5.0);
         let (paint, selection) = (paint(), Selection::default());

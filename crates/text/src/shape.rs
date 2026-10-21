@@ -62,6 +62,9 @@ pub(crate) struct SGlyph {
     /// A word of a script written without spaces (Thai, Lao, Khmer, Myanmar) ends after the
     /// glyph's cluster, so a line may break there ([`mark_word_ends`]).
     pub word_end: bool,
+    /// No Break (Character panel menu): keep this glyph on the same line as the neighbouring
+    /// glyphs that have it.
+    pub no_break: bool,
 }
 
 /// How `vpal` and the vertical kerning with it move an upright glyph in vertical type and change
@@ -430,9 +433,10 @@ fn source_run_at(runs: &[(Range<usize>, &CharStyle)], span: &Range<usize>, byte:
 
 /// Do text runs in styles `a` and `b` shape alike, so that they are shaped as one piece of text?
 /// They do when they differ only in paint and stroke, underline and strikethrough, overprint, the
-/// character style's name, leading, baseline shift, rotation, Character Alignment, the kerning
-/// (each glyph takes its run's, see [`shape_segment`]) and the tracking, as long as the tracking
-/// keeps or drops standard ligatures alike ([`crate::features::ligatures_suppressed_by`]).
+/// character style's name, leading, baseline shift, rotation, Character Alignment, Character
+/// Direction (text is shaped apart where its bidi level changes), the kerning (each glyph takes its
+/// run's, see [`shape_segment`]) and the tracking, as long as the tracking keeps or drops standard
+/// ligatures alike ([`crate::features::ligatures_suppressed_by`]).
 fn shapes_alike(a: &CharStyle, b: &CharStyle) -> bool {
     // Every field is named, so that a new attribute has to be sorted into one group or the other.
     let CharStyle {
@@ -466,8 +470,11 @@ fn shapes_alike(a: &CharStyle, b: &CharStyle) -> bool {
         position,
         small_caps,
         char_align: _,
+        char_direction: _,
         proportional_metrics,
+        tate_chu_yoko,
         digits,
+        no_break,
     } = a;
     *font_family == b.font_family
         && *font_style == b.font_style
@@ -481,7 +488,9 @@ fn shapes_alike(a: &CharStyle, b: &CharStyle) -> bool {
         && *position == b.position
         && *small_caps == b.small_caps
         && *proportional_metrics == b.proportional_metrics
+        && *tate_chu_yoko == b.tate_chu_yoko
         && *digits == b.digits
+        && *no_break == b.no_break
         && ligatures_suppressed_by(*tracking) == ligatures_suppressed_by(b.tracking)
 }
 
@@ -550,6 +559,7 @@ fn inline_glyph(face: &Arc<FontFace>, st: &CharStyle, art: &InlineArt, run: usiz
         level,
         inline: Some(InlineBox { art: drawn, xf }),
         word_end: false,
+        no_break: st.no_break,
     }
 }
 
@@ -809,6 +819,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
             level: *level,
             inline: None,
             word_end: false,
+            no_break: gst.no_break,
         });
     }
 }

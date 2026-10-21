@@ -3,6 +3,7 @@
 
 use serde_json::{Value, json};
 use vectorcraft_doc::Unit;
+use vectorcraft_plugins::{Manifest, Param, ParamSpec};
 
 use crate::state::Dialog;
 use crate::theme::Tokens;
@@ -78,6 +79,14 @@ fn suffix(kind: &str, key: &str) -> Option<&'static str> {
     }
 }
 
+/// The fields of the form dialogs ([`grid`]) that the dialog's own body draws, by dialog kind.
+fn own_rows(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "artboardOptions" => &["color"],
+        _ => &[],
+    }
+}
+
 /// The fields of the form dialogs ([`grid`]) that come first, in this order (the others follow by
 /// name).
 fn order(kind: &str) -> &'static [&'static str] {
@@ -125,6 +134,13 @@ pub(super) fn text(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32) -> 
 
 /// [`text`] returning the field's response (focus, Enter).
 pub(super) fn text_edit(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32) -> egui::Response {
+    text_edit_limited(ui, d, key, width, usize::MAX)
+}
+
+/// [`text_edit`] that takes at most `max_chars` characters: typing and pasting stop at the limit,
+/// and a longer value already in the field is kept, with nothing added to it until it has fewer
+/// than `max_chars` characters.
+pub(super) fn text_edit_limited(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, max_chars: usize) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let mut s = d.str(key);
     let id = ui.id().with(("dlg-text", key));
@@ -136,7 +152,7 @@ pub(super) fn text_edit(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
             crate::theme::strong_selected_text(ui);
-            ui.add(egui::TextEdit::singleline(&mut s).id(id).frame(egui::Frame::NONE).desired_width(width))
+            ui.add(egui::TextEdit::singleline(&mut s).id(id).frame(egui::Frame::NONE).desired_width(width).char_limit(max_chars))
         });
     if r.inner.changed() {
         d.fields.insert(key.into(), Value::String(s));
@@ -198,9 +214,9 @@ fn dropdown(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, options: &
     }
 }
 
-/// The generic dialog body: a field per non-boolean value (positions, indices and UI-only keys
-/// hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as dropdowns and the
-/// [`skew_ends`] fields as sliders.
+/// The generic dialog body: a field per non-boolean value (positions, indices, UI-only keys and the
+/// kind's [`own_rows`] hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as
+/// dropdowns and the [`skew_ends`] fields as sliders.
 pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
     grid_then(ui, d, unit, |_, _| {});
 }
@@ -209,11 +225,12 @@ pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
 /// with the generic ones.
 pub(super) fn grid_then(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit, more: impl FnOnce(&mut egui::Ui, &mut Dialog)) {
     let rail = Tokens::get(ui.ctx()).input_border;
-    let (lengths, first) = (lengths(&d.kind), order(&d.kind));
+    let (lengths, first, own) = (lengths(&d.kind), order(&d.kind), own_rows(&d.kind));
     let mut keys: Vec<String> = d
         .fields
         .iter()
         .filter(|(k, v)| !matches!(k.as_str(), "x" | "y" | "origin" | "index") && !k.starts_with("__") && !v.is_boolean())
+        .filter(|(k, _)| !own.contains(&k.as_str()))
         .map(|(k, _)| k.clone())
         .collect();
     // Stable: the fields `order` doesn't name keep their order after the ones it does.
@@ -369,62 +386,173 @@ fn typed_number(x: f64) -> Value {
     if x.fract() == 0.0 && x.abs() < 1e15 { json!(x as i64) } else { json!(x) }
 }
 
-/// Editor for a plug-in's parameters from its schema (plug-in filter and effect dialogs): numbers
-/// within their range, whole numbers, checkboxes and dropdowns, in declaration order, a row each.
-/// Returns true when a value changed. The labels (from the parameter keys) and choices are the
-/// plug-in's text, shown as they are. A plug-in may declare more of them
+/// Editor for a plug-in's parameters from its manifest (the filter, live effect and exporter
+/// dialogs): numbers within their range, whole numbers, checkboxes, dropdowns, text and lists of
+/// numbers, a row each. A row is labelled as the manifest says (else from the parameter's name),
+/// with its unit after the value and its help on the label and on a help button that opens its
+/// page. Parameters outside any group come first, then each group as a section that folds
+/// ([`Manifest::sections`]); a parameter whose `visibleWhen` the values don't meet is left out
+/// ([`Manifest::visible`]). Returns true when a value changed. Labels, choices, groups and help are
+/// the plug-in's text, shown as they are. A plug-in may declare more parameters
 /// ([`MAX_PARAMS`](vectorcraft_plugins::manifest::MAX_PARAMS)) than the window has room for, and
 /// the rows then scroll ([`super::modal::scrolled_rows`]).
-pub(super) fn schema_fields(ui: &mut egui::Ui, d: &mut Dialog, specs: &[(String, vectorcraft_plugins::ParamSpec)]) -> bool {
-    use vectorcraft_plugins::ParamSpec;
-    let t = Tokens::get(ui.ctx());
-    let mut changed = false;
-    super::modal::scrolled_rows(ui, "plugin-fields", |ui| {
-        egui::Grid::new("plugin-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            for (k, spec) in specs {
-                ui.label(egui::RichText::new(humanize(k)).color(t.text));
-                let cur = d.fields.get(k).cloned().unwrap_or_else(|| spec.default_value());
-                let new = match spec {
-                    ParamSpec::Number { min, max, .. } => {
-                        let x = cur.as_f64().unwrap_or(*min);
-                        crate::widgets::range_field(ui, ("plugin-num", k), x, *min..=*max, "", 2, 100.0).map(|x| json!(x))
-                    }
-                    ParamSpec::Int { min, max, .. } => {
-                        let x = cur.as_i64().unwrap_or(*min).clamp(*min, *max);
-                        // An f64 holds every whole number up to 2^53, so the numeric field (arrows, wheel, arithmetic) is exact there.
-                        // Past it, the number typed is read as an integer.
-                        const EXACT: i64 = 1 << 53;
-                        if -EXACT <= *min && *max <= EXACT {
-                            crate::widgets::range_field(ui, ("plugin-int", k), x as f64, *min as f64..=*max as f64, "", 0, 100.0)
-                                .map(|x| json!(x as i64))
-                        } else {
-                            let shown = x.to_string();
-                            crate::widgets::take_dialog_focus(ui, ui.id().with(("plugin-int", k)), &shown);
-                            crate::widgets::text_field(ui, ("plugin-int", k), Some(&shown), 100.0, 1)
-                                .and_then(|text| text.parse::<i64>().ok())
-                                .map(|x| json!(x.clamp(*min, *max)))
-                        }
-                    }
-                    ParamSpec::Bool { .. } => {
-                        let b = cur.as_bool().unwrap_or(false);
-                        crate::widgets::check_box(ui, &humanize(k), b, true).then(|| json!(!b))
-                    }
-                    ParamSpec::Choice { options, .. } => {
-                        let labels: Vec<&str> = options.iter().map(String::as_str).collect();
-                        crate::widgets::dropdown_names(ui, ("plugin-choice", k), cur.as_str().unwrap_or_default(), &labels, 140.0)
-                            .and_then(|i| options.get(i))
-                            .map(|o| json!(o))
-                    }
-                };
-                if let Some(v) = new {
-                    d.fields.insert(k.clone(), v);
-                    changed = true;
-                }
-                ui.end_row();
-            }
-        });
-    });
+pub(super) fn schema_fields(app: &mut crate::VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, m: &Manifest) -> bool {
+    let (changed, help) = schema_rows(ui, d, m);
+    if let Some(url) = help {
+        app.open_url(&url);
+    }
     changed
+}
+
+/// [`schema_fields`] → whether a value changed, and the help page asked for, left to the caller to
+/// open.
+pub(super) fn schema_rows(ui: &mut egui::Ui, d: &mut Dialog, m: &Manifest) -> (bool, Option<String>) {
+    let mut changed = false;
+    let mut help = None;
+    let visible = m.visible(&d.fields);
+    let sections = m.sections();
+    // Every section's label column is as wide as the longest label shown, so the fields line up
+    // down the dialog; the rows outside groups make up for the indent of a group's rows.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let label_width = (m.params.iter().filter(|(k, _)| visible.contains(k.as_str())))
+        .map(|(k, p)| ui.painter().layout_no_wrap(param_label(k, p), font.clone(), egui::Color32::WHITE).size().x)
+        .fold(0.0, f32::max);
+    let indent = if sections.iter().any(|(group, _)| group.is_some()) { ui.spacing().indent } else { 0.0 };
+    super::modal::scrolled_rows(ui, "plugin-fields", |ui| {
+        for (section, (group, params)) in sections.into_iter().enumerate() {
+            let shown: Vec<&(String, Param)> = params.into_iter().filter(|(k, _)| visible.contains(k.as_str())).collect();
+            if shown.is_empty() {
+                continue;
+            }
+            let rows = |ui: &mut egui::Ui, label_width: f32| {
+                let grid = egui::Grid::new(("plugin-grid", section)).num_columns(2).spacing([12.0, 8.0]).min_col_width(label_width);
+                grid.show(ui, |ui| {
+                    for (k, p) in shown {
+                        let (row_changed, opened) = param_row(ui, d, k, p);
+                        changed |= row_changed;
+                        help = help.take().or(opened);
+                        ui.end_row();
+                    }
+                });
+            };
+            match group {
+                None => rows(ui, label_width + indent),
+                Some(g) => {
+                    egui::CollapsingHeader::new(g).id_salt(("plugin-group", g)).default_open(true).show(ui, |ui| rows(ui, label_width));
+                }
+            }
+        }
+    });
+    (changed, help)
+}
+
+/// The label of parameter `k`'s row: its manifest `label`, else its name spaced out.
+fn param_label(k: &str, p: &Param) -> String {
+    p.ui.label.as_ref().map_or_else(|| humanize(k), |l| format!("{l}:"))
+}
+
+/// One row of [`schema_fields`]: parameter `k`'s label and value field → whether the value changed,
+/// and the help page asked for.
+fn param_row(ui: &mut egui::Ui, d: &mut Dialog, k: &str, p: &Param) -> (bool, Option<String>) {
+    let t = Tokens::get(ui.ctx());
+    let label = param_label(k, p);
+    let shown_label = ui.label(egui::RichText::new(&label).color(t.text));
+    if let Some(help) = &p.ui.help {
+        shown_label.on_hover_text(help);
+    }
+    let cur = d.fields.get(k).cloned().unwrap_or_else(|| p.spec.default_value());
+    let unit = p.ui.unit.as_deref().unwrap_or_default();
+    let suffix = unit_suffix(unit);
+    let mut opened = None;
+    let new = ui
+        .horizontal(|ui| {
+            let (new, in_field) = value_field(ui, k, &label, &p.spec, &cur, &suffix);
+            if !in_field && !unit.is_empty() {
+                ui.label(egui::RichText::new(unit).color(t.text_dim));
+            }
+            if let Some(url) = &p.ui.help_url
+                && crate::widgets::icon_button(ui, "external-link", tl!("Open this setting's help page"), false, 20.0).clicked()
+            {
+                opened = Some(url.clone());
+            }
+            new
+        })
+        .inner;
+    let changed = new.map(|v| d.fields.insert(k.to_string(), v)).is_some();
+    (changed, opened)
+}
+
+/// The field of parameter `k`'s value `cur` (a checkbox is called by the row's `label`) → the new
+/// value when it changed, and whether the field shows `suffix` (numbers do; the other fields leave
+/// the unit to a label after them).
+fn value_field(ui: &mut egui::Ui, k: &str, label: &str, spec: &ParamSpec, cur: &Value, suffix: &str) -> (Option<Value>, bool) {
+    match spec {
+        ParamSpec::Number { min, max, .. } => {
+            let x = cur.as_f64().unwrap_or(*min);
+            (crate::widgets::range_field(ui, ("plugin-num", k), x, *min..=*max, suffix, 2, 100.0).map(|x| json!(x)), true)
+        }
+        ParamSpec::Int { min, max, .. } => {
+            let x = cur.as_i64().unwrap_or(*min).clamp(*min, *max);
+            // An f64 holds every whole number up to 2^53, so the numeric field (arrows, wheel, arithmetic) is exact there.
+            // Past it, the number typed is read as an integer.
+            const EXACT: i64 = 1 << 53;
+            if -EXACT <= *min && *max <= EXACT {
+                let field = crate::widgets::range_field(ui, ("plugin-int", k), x as f64, *min as f64..=*max as f64, suffix, 0, 100.0);
+                (field.map(|x| json!(x as i64)), true)
+            } else {
+                let shown = x.to_string();
+                crate::widgets::take_dialog_focus(ui, ui.id().with(("plugin-int", k)), &shown);
+                let typed = crate::widgets::text_field(ui, ("plugin-int", k), Some(&shown), 100.0, 1);
+                (typed.and_then(|text| text.parse::<i64>().ok()).map(|x| json!(x.clamp(*min, *max))), false)
+            }
+        }
+        ParamSpec::Bool { .. } => {
+            let b = cur.as_bool().unwrap_or(false);
+            (crate::widgets::check_box(ui, label, b, true).then(|| json!(!b)), false)
+        }
+        ParamSpec::Choice { options, .. } => {
+            let labels: Vec<&str> = options.iter().map(String::as_str).collect();
+            let chosen = crate::widgets::dropdown_names(ui, ("plugin-choice", k), cur.as_str().unwrap_or_default(), &labels, 140.0);
+            (chosen.and_then(|i| options.get(i)).map(|o| json!(o)), false)
+        }
+        ParamSpec::Text { max_length, .. } => {
+            let typed = crate::widgets::text_field(ui, ("plugin-text", k), cur.as_str(), 160.0, 1);
+            (typed.map(|text| json!(text.chars().take(*max_length).collect::<String>())), false)
+        }
+        ParamSpec::NumberList { .. } => {
+            let typed = crate::widgets::text_field(ui, ("plugin-list", k), Some(&number_list_text(cur)), 160.0, 1);
+            (typed.and_then(|text| read_number_list(&text, spec)), false)
+        }
+    }
+}
+
+/// A `numberList` value as its field shows it: "45, 135".
+pub(crate) fn number_list_text(cur: &Value) -> String {
+    let numbers: Vec<String> = cur.as_array().into_iter().flatten().filter_map(Value::as_f64).map(number_text).collect();
+    numbers.join(", ")
+}
+
+/// The list typed in a `numberList` parameter's field: numbers separated by commas, semicolons or
+/// spaces, each clamped into the parameter's range. `None` (the value stays as it was) when a
+/// number doesn't read, there are too few or too many, or `spec` isn't a number list.
+pub(crate) fn read_number_list(text: &str, spec: &ParamSpec) -> Option<Value> {
+    let ParamSpec::NumberList { min, max, min_items, max_items, .. } = spec else { return None };
+    let parts = text.split([',', ';', ' ']).filter(|p| !p.trim().is_empty());
+    let list: Vec<f64> = parts.map(|p| vectorcraft_doc::parse_number(p).filter(|x| x.is_finite())).collect::<Option<_>>()?;
+    (*min_items..=*max_items).contains(&list.len()).then(|| json!(list.into_iter().map(|x| x.clamp(*min, *max)).collect::<Vec<f64>>()))
+}
+
+/// What a number field shows after its value for a plug-in parameter's `unit` (none: nothing): a
+/// sign such as ° or % joins the number ("45°"), and any other unit is spaced from it ("0.4 mm",
+/// "5 1/min"), so a unit starting with a digit isn't read as more of the number.
+pub(crate) fn unit_suffix(unit: &str) -> String {
+    if unit.is_empty() || unit.starts_with(['°', '%', '′', '″']) { unit.to_string() } else { format!(" {unit}") }
+}
+
+/// A number of a list as [`value_field`] shows it: at most 4 decimals, without trailing zeros.
+fn number_text(x: f64) -> String {
+    let s = format!("{x:.4}");
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
 /// A field label from its camelCase key (`miterLimit` → "Miter Limit:").
@@ -527,8 +655,10 @@ pub(super) fn slider_field_named(
 }
 
 /// The rail of [`slider_field_named`] alone: dragging it sets the number `d.fields[key]` to a
-/// whole number in `range` (a value past the range shows at its end until the rail moves); screen
-/// readers call it `name` (already translated), with the number `d.fields[key]` as its value.
+/// whole number in `range`, and its keys step the number while it has the keyboard focus
+/// ([`crate::widgets::color_slider_stepped`]); a value past the range shows at its end until the
+/// rail moves. Screen readers call it `name` (already translated), with the number
+/// `d.fields[key]` as its value.
 pub(super) fn slider_rail_named(
     ui: &mut egui::Ui,
     d: &mut Dialog,
@@ -542,7 +672,9 @@ pub(super) fn slider_rail_named(
 }
 
 /// [`slider_rail_named`] that screen readers get `shown` from: the number and text of the field
-/// the row draws beside it (no value for `None`, as for a blank field).
+/// the row draws beside it (no value for `None`, as for a blank field). Its keys step `shown`'s
+/// number, which sets `d.fields[key]` to the number at the same place on `range` (`shown`'s range
+/// and `range` are the same span in two units, such as millimeters and points).
 pub(super) fn slider_rail_valued(
     ui: &mut egui::Ui,
     d: &mut Dialog,
@@ -553,10 +685,14 @@ pub(super) fn slider_rail_valued(
     track: &dyn Fn(f32) -> egui::Color32,
 ) {
     let (min, max) = (*range.start(), *range.end());
-    let v = d.f64(key, 0.0).clamp(min, max);
-    let (dragged, _) =
-        crate::widgets::color_slider_valued(ui, ("dlg-slider", key), name, shown, ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track);
-    if let Some(n) = dragged.map(|x| (min + x as f64 * (max - min)).round()).filter(|n| *n != v) {
+    let held = d.f64(key, 0.0);
+    let v = held.clamp(min, max);
+    let units = shown.as_ref().map(|s| s.range.clone());
+    let (dragged, _, keyed) =
+        crate::widgets::color_slider_stepped(ui, ("dlg-slider", key), name, shown, ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track);
+    let keyed =
+        keyed.zip(units).map(|(k, u)| if u == range { k } else { (min + (k - u.start()) / (u.end() - u.start()) * (max - min)).clamp(min, max) });
+    if let Some(n) = dragged.map(|x| (min + x as f64 * (max - min)).round()).or(keyed).filter(|n| *n != held) {
         d.fields.insert(key.into(), json!(n));
     }
 }
@@ -713,6 +849,31 @@ pub(super) fn bleed(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
 pub(super) fn caption(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(tl!(text)).size(11.0).color(t.text_dim));
+}
+
+#[cfg(test)]
+mod plugin_field_tests {
+    use super::*;
+
+    /// A unit reads after its number as it is written: a sign joins it ("45°", "50%"), anything
+    /// else is spaced, so a unit starting with a digit isn't read as more of the number.
+    #[test]
+    fn units_follow_the_number() {
+        let shown = |unit| format!("5{}", unit_suffix(unit));
+        assert_eq!([shown("mm"), shown("°"), shown("%"), shown("1/min"), shown("µm")], ["5 mm", "5°", "5%", "5 1/min", "5 µm"]);
+    }
+
+    #[test]
+    fn number_lists_read_as_typed_within_their_limits() {
+        let spec = ParamSpec::NumberList { min: 0.0, max: 360.0, default: vec![45.0], min_items: 1, max_items: 3 };
+        assert_eq!(number_list_text(&json!([45.0, 135.5, 0.125])), "45, 135.5, 0.125");
+        assert_eq!(read_number_list("10; 400 20", &spec), Some(json!([10.0, 360.0, 20.0])), "separators, and clamped");
+        assert_eq!(read_number_list(" 90 , 2*45 ", &spec), Some(json!([90.0, 90.0])));
+        for bad in ["", "1, 2, 3, 4", "1, x", "1, inf"] {
+            assert_eq!(read_number_list(bad, &spec), None, "{bad:?}");
+        }
+        assert_eq!(read_number_list("1", &ParamSpec::Bool { default: false }), None, "not a list");
+    }
 }
 
 #[cfg(test)]

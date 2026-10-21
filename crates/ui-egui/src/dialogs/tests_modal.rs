@@ -144,12 +144,13 @@ fn check_plugin_dialog(kind: &str, count: usize, check: impl FnOnce(&egui::Conte
 /// settings is as tall as they are.
 #[test]
 fn a_plug_in_dialog_of_many_settings_fits_the_window() {
-    use vectorcraft_plugins::manifest::MAX_PARAMS;
+    // As many as a plug-in may declare outside groups.
+    use vectorcraft_plugins::manifest::MAX_UNGROUPED;
     let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
     let shown = |texts: &[(String, Rect)], text: &str| texts.iter().find(|(t, r)| t == text && screen.contains_rect(*r)).map(|(_, r)| *r);
     for kind in ["effect", "filter"] {
-        check_plugin_dialog(kind, MAX_PARAMS, |ctx, app, window, heading| {
-            let last = format!("Setting{}:", MAX_PARAMS - 1);
+        check_plugin_dialog(kind, MAX_UNGROUPED, |ctx, app, window, heading| {
+            let last = format!("Setting{}:", MAX_UNGROUPED - 1);
             let texts = frame(ctx, app, vec![]);
             let rect = rect_of(ctx, window);
             assert!(screen.contains_rect(rect) && rect.height() > 0.75 * SCREEN.y, "{kind}: the dialog is at {rect:?} in the {SCREEN:?} window");
@@ -281,6 +282,21 @@ fn offset_path_remembers_its_last_values() {
     crate::menus::invoke(&mut app, "object.path.offsetPath", json!({}));
     let d = app.ui.dialog.as_ref().unwrap();
     assert_eq!((d.f64("offset", 0.0), d.str("joins"), d.f64("miterLimit", 0.0)), (-4.5, "round".to_string(), 4.0));
+}
+
+/// Offset Path's Preview checkbox keeps its last state across opens, like the other fields (#3195).
+#[test]
+fn offset_path_remembers_its_last_preview_state() {
+    let mut app = app_with_selection();
+    app.run("select.all", json!({})).unwrap();
+    crate::menus::invoke(&mut app, "object.path.offsetPath", json!({}));
+    let d = app.ui.dialog.as_mut().unwrap();
+    assert!(!d.bool("preview"), "a first open is unchecked");
+    d.fields.insert("preview".into(), json!(true));
+    confirm(&mut app).unwrap();
+    crate::menus::invoke(&mut app, "object.path.offsetPath", json!({}));
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert!(d.bool("preview"), "the state it was confirmed with");
 }
 
 fn app_with_dense_path() -> VectorcraftApp {
